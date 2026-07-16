@@ -136,8 +136,7 @@ function UserModal({ actor, editing, onClose, onSave }) {
   );
 }
 
-function TransmissionPanel({ session, onSuccess }) {
-  const [type, setType] = useState("recommendation");
+function TransmissionPanel({ session, onSuccess, type }) {
   const [form, setForm] = useState({
     aitName: "",
     author: `${session.firstName} ${session.lastName}`,
@@ -180,20 +179,7 @@ function TransmissionPanel({ session, onSuccess }) {
   }
 
   return (
-    <section className="transmissions-layout">
-      <div className="category-grid">
-        {Object.entries(TRANSMISSION_TYPES).map(([key, item]) => {
-          const Icon = item.icon;
-          return (
-            <button key={key} className={`category-card ${type === key ? "selected" : ""}`} onClick={() => { setType(key); setError(""); }}>
-              <span className={`category-icon ${item.tone}`}><Icon size={22} /></span>
-              <span><strong>{item.title}</strong><small>{item.description}</small></span>
-              <i>{type === key ? "Sélectionné" : "Choisir"}</i>
-            </button>
-          );
-        })}
-      </div>
-
+    <section className="transmissions-layout single">
       <div className="transmission-card">
         <div className="transmission-head">
           <span className={`category-icon large ${selected.tone}`}><SelectedIcon size={25} /></span>
@@ -274,13 +260,14 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand-row"><div className="brand-mark"><ShieldCheck size={23} /></div><div><strong>Portail SO</strong><small>Espace sécurisé</small></div></div>
-        <nav><button className={activeSection === "dashboard" ? "active" : ""} onClick={() => setActiveSection("dashboard")}><LayoutDashboard size={19} /> Tableau de bord</button><button className={activeSection === "transmissions" ? "active" : ""} onClick={() => setActiveSection("transmissions")}><Send size={19} /> Transmissions</button></nav>
+        <nav><button className={activeSection === "dashboard" ? "active" : ""} onClick={() => setActiveSection("dashboard")}><LayoutDashboard size={19} /> Tableau de bord</button><button className={activeSection === "recommendation" ? "active" : ""} onClick={() => setActiveSection("recommendation")}><Medal size={19} /> Recommandation</button><button className={activeSection === "pcs_exp" ? "active" : ""} onClick={() => setActiveSection("pcs_exp")}><ClipboardCheck size={19} /> Recommandation PCS EXP</button><button className={activeSection === "observation_hdr" ? "active" : ""} onClick={() => setActiveSection("observation_hdr")}><MessageSquareText size={19} /> Observation HDR</button></nav>
         <div className="profile-card"><div className="avatar">{initials(session)}</div><div><strong>{session.firstName} {session.lastName}</strong><small>{ROLES[session.role].label}</small></div><ChevronDown size={16} /></div>
         <button className="logout" onClick={() => setSession(null)}><LogOut size={18} /> Se déconnecter</button>
       </aside>
 
       <main className="content">
-        {activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>Bonjour, {session.firstName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Transmissions</h1><p className="muted">Envoyez une recommandation ou une observation vers le salon Discord concerné.</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
+        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><option value="dashboard">Tableau de bord</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option></select></div>
+        {activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>Bonjour, {session.firstName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
         {activeSection === "dashboard" ? <>
         <section className="stats">
@@ -293,7 +280,7 @@ function App() {
           <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
           <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Niveau d’accès</th><th>Statut</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.email}</small></div></div></td><td><RoleBadge role={user.role} /></td><td><span className="status"><i />{user.status}</span></td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title="Modifier" onClick={() => setModal(user)}><Pencil size={17} /></button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
         </section>
-        </> : <TransmissionPanel session={session} onSuccess={flash} />}
+        </> : <TransmissionPanel key={activeSection} session={session} onSuccess={flash} type={activeSection} />}
       </main>
       {notice && <div className="toast"><BadgeCheck size={19} />{notice}</div>}
       {modal && <UserModal actor={session} editing={modal.id ? modal : null} onClose={() => setModal(null)} onSave={saveUser} />}
