@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "portail-sous-officiers",
   "compatibility_date": "2026-07-17",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": ["nodejs_compat", "nodejs_compat_populate_process_env"],
   "main": "vinext/server/fetch-handler",
   "assets": {
     "directory": "dist/client",

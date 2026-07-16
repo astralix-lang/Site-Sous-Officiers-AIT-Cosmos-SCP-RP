@@ -3,13 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   BadgeCheck,
+  ClipboardCheck,
   ChevronDown,
   KeyRound,
   LayoutDashboard,
   LogOut,
+  Medal,
+  MessageSquareText,
   Pencil,
   Plus,
   Search,
+  Send,
   ShieldCheck,
   Trash2,
   UserRound,
@@ -32,6 +36,27 @@ const INITIAL_USERS = [
 ];
 
 const STORAGE_KEY = "portail-so-users-v1";
+
+const TRANSMISSION_TYPES = {
+  recommendation: {
+    title: "Recommandation",
+    description: "Signaler un AIT qui mérite une recommandation.",
+    icon: Medal,
+    tone: "blue",
+  },
+  pcs_exp: {
+    title: "Recommandation PCS EXP",
+    description: "Transmettre une recommandation pour le parcours PCS EXP.",
+    icon: ClipboardCheck,
+    tone: "gold",
+  },
+  observation_hdr: {
+    title: "Observation HDR",
+    description: "Consigner une observation positive ou négative.",
+    icon: MessageSquareText,
+    tone: "green",
+  },
+};
 
 function initials(user) {
   return `${user.firstName?.[0] || ""}${user.lastName?.[0] || ""}`.toUpperCase();
@@ -111,6 +136,90 @@ function UserModal({ actor, editing, onClose, onSave }) {
   );
 }
 
+function TransmissionPanel({ session, onSuccess }) {
+  const [type, setType] = useState("recommendation");
+  const [form, setForm] = useState({
+    aitName: "",
+    author: `${session.firstName} ${session.lastName}`,
+    reason: "",
+    observation: "positive",
+  });
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const selected = TRANSMISSION_TYPES[type];
+  const SelectedIcon = selected.icon;
+  const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+
+  async function submit(event) {
+    event.preventDefault();
+    setSending(true);
+    setError("");
+    try {
+      const response = await fetch("/api/submissions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type,
+          values: form,
+          submittedBy: {
+            name: `${session.firstName} ${session.lastName}`,
+            email: session.email,
+            role: ROLES[session.role].label,
+          },
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Envoi impossible.");
+      setForm((current) => ({ ...current, aitName: "", reason: "", observation: "positive" }));
+      onSuccess(`${selected.title} envoyée sur Discord.`);
+    } catch (submissionError) {
+      setError(submissionError.message || "Une erreur est survenue pendant l’envoi.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <section className="transmissions-layout">
+      <div className="category-grid">
+        {Object.entries(TRANSMISSION_TYPES).map(([key, item]) => {
+          const Icon = item.icon;
+          return (
+            <button key={key} className={`category-card ${type === key ? "selected" : ""}`} onClick={() => { setType(key); setError(""); }}>
+              <span className={`category-icon ${item.tone}`}><Icon size={22} /></span>
+              <span><strong>{item.title}</strong><small>{item.description}</small></span>
+              <i>{type === key ? "Sélectionné" : "Choisir"}</i>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="transmission-card">
+        <div className="transmission-head">
+          <span className={`category-icon large ${selected.tone}`}><SelectedIcon size={25} /></span>
+          <div><p className="eyebrow dark">NOUVELLE TRANSMISSION</p><h2>{selected.title}</h2><p className="muted">Le message sera transmis automatiquement dans le salon Discord associé.</p></div>
+        </div>
+        <form onSubmit={submit}>
+          <label>{type === "observation_hdr" ? "Nom de l’AIT observé" : "Nom de l’AIT recommandé"}</label>
+          <input value={form.aitName} onChange={(e) => set("aitName", e.target.value)} required maxLength={100} placeholder="Prénom, nom ou identifiant de l’AIT" />
+
+          <label>{type === "observation_hdr" ? "S-OFF/-SUP faisant l’observation" : "S-OFF/-SUP à l’origine de la recommandation"}</label>
+          <input value={form.author} onChange={(e) => set("author", e.target.value)} required maxLength={100} />
+
+          {type === "observation_hdr" ? (
+            <><label>Nature de l’observation</label><div className="choice-row"><label className={form.observation === "positive" ? "checked" : ""}><input type="radio" name="observation" value="positive" checked={form.observation === "positive"} onChange={(e) => set("observation", e.target.value)} /><BadgeCheck size={18} /> Positive</label><label className={form.observation === "negative" ? "checked negative" : ""}><input type="radio" name="observation" value="negative" checked={form.observation === "negative"} onChange={(e) => set("observation", e.target.value)} /><X size={18} /> Négative</label></div></>
+          ) : (
+            <><label>Raison</label><textarea value={form.reason} onChange={(e) => set("reason", e.target.value)} required maxLength={1000} rows={6} placeholder="Décrivez les éléments qui motivent cette recommandation…" /></>
+          )}
+
+          {error && <p className="form-error transmission-error">{error}</p>}
+          <div className="transmission-actions"><span><ShieldCheck size={15} /> Envoi sécurisé via le serveur</span><button className="primary" type="submit" disabled={sending}><Send size={17} />{sending ? "Envoi en cours…" : "Envoyer sur Discord"}</button></div>
+        </form>
+      </div>
+    </section>
+  );
+}
+
 function App() {
   const [users, setUsers] = useState([]);
   const [session, setSession] = useState(null);
@@ -120,6 +229,7 @@ function App() {
   const [roleFilter, setRoleFilter] = useState("all");
   const [modal, setModal] = useState(null);
   const [notice, setNotice] = useState("");
+  const [activeSection, setActiveSection] = useState("dashboard");
 
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -164,14 +274,15 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand-row"><div className="brand-mark"><ShieldCheck size={23} /></div><div><strong>Portail SO</strong><small>Espace sécurisé</small></div></div>
-        <nav><a className="active"><LayoutDashboard size={19} /> Tableau de bord</a><a><UsersRound size={19} /> Comptes</a></nav>
+        <nav><button className={activeSection === "dashboard" ? "active" : ""} onClick={() => setActiveSection("dashboard")}><LayoutDashboard size={19} /> Tableau de bord</button><button className={activeSection === "transmissions" ? "active" : ""} onClick={() => setActiveSection("transmissions")}><Send size={19} /> Transmissions</button></nav>
         <div className="profile-card"><div className="avatar">{initials(session)}</div><div><strong>{session.firstName} {session.lastName}</strong><small>{ROLES[session.role].label}</small></div><ChevronDown size={16} /></div>
         <button className="logout" onClick={() => setSession(null)}><LogOut size={18} /> Se déconnecter</button>
       </aside>
 
       <main className="content">
-        <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>Bonjour, {session.firstName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header>
+        {activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>Bonjour, {session.firstName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Transmissions</h1><p className="muted">Envoyez une recommandation ou une observation vers le salon Discord concerné.</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
+        {activeSection === "dashboard" ? <>
         <section className="stats">
           <article><span className="stat-icon blue"><UsersRound /></span><div><strong>{users.length}</strong><small>Comptes au total</small></div><span className="trend">Tous niveaux</span></article>
           <article><span className="stat-icon green"><BadgeCheck /></span><div><strong>{users.filter((u) => u.status === "Actif").length}</strong><small>Comptes actifs</small></div><span className="trend green-text">Opérationnels</span></article>
@@ -182,6 +293,7 @@ function App() {
           <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
           <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Niveau d’accès</th><th>Statut</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.email}</small></div></div></td><td><RoleBadge role={user.role} /></td><td><span className="status"><i />{user.status}</span></td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title="Modifier" onClick={() => setModal(user)}><Pencil size={17} /></button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
         </section>
+        </> : <TransmissionPanel session={session} onSuccess={flash} />}
       </main>
       {notice && <div className="toast"><BadgeCheck size={19} />{notice}</div>}
       {modal && <UserModal actor={session} editing={modal.id ? modal : null} onClose={() => setModal(null)} onSave={saveUser} />}
