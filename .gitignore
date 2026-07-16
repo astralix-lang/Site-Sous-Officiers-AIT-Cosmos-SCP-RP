@@ -5,3 +5,4 @@ dist
 .open-next
 .wrangler
 *.log
+next-env.d.ts

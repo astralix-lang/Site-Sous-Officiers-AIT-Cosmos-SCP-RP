@@ -2,16 +2,23 @@
   "name": "portail-sous-officiers",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint ."
+    "dev": "vinext dev",
+    "build": "vinext build && node scripts/prepare-sites.mjs",
+    "start": "vinext start"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
     "next": "^15.5.7",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "latest",
+    "@vitejs/plugin-rsc": "latest",
+    "react-server-dom-webpack": "latest",
+    "vinext": "latest",
+    "vite": "latest"
   }
 }
