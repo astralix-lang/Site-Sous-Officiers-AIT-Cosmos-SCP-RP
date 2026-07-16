@@ -138,6 +138,7 @@ function UserModal({ actor, editing, onClose, onSave }) {
             <div><label>Nom</label><input value={form.lastName} onChange={(e) => set("lastName", e.target.value)} required /></div>
           </div>
           <label>Adresse e-mail</label><input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} required />
+          <label>Identifiant Discord</label><input value={form.discordId || ""} onChange={(e) => set("discordId", e.target.value.replace(/\D/g, ""))} inputMode="numeric" maxLength={20} placeholder="Ex. 123456789012345678" />
           <label>Niveau d’accès</label>
           <select value={form.role} onChange={(e) => set("role", e.target.value)} disabled={editing && !allowedRoles.includes(editing.role)}>
             {(allowedRoles.includes(form.role) ? allowedRoles : [form.role]).map((role) => <option key={role} value={role}>{ROLES[role].label}</option>)}
@@ -145,6 +146,28 @@ function UserModal({ actor, editing, onClose, onSave }) {
           <label>{editing ? "Nouveau mot de passe (facultatif)" : "Mot de passe temporaire"}</label>
           <input type="password" value={form.password} onChange={(e) => set("password", e.target.value)} required={!editing} minLength={8} placeholder="8 caractères minimum" />
           <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Annuler</button><button type="submit" className="primary">{editing ? "Enregistrer" : "Créer le compte"}</button></div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function ProfileModal({ user, onClose, onSave }) {
+  const [form, setForm] = useState({ ...user, password: "" });
+  const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="modal profile-modal">
+        <button className="icon-button close" onClick={onClose}><X size={20} /></button>
+        <div className="profile-modal-head"><div className={`avatar profile-avatar ${ROLES[user.role].tone}`}>{initials(user)}</div><div><p className="eyebrow dark">MON COMPTE</p><h2>Personnaliser mon profil</h2><p className="muted">Mettez à jour vos informations personnelles.</p></div></div>
+        <form onSubmit={(event) => { event.preventDefault(); onSave(form); }}>
+          <div className="form-grid"><div><label>Prénom</label><input value={form.firstName} onChange={(event) => set("firstName", event.target.value)} required /></div><div><label>Nom</label><input value={form.lastName} onChange={(event) => set("lastName", event.target.value)} required /></div></div>
+          <label>Adresse e-mail</label><input type="email" value={form.email} onChange={(event) => set("email", event.target.value)} required />
+          <label>Identifiant Discord</label><input value={form.discordId || ""} onChange={(event) => set("discordId", event.target.value.replace(/\D/g, ""))} inputMode="numeric" maxLength={20} placeholder="Ex. 123456789012345678" />
+          <label>Niveau d’accès</label><div className="readonly-role"><RoleBadge role={user.role} /><span>Ce niveau est géré par un responsable.</span></div>
+          <label>Nouveau mot de passe <span className="optional">(facultatif)</span></label><input type="password" value={form.password} onChange={(event) => set("password", event.target.value)} minLength={8} placeholder="Laisser vide pour conserver le mot de passe actuel" />
+          <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Annuler</button><button type="submit" className="primary">Enregistrer mon profil</button></div>
         </form>
       </div>
     </div>
@@ -233,6 +256,7 @@ function App() {
   const [notice, setNotice] = useState("");
   const [activeSection, setActiveSection] = useState("dashboard");
   const [openGroups, setOpenGroups] = useState({ admin: true, referent: false, global: true, senior: false });
+  const [profileOpen, setProfileOpen] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -270,6 +294,13 @@ function App() {
     if (!manageable(user) || !confirm(`Supprimer le compte de ${user.firstName} ${user.lastName} ?`)) return;
     setUsers((current) => current.filter((item) => item.id !== user.id)); flash("Le compte a été supprimé.");
   }
+  function saveProfile(form) {
+    const updated = { ...session, ...form, password: form.password || session.password };
+    setUsers((current) => current.map((user) => user.id === session.id ? updated : user));
+    setSession(updated);
+    setProfileOpen(false);
+    flash("Votre profil a bien été mis à jour.");
+  }
 
   if (!ready) return null;
   if (!session) return <Login onLogin={login} error={loginError} />;
@@ -284,7 +315,7 @@ function App() {
           <MenuGroup title="Globale" icon={Send} open={openGroups.global} onToggle={() => toggleGroup("global")}><button className={`menu-item ${activeSection === "recommendation" ? "active" : ""}`} onClick={() => setActiveSection("recommendation")}><Medal size={17} /> Recommandation</button><button className={`menu-item ${activeSection === "pcs_exp" ? "active" : ""}`} onClick={() => setActiveSection("pcs_exp")}><ClipboardCheck size={17} /> Recommandation PCS EXP</button><button className={`menu-item ${activeSection === "observation_hdr" ? "active" : ""}`} onClick={() => setActiveSection("observation_hdr")}><MessageSquareText size={17} /> Observation HDR</button></MenuGroup>
           {["admin", "referent", "senior"].includes(session.role) && <MenuGroup title="Sous-Officier Supérieur" icon={BadgeCheck} open={openGroups.senior} onToggle={() => toggleGroup("senior")}><button className={`menu-item ${activeSection === "observation_so" ? "active" : ""}`} onClick={() => setActiveSection("observation_so")}><MessageSquareText size={17} /> Observation SO</button></MenuGroup>}
         </nav>
-        <div className="profile-card"><div className="avatar">{initials(session)}</div><div><strong>{session.firstName} {session.lastName}</strong><small>{ROLES[session.role].label}</small></div><ChevronDown size={16} /></div>
+        <button className="profile-card" onClick={() => setProfileOpen(true)} title="Personnaliser mon compte"><div className={`avatar ${ROLES[session.role].tone}`}>{initials(session)}</div><div><strong>{session.firstName} {session.lastName}</strong><small>{ROLES[session.role].label}</small></div><ChevronDown size={16} /></button>
         <button className="logout" onClick={() => setSession(null)}><LogOut size={18} /> Se déconnecter</button>
       </aside>
 
@@ -307,6 +338,7 @@ function App() {
       </main>
       {notice && <div className="toast"><BadgeCheck size={19} />{notice}</div>}
       {modal && <UserModal actor={session} editing={modal.id ? modal : null} onClose={() => setModal(null)} onSave={saveUser} />}
+      {profileOpen && <ProfileModal user={session} onClose={() => setProfileOpen(false)} onSave={saveProfile} />}
     </div>
   );
 }
