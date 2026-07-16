@@ -40,6 +40,7 @@ export async function POST(request) {
     const reason = clean(body.values?.reason, 1000);
     const observation = body.values?.observation === "negative" ? "Négative" : "Positive";
     const isObservation = ["observation_hdr", "observation_so"].includes(body.type);
+    const embedColor = isObservation ? (body.values?.observation === "negative" ? 0xd64550 : 0x20896b) : config.color;
     if (!aitName || !author || !reason) {
       return Response.json({ error: "Veuillez remplir tous les champs obligatoires." }, { status: 400 });
     }
@@ -66,7 +67,7 @@ export async function POST(request) {
         allowed_mentions: { parse: [] },
         embeds: [{
           title: config.title,
-          color: config.color,
+          color: embedColor,
           fields,
           footer: { text: `Transmis par ${senderName}${senderRole ? ` • ${senderRole}` : ""}${senderEmail ? ` • ${senderEmail}` : ""}` },
           timestamp: new Date().toISOString(),
