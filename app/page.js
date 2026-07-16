@@ -10,11 +10,13 @@ import {
   LogOut,
   Medal,
   MessageSquareText,
+  Moon,
   Pencil,
   Plus,
   Search,
   Send,
   ShieldCheck,
+  Sun,
   Trash2,
   UserRound,
   UsersRound,
@@ -36,6 +38,7 @@ const INITIAL_USERS = [
 ];
 
 const STORAGE_KEY = "portail-so-users-v1";
+const THEME_KEY = "portail-so-theme";
 
 const TRANSMISSION_TYPES = {
   recommendation: {
@@ -138,7 +141,6 @@ function UserModal({ actor, editing, onClose, onSave }) {
             <div><label>Nom</label><input value={form.lastName} onChange={(e) => set("lastName", e.target.value)} required /></div>
           </div>
           <label>Adresse e-mail</label><input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} required />
-          <label>Identifiant Discord</label><input value={form.discordId || ""} onChange={(e) => set("discordId", e.target.value.replace(/\D/g, ""))} inputMode="numeric" maxLength={20} placeholder="Ex. 123456789012345678" />
           <label>Niveau d’accès</label>
           <select value={form.role} onChange={(e) => set("role", e.target.value)} disabled={editing && !allowedRoles.includes(editing.role)}>
             {(allowedRoles.includes(form.role) ? allowedRoles : [form.role]).map((role) => <option key={role} value={role}>{ROLES[role].label}</option>)}
@@ -164,7 +166,6 @@ function ProfileModal({ user, onClose, onSave }) {
         <form onSubmit={(event) => { event.preventDefault(); onSave(form); }}>
           <div className="form-grid"><div><label>Prénom</label><input value={form.firstName} onChange={(event) => set("firstName", event.target.value)} required /></div><div><label>Nom</label><input value={form.lastName} onChange={(event) => set("lastName", event.target.value)} required /></div></div>
           <label>Adresse e-mail</label><input type="email" value={form.email} onChange={(event) => set("email", event.target.value)} required />
-          <label>Identifiant Discord</label><input value={form.discordId || ""} onChange={(event) => set("discordId", event.target.value.replace(/\D/g, ""))} inputMode="numeric" maxLength={20} placeholder="Ex. 123456789012345678" />
           <label>Niveau d’accès</label><div className="readonly-role"><RoleBadge role={user.role} /><span>Ce niveau est géré par un responsable.</span></div>
           <label>Nouveau mot de passe <span className="optional">(facultatif)</span></label><input type="password" value={form.password} onChange={(event) => set("password", event.target.value)} minLength={8} placeholder="Laisser vide pour conserver le mot de passe actuel" />
           <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Annuler</button><button type="submit" className="primary">Enregistrer mon profil</button></div>
@@ -257,14 +258,24 @@ function App() {
   const [activeSection, setActiveSection] = useState("dashboard");
   const [openGroups, setOpenGroups] = useState({ admin: true, referent: false, global: true, senior: false });
   const [profileOpen, setProfileOpen] = useState(false);
+  const [darkMode, setDarkMode] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
-    setUsers(stored ? JSON.parse(stored) : INITIAL_USERS);
+    const loadedUsers = stored ? JSON.parse(stored) : INITIAL_USERS;
+    setUsers(loadedUsers.map(({ discordId: _discardedDiscordId, ...user }) => user));
+    const savedTheme = localStorage.getItem(THEME_KEY) === "dark";
+    setDarkMode(savedTheme);
+    document.documentElement.dataset.theme = savedTheme ? "dark" : "light";
     setReady(true);
   }, []);
 
   useEffect(() => { if (ready) localStorage.setItem(STORAGE_KEY, JSON.stringify(users)); }, [users, ready]);
+  useEffect(() => {
+    if (!ready) return;
+    document.documentElement.dataset.theme = darkMode ? "dark" : "light";
+    localStorage.setItem(THEME_KEY, darkMode ? "dark" : "light");
+  }, [darkMode, ready]);
 
   const canManage = session && ["admin", "referent"].includes(session.role);
   const manageable = (user) => session?.role === "admin" ? user.role !== "admin" : ["senior", "officer"].includes(user.role);
@@ -316,7 +327,14 @@ function App() {
           {["admin", "referent", "senior"].includes(session.role) && <MenuGroup title="Sous-Officier Supérieur" icon={BadgeCheck} open={openGroups.senior} onToggle={() => toggleGroup("senior")}><button className={`menu-item ${activeSection === "observation_so" ? "active" : ""}`} onClick={() => setActiveSection("observation_so")}><MessageSquareText size={17} /> Observation SO</button></MenuGroup>}
         </nav>
         <button className="profile-card" onClick={() => setProfileOpen(true)} title="Personnaliser mon compte"><div className={`avatar ${ROLES[session.role].tone}`}>{initials(session)}</div><div><strong>{session.firstName} {session.lastName}</strong><small>{ROLES[session.role].label}</small></div><ChevronDown size={16} /></button>
-        <button className="logout" onClick={() => setSession(null)}><LogOut size={18} /> Se déconnecter</button>
+        <div className="sidebar-actions">
+          <button className="logout" onClick={() => setSession(null)}><LogOut size={18} /><span>Se déconnecter</span></button>
+          <label className="theme-toggle" title={darkMode ? "Passer en mode clair" : "Passer en mode sombre"}>
+            <input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} aria-label="Activer le mode sombre" />
+            {darkMode ? <Sun size={17} /> : <Moon size={17} />}
+            <i aria-hidden="true"><span /></i>
+          </label>
+        </div>
       </aside>
 
       <main className="content">
