@@ -67,6 +67,15 @@ function RoleBadge({ role }) {
   return <span className={`role-badge ${item.tone}`}><span>{item.short}</span>{item.label}</span>;
 }
 
+function MenuGroup({ title, icon: Icon, open, onToggle, children }) {
+  return (
+    <div className="menu-group">
+      <button className="menu-group-toggle" onClick={onToggle}><Icon size={18} /><span>{title}</span><ChevronDown className={open ? "rotated" : ""} size={15} /></button>
+      {open && <div className="menu-group-items">{children || <span className="menu-empty">À compléter</span>}</div>}
+    </div>
+  );
+}
+
 function Login({ onLogin, error }) {
   const [email, setEmail] = useState("admin@portail-so.fr");
   const [password, setPassword] = useState("Admin2026!");
@@ -216,6 +225,7 @@ function App() {
   const [modal, setModal] = useState(null);
   const [notice, setNotice] = useState("");
   const [activeSection, setActiveSection] = useState("dashboard");
+  const [openGroups, setOpenGroups] = useState({ admin: true, referent: false, global: true, senior: false });
 
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -233,10 +243,11 @@ function App() {
   }), [users, query, roleFilter]);
 
   function flash(message) { setNotice(message); window.setTimeout(() => setNotice(""), 2500); }
+  function toggleGroup(group) { setOpenGroups((current) => ({ ...current, [group]: !current[group] })); }
   function login(email, password) {
     const user = users.find((item) => item.email.toLowerCase() === email.toLowerCase() && item.password === password && item.status === "Actif");
     if (!user) return setLoginError("Identifiants incorrects ou compte inactif.");
-    setLoginError(""); setSession(user);
+    setLoginError(""); setSession(user); setActiveSection(user.role === "admin" ? "dashboard" : "recommendation");
   }
   function saveUser(form) {
     if (modal?.id) {
@@ -260,13 +271,18 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand-row"><div className="brand-mark"><ShieldCheck size={23} /></div><div><strong>Portail SO</strong><small>Espace sécurisé</small></div></div>
-        <nav><button className={activeSection === "dashboard" ? "active" : ""} onClick={() => setActiveSection("dashboard")}><LayoutDashboard size={19} /> Tableau de bord</button><button className={activeSection === "recommendation" ? "active" : ""} onClick={() => setActiveSection("recommendation")}><Medal size={19} /> Recommandation</button><button className={activeSection === "pcs_exp" ? "active" : ""} onClick={() => setActiveSection("pcs_exp")}><ClipboardCheck size={19} /> Recommandation PCS EXP</button><button className={activeSection === "observation_hdr" ? "active" : ""} onClick={() => setActiveSection("observation_hdr")}><MessageSquareText size={19} /> Observation HDR</button></nav>
+        <nav>
+          {session.role === "admin" && <MenuGroup title="Admin" icon={ShieldCheck} open={openGroups.admin} onToggle={() => toggleGroup("admin")}><button className={`menu-item ${activeSection === "dashboard" ? "active" : ""}`} onClick={() => setActiveSection("dashboard")}><LayoutDashboard size={17} /> Tableau de bord</button></MenuGroup>}
+          {["admin", "referent"].includes(session.role) && <MenuGroup title="Référent SO" icon={UsersRound} open={openGroups.referent} onToggle={() => toggleGroup("referent")} />}
+          <MenuGroup title="Globale" icon={Send} open={openGroups.global} onToggle={() => toggleGroup("global")}><button className={`menu-item ${activeSection === "recommendation" ? "active" : ""}`} onClick={() => setActiveSection("recommendation")}><Medal size={17} /> Recommandation</button><button className={`menu-item ${activeSection === "pcs_exp" ? "active" : ""}`} onClick={() => setActiveSection("pcs_exp")}><ClipboardCheck size={17} /> Recommandation PCS EXP</button><button className={`menu-item ${activeSection === "observation_hdr" ? "active" : ""}`} onClick={() => setActiveSection("observation_hdr")}><MessageSquareText size={17} /> Observation HDR</button></MenuGroup>
+          {["admin", "referent", "senior"].includes(session.role) && <MenuGroup title="Sous-Officier Supérieur" icon={BadgeCheck} open={openGroups.senior} onToggle={() => toggleGroup("senior")} />}
+        </nav>
         <div className="profile-card"><div className="avatar">{initials(session)}</div><div><strong>{session.firstName} {session.lastName}</strong><small>{ROLES[session.role].label}</small></div><ChevronDown size={16} /></div>
         <button className="logout" onClick={() => setSession(null)}><LogOut size={18} /> Se déconnecter</button>
       </aside>
 
       <main className="content">
-        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><option value="dashboard">Tableau de bord</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option></select></div>
+        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}>{session.role === "admin" && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}<optgroup label="Globale"><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option></optgroup></select></div>
         {activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>Bonjour, {session.firstName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
         {activeSection === "dashboard" ? <>
