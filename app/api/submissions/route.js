@@ -17,6 +17,12 @@ const TYPE_CONFIG = {
     envKey: "DISCORD_WEBHOOK_OBSERVATION_HDR",
     aitLabel: "AIT observé",
   },
+  observation_so: {
+    title: "Nouvelle observation SO",
+    color: 0x7957c8,
+    envKey: "DISCORD_WEBHOOK_OBSERVATION_SO",
+    aitLabel: "Nom de l’AIT",
+  },
 };
 
 function clean(value, maxLength = 1000) {
@@ -33,6 +39,7 @@ export async function POST(request) {
     const author = clean(body.values?.author, 100);
     const reason = clean(body.values?.reason, 1000);
     const observation = body.values?.observation === "negative" ? "Négative" : "Positive";
+    const isObservation = ["observation_hdr", "observation_so"].includes(body.type);
     if (!aitName || !author || !reason) {
       return Response.json({ error: "Veuillez remplir tous les champs obligatoires." }, { status: 400 });
     }
@@ -42,8 +49,8 @@ export async function POST(request) {
 
     const fields = [
       { name: config.aitLabel, value: aitName, inline: false },
-      { name: body.type === "observation_hdr" ? "S-OFF/-SUP faisant l’observation" : "S-OFF/-SUP à l’origine", value: author, inline: false },
-      ...(body.type === "observation_hdr"
+      { name: body.type === "observation_hdr" ? "S-OFF/-SUP faisant l’observation" : body.type === "observation_so" ? "S-OFF SUP faisant l’observation" : "S-OFF/-SUP à l’origine", value: author, inline: false },
+      ...(isObservation
         ? [{ name: "Observation", value: observation, inline: true }, { name: "Raison", value: reason, inline: false }]
         : [{ name: "Raison", value: reason, inline: false }]),
     ];
