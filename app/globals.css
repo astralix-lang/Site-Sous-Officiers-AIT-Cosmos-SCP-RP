@@ -19,7 +19,6 @@ h1,h2,p { margin-top:0; }
 .login-brand::after { content:""; position:absolute; width:330px; height:330px; border:1px solid #ffffff10; border-radius:50%; right:-170px; bottom:-80px; box-shadow:0 0 0 60px #ffffff06,0 0 0 120px #ffffff04; }
 .login-brand h1 { font-size:clamp(39px,5vw,68px); line-height:1.04; letter-spacing:-.055em; margin-bottom:27px; }
 .brand-copy { max-width:450px; color:#aec0d6; font-size:17px; line-height:1.65; }
-.role-list { display:flex; flex-wrap:wrap; gap:9px; max-width:500px; margin-top:24px; }
 .security-note { display:flex; align-items:center; gap:9px; color:#8298b4; font-size:12px; margin-top:50px; }
 .login-panel { display:grid; place-items:center; padding:40px; background:#fff; }
 .login-card { width:min(420px,100%); }
@@ -37,8 +36,6 @@ input:focus,select:focus,textarea:focus { border-color:#4b75ca; box-shadow:0 0 0
 .primary:hover { transform:translateY(-1px); }
 .wide { width:100%; margin-top:25px; justify-content:space-between; padding:0 20px; }
 .secondary { color:#40506a; background:#edf1f6; }
-.demo-box { margin-top:25px; padding:16px 18px; display:grid; gap:4px; border-radius:11px; background:#f2f5f9; color:#617087; font-size:12px; }
-.demo-box strong { color:#31435d; font-size:12px; }
 .form-error { color:#b83543; background:#fff0f1; border-radius:8px; padding:10px 12px; font-size:13px; margin:14px 0 -5px; }
 .mobile-logo { display:none; }
 
@@ -91,8 +88,7 @@ nav { padding-top:28px; flex:1; }nav button { width:100%; display:flex; align-it
 [data-theme="dark"] th { color:#91a2b7; background:#122235; }
 [data-theme="dark"] .user-cell strong,[data-theme="dark"] .category-card strong { color:#edf3fb; }
 [data-theme="dark"] .icon-button { color:#9aacbf; background:#122235; border-color:#2a3c51; }
-[data-theme="dark"] .readonly-role,[data-theme="dark"] .demo-box,[data-theme="dark"] .trend { color:#a9b7c8; background:#132438; border-color:#2a3c51; }
-[data-theme="dark"] .demo-box strong { color:#dce6f2; }
+[data-theme="dark"] .readonly-role,[data-theme="dark"] .trend { color:#a9b7c8; background:#132438; border-color:#2a3c51; }
 [data-theme="dark"] .role-badge { color:#c9d5e4; background:#172a40; }
 [data-theme="dark"] .all-access { color:#a9c8f1; background:#142a45; border-color:#294564; }
 [data-theme="dark"] .eyebrow.dark { color:#78a0cf; }

@@ -95,10 +95,7 @@ function Login({ onLogin, error }) {
         <div className="brand-mark large"><ShieldCheck size={34} /></div>
         <p className="eyebrow">ESPACE SÉCURISÉ</p>
         <h1>Portail<br />Sous-Officiers</h1>
-        <p className="brand-copy">Un espace unique pour gérer les accès, les équipes et les responsabilités.</p>
-        <div className="role-list">
-          {Object.entries(ROLES).map(([key, role]) => <RoleBadge key={key} role={key} />)}
-        </div>
+        <p className="brand-copy">Espace de gestion pour les sous-officiers AIT</p>
         <p className="security-note"><ShieldCheck size={16} /> Accès protégé et données confidentielles</p>
       </section>
 
@@ -116,7 +113,6 @@ function Login({ onLogin, error }) {
             {error && <p className="form-error">{error}</p>}
             <button className="primary wide" type="submit">Se connecter <span>→</span></button>
           </form>
-          <div className="demo-box"><strong>Compte de démonstration</strong><span>admin@portail-so.fr</span><span>Mot de passe : Admin2026!</span></div>
         </div>
       </section>
     </main>
