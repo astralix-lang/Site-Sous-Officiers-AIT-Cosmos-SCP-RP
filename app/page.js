@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  BarChart3,
   BadgeCheck,
   Bell,
+  CalendarDays,
   ClipboardCheck,
   ChevronDown,
   FileText,
@@ -22,9 +24,12 @@ import {
   Search,
   ScrollText,
   Send,
+  Settings2,
   ShieldCheck,
   Sun,
   Trash2,
+  TrendingUp,
+  Trophy,
   Download,
   UserCheck,
   UserRound,
@@ -74,6 +79,8 @@ const QUOTA_KEY = "portail-so-quotas-v1";
 const MISSIONS_KEY = "portail-so-missions-v1";
 const CHAT_KEY = "portail-so-chats-v1";
 const LOG_KEY = "portail-so-logs-v1";
+const SHORTCUTS_KEY = "portail-so-shortcuts-v1";
+const SUMMARY_KEY = "portail-so-summary-v1";
 const CHAT_ATTACHMENT_MAX_SIZE = 1024 * 1024;
 const CHAT_ATTACHMENT_MAX_COUNT = 3;
 const CHAT_ATTACHMENT_TYPES = new Set([
@@ -84,7 +91,7 @@ const CHAT_ATTACHMENT_TYPES = new Set([
 ]);
 const DEFAULT_QUOTAS = { targets: { recommendation: 1, pcs_exp: 1, observations: 1, mission_internal: 0 }, counts: {}, exemptions: {} };
 const QUOTA_TYPES = ["recommendation", "pcs_exp", "observation_hdr", "observation_so"];
-const LOG_CATEGORY_LABELS = { auth: "Connexion", account: "Comptes", presence: "Présences", quota: "Quotas", form: "Formulaires", mission: "Missions", chat: "Chat", profile: "Profils", system: "Système" };
+const LOG_CATEGORY_LABELS = { auth: "Connexion", account: "Comptes", presence: "Présences", quota: "Quotas", form: "Formulaires", mission: "Missions", chat: "Chat", profile: "Profils", summary: "Résumé", system: "Système" };
 const REPORT_CONCLUSIONS = [
   "Passage confirmé en sergent",
   "Prolongation de la semaine de test",
@@ -129,6 +136,62 @@ function getTimeGreeting(date = new Date()) {
   if (hour < 18) return "Bon après-midi";
   if (hour < 23) return "Bonsoir";
   return "Bonne nuit";
+}
+
+function getActivityType(entry) {
+  if (entry?.category !== "form" || entry.action !== "Formulaire envoyé") return null;
+  const details = String(entry.details || "").toLowerCase();
+  if (details.includes("observation")) return "observation";
+  if (details.includes("recommandation")) return "recommendation";
+  return null;
+}
+
+function getUserCreatedDate(user) {
+  if (user.createdAtIso) {
+    const date = new Date(user.createdAtIso);
+    if (!Number.isNaN(date.getTime())) return date;
+  }
+  const normalized = String(user.createdAt || "").toLowerCase().replaceAll(".", "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const match = normalized.match(/(\d{1,2})\s+([a-z]+)\s+(\d{4})/);
+  if (!match) return null;
+  const months = { janv: 0, janvier: 0, fevr: 1, fevrier: 1, mars: 2, avr: 3, avril: 3, mai: 4, juin: 5, juil: 6, juillet: 6, aout: 7, sept: 8, septembre: 8, oct: 9, octobre: 9, nov: 10, novembre: 10, dec: 11, decembre: 11 };
+  const month = months[match[2]];
+  return month === undefined ? null : new Date(Number(match[3]), month, Number(match[1]));
+}
+
+function getSummaryPeriod(period, referenceDate = new Date()) {
+  const now = new Date(referenceDate);
+  let start;
+  if (period === "day") start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  else if (period === "week") {
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  } else if (period === "month") start = new Date(now.getFullYear(), now.getMonth(), 1);
+  else start = new Date(now.getFullYear(), 0, 1);
+  const bins = [];
+  let cursor = new Date(start);
+  while (cursor < now) {
+    let end;
+    let label;
+    if (period === "day") {
+      end = new Date(cursor); end.setHours(cursor.getHours() + 4);
+      label = `${String(cursor.getHours()).padStart(2, "0")}h`;
+    } else if (period === "week") {
+      end = new Date(cursor); end.setDate(cursor.getDate() + 1);
+      label = new Intl.DateTimeFormat("fr-FR", { weekday: "short" }).format(cursor).replace(".", "");
+    } else if (period === "month") {
+      end = new Date(cursor); end.setDate(cursor.getDate() + 7);
+      const lastDay = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
+      label = `${cursor.getDate()}–${Math.min(cursor.getDate() + 6, lastDay)}`;
+    } else {
+      end = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+      label = new Intl.DateTimeFormat("fr-FR", { month: "short" }).format(cursor).replace(".", "");
+    }
+    bins.push({ start: new Date(cursor), end: end > now ? new Date(now) : end, label });
+    cursor = end;
+  }
+  if (!bins.length) bins.push({ start, end: now, label: period === "day" ? "00h" : "Maintenant" });
+  return { start, end: now, bins };
 }
 
 function sanitizeChatHtml(html) {
@@ -315,9 +378,27 @@ function PresencePanel({ users, onChange }) {
   );
 }
 
-function HomePanel({ session, users, missions, chats, quotas, logs, onNavigate }) {
+function HomePanel({ session, users, missions, chats, quotas, logs, shortcutIds, onSaveShortcuts, onNavigate }) {
   const isManager = ["admin", "referent"].includes(session.role);
   const isQuotaMember = ["senior", "officer"].includes(session.role);
+  const shortcutCatalog = [
+    { id: "summary", label: "Résumé", description: "Consulter les statistiques", icon: <BarChart3 size={18} />, allowed: true },
+    { id: "chat", label: "Messagerie", description: "Ouvrir une discussion", icon: <MessageSquareText size={18} />, allowed: true },
+    { id: "mission_internal", label: "Mission interne", description: "Déposer ou contrôler un document", icon: <FileText size={18} />, allowed: true },
+    { id: "recommendation", label: "Recommandation", description: "Envoyer une recommandation", icon: <Medal size={18} />, allowed: true },
+    { id: "pcs_exp", label: "Reco PCS EXP", description: "Ouvrir le formulaire PCS EXP", icon: <ClipboardCheck size={18} />, allowed: true },
+    { id: "observation_hdr", label: "Observation HDR", description: "Consigner une observation HDR", icon: <ClipboardCheck size={18} />, allowed: true },
+    { id: "observation_so", label: "Observation SO", description: "Consigner une observation SO", icon: <MessageSquareText size={18} />, allowed: ["admin", "referent", "senior"].includes(session.role) },
+    { id: "sergeant_report", label: "Rapport nouveau SO", description: "Évaluer un nouveau Sergent", icon: <FileText size={18} />, allowed: ["admin", "referent", "senior"].includes(session.role) },
+    { id: "dashboard", label: "Gestion des comptes", description: "Administrer les accès", icon: <ShieldCheck size={18} />, allowed: session.role === "admin" },
+    { id: "presence", label: "Présences", description: "Mettre l’équipe à jour", icon: <UserCheck size={18} />, allowed: isManager },
+    { id: "quotas", label: "Gestion des quotas", description: "Consulter les objectifs de l’équipe", icon: <Gauge size={18} />, allowed: isManager },
+  ].filter((item) => item.allowed);
+  const defaultShortcutIds = ["summary", "chat", "mission_internal", session.role === "senior" ? "observation_so" : "observation_hdr"];
+  const selectedShortcutIds = (shortcutIds?.length ? shortcutIds : defaultShortcutIds).filter((id) => shortcutCatalog.some((item) => item.id === id));
+  const [editingShortcuts, setEditingShortcuts] = useState(false);
+  const [shortcutDraft, setShortcutDraft] = useState(selectedShortcutIds);
+  useEffect(() => setShortcutDraft(selectedShortcutIds), [shortcutIds, session.role]);
   const team = users.filter((user) => ["senior", "officer"].includes(user.role));
   const activeAccounts = users.filter((user) => !user.blocked).length;
   const myChats = chats.filter((chat) => chat.participants.includes(session.id));
@@ -361,9 +442,57 @@ function HomePanel({ session, users, missions, chats, quotas, logs, onNavigate }
       })}</div></section>}
       <div className="home-grid">
         <section className="home-card notifications-card"><div className="home-card-head"><div><p className="eyebrow dark">CENTRE D’INFORMATIONS</p><h2>Notifications importantes</h2></div><span><Bell size={17} /> {notifications.length}</span></div><div className="notification-list">{notifications.map((notification, index) => <button type="button" className={notification.tone} key={`${notification.title}-${index}`} onClick={() => onNavigate(notification.target)}><span>{notification.icon}</span><span><strong>{notification.title}</strong><small>{notification.text}</small></span></button>)}{!notifications.length && <div className="no-notification"><BadgeCheck size={25} /><strong>Tout est à jour</strong><p>Aucune notification importante pour le moment.</p></div>}</div></section>
-        <section className="home-card quick-card"><div className="home-card-head"><div><p className="eyebrow dark">ACCÈS RAPIDE</p><h2>Raccourcis</h2></div></div><div className="quick-actions"><button onClick={() => onNavigate("chat")}><MessageSquareText size={18} /><span><strong>Messagerie</strong><small>Ouvrir une discussion</small></span></button><button onClick={() => onNavigate("mission_internal")}><FileText size={18} /><span><strong>Mission interne</strong><small>Déposer ou contrôler un document</small></span></button><button onClick={() => onNavigate(session.role === "senior" ? "observation_so" : "observation_hdr")}><ClipboardCheck size={18} /><span><strong>Nouvelle observation</strong><small>Accéder au formulaire</small></span></button>{session.role === "admin" && <button onClick={() => onNavigate("dashboard")}><ShieldCheck size={18} /><span><strong>Gestion des comptes</strong><small>Administrer les accès</small></span></button>}{session.role === "referent" && <button onClick={() => onNavigate("presence")}><UserCheck size={18} /><span><strong>Présences</strong><small>Mettre l’équipe à jour</small></span></button>}</div></section>
+        <section className="home-card quick-card"><div className="home-card-head"><div><p className="eyebrow dark">ACCÈS RAPIDE</p><h2>Mes raccourcis</h2></div><button className="shortcut-edit-button" onClick={() => { setShortcutDraft(selectedShortcutIds); setEditingShortcuts((current) => !current); }}><Settings2 size={15} /> {editingShortcuts ? "Fermer" : "Personnaliser"}</button></div>{editingShortcuts ? <div className="shortcut-editor"><p>Choisissez les rubriques affichées sur votre accueil.</p><div className="shortcut-options">{shortcutCatalog.map((item) => <label className={shortcutDraft.includes(item.id) ? "selected" : ""} key={item.id}><input type="checkbox" checked={shortcutDraft.includes(item.id)} onChange={() => setShortcutDraft((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])} /><span>{item.icon}</span>{item.label}</label>)}</div><div className="shortcut-editor-actions"><button className="secondary" onClick={() => setShortcutDraft(defaultShortcutIds)}>Par défaut</button><button className="primary" disabled={!shortcutDraft.length} onClick={() => { onSaveShortcuts(shortcutDraft); setEditingShortcuts(false); }}>Enregistrer</button></div></div> : <div className="quick-actions">{shortcutCatalog.filter((item) => selectedShortcutIds.includes(item.id)).map((item) => <button key={item.id} onClick={() => onNavigate(item.id)}>{item.icon}<span><strong>{item.label}</strong><small>{item.description}</small></span></button>)}</div>}</section>
         <section className="home-card activity-card"><div className="home-card-head"><div><p className="eyebrow dark">ACTIVITÉ RÉCENTE</p><h2>{isManager ? "Dernières actions du portail" : "Mes dernières actions"}</h2></div>{isManager && <button onClick={() => onNavigate("logs")}>Voir tous les logs</button>}</div><div className="home-activity-list">{visibleActivity.map((entry) => <article key={entry.id}><span className={`log-dot ${entry.category}`} /><div><strong>{entry.action}</strong><small>{entry.actorName} · {entry.displayAt}</small>{entry.details && <p>{entry.details}</p>}</div></article>)}{!visibleActivity.length && <p className="chat-empty-small">Aucune activité enregistrée pour le moment.</p>}</div></section>
         <section className="home-card identity-card"><p className="eyebrow dark">MON ESPACE</p><h2>{session.grade || GRADES[0]}</h2><RoleBadge role={session.role} /><div><span>État du compte</span><strong className="identity-active"><BadgeCheck size={15} /> Actif</strong></div><div><span>Présence</span><strong>{session.presence === "absent" ? "Absent" : ["senior", "officer"].includes(session.role) ? "Présent" : "Non concerné"}</strong></div></section>
+      </div>
+    </div>
+  );
+}
+
+function SummaryPanel({ session, users, logs, rankingResetAt, onResetRanking }) {
+  const [period, setPeriod] = useState("week");
+  const [scope, setScope] = useState("global");
+  const periodData = getSummaryPeriod(period);
+  const periodLabels = { day: "Aujourd’hui", week: "Cette semaine", month: "Ce mois", year: "Cette année" };
+  const allActivity = logs.map((entry) => ({ ...entry, type: getActivityType(entry), date: new Date(entry.createdAt) })).filter((entry) => entry.type && !Number.isNaN(entry.date.getTime()));
+  const scopedActivity = scope === "self" ? allActivity.filter((entry) => entry.actorId === session.id) : allActivity;
+  const currentActivity = scopedActivity.filter((entry) => entry.date >= periodData.start && entry.date <= periodData.end);
+  const duration = Math.max(periodData.end.getTime() - periodData.start.getTime(), 1);
+  const previousStart = new Date(periodData.start.getTime() - duration);
+  const previousActivity = scopedActivity.filter((entry) => entry.date >= previousStart && entry.date < periodData.start);
+  const recommendationCount = currentActivity.filter((entry) => entry.type === "recommendation").length;
+  const observationCount = currentActivity.filter((entry) => entry.type === "observation").length;
+  const trend = previousActivity.length ? Math.round(((currentActivity.length - previousActivity.length) / previousActivity.length) * 100) : currentActivity.length ? 100 : 0;
+  const activeMembers = new Set(currentActivity.map((entry) => entry.actorId)).size;
+  const chartBins = periodData.bins.map((bin) => {
+    const entries = currentActivity.filter((entry) => entry.date >= bin.start && entry.date <= bin.end);
+    return { ...bin, recommendation: entries.filter((entry) => entry.type === "recommendation").length, observation: entries.filter((entry) => entry.type === "observation").length };
+  });
+  const chartMaximum = Math.max(1, ...chartBins.flatMap((bin) => [bin.recommendation, bin.observation]));
+  const busiestBin = chartBins.reduce((best, bin) => (bin.recommendation + bin.observation) > (best.recommendation + best.observation) ? bin : best, chartBins[0]);
+  const team = users.filter((user) => ["senior", "officer"].includes(user.role));
+  const rankingFloor = rankingResetAt ? new Date(Math.max(periodData.start.getTime(), new Date(rankingResetAt).getTime())) : periodData.start;
+  const rankingActivity = allActivity.filter((entry) => entry.date >= rankingFloor && entry.date <= periodData.end);
+  const ranking = team.map((user) => {
+    const entries = rankingActivity.filter((entry) => entry.actorId === user.id);
+    return { user, recommendations: entries.filter((entry) => entry.type === "recommendation").length, observations: entries.filter((entry) => entry.type === "observation").length, total: entries.length };
+  }).sort((a, b) => b.total - a.total || `${a.user.lastName}`.localeCompare(b.user.lastName)).slice(0, 6);
+  const rankingMaximum = Math.max(1, ...ranking.map((item) => item.total));
+  const arrivals = team.map((user) => ({ user, date: getUserCreatedDate(user) })).filter((item) => item.date && item.date >= periodData.start && item.date <= periodData.end);
+  const arrivalBins = periodData.bins.map((bin) => ({ ...bin, count: arrivals.filter((item) => item.date >= bin.start && item.date <= bin.end).length }));
+  const arrivalMaximum = Math.max(1, ...arrivalBins.map((bin) => bin.count));
+  const canManage = ["admin", "referent"].includes(session.role);
+
+  return (
+    <div className="summary-dashboard">
+      <section className="summary-toolbar"><div><p className="eyebrow dark">PÉRIODE ANALYSÉE</p><h2>{periodLabels[period]}</h2><p>Les données sont calculées à partir des transmissions enregistrées sur le portail.</p></div><div className="summary-controls"><label>Affichage<select value={scope} onChange={(event) => setScope(event.target.value)}><option value="global">Vue globale</option><option value="self">Moi uniquement</option></select></label><label>Période<select value={period} onChange={(event) => setPeriod(event.target.value)}><option value="day">Jour</option><option value="week">Semaine</option><option value="month">Mois</option><option value="year">Année</option></select></label></div></section>
+      <section className="summary-kpis"><article><span className="summary-kpi-icon blue"><BarChart3 size={20} /></span><div><strong>{currentActivity.length}</strong><small>Transmissions</small></div><em className={trend >= 0 ? "positive" : "negative"}><TrendingUp size={13} /> {trend >= 0 ? "+" : ""}{trend}%</em></article><article><span className="summary-kpi-icon gold"><Medal size={20} /></span><div><strong>{recommendationCount}</strong><small>Recommandations</small></div></article><article><span className="summary-kpi-icon violet"><MessageSquareText size={20} /></span><div><strong>{observationCount}</strong><small>Observations</small></div></article><article><span className="summary-kpi-icon green"><UsersRound size={20} /></span><div><strong>{activeMembers}</strong><small>Membres actifs</small></div></article></section>
+      <div className="summary-grid">
+        <section className="summary-card activity-chart-card"><div className="summary-card-head"><div><p className="eyebrow dark">ÉVOLUTION</p><h2>Recommandations et observations</h2></div><div className="chart-legend"><span><i className="recommendation" /> Recommandations</span><span><i className="observation" /> Observations</span></div></div><div className="activity-chart">{chartBins.map((bin, index) => <div className="activity-column" key={`${bin.label}-${index}`}><div className="activity-bars"><i className="recommendation" title={`${bin.recommendation} recommandation(s)`} style={{ height: `${bin.recommendation ? Math.max((bin.recommendation / chartMaximum) * 100, 7) : 2}%` }} /><i className="observation" title={`${bin.observation} observation(s)`} style={{ height: `${bin.observation ? Math.max((bin.observation / chartMaximum) * 100, 7) : 2}%` }} /></div><span>{bin.label}</span></div>)}</div><div className="chart-insight"><CalendarDays size={16} /><span>Période la plus active : <strong>{busiestBin?.label || "—"}</strong></span></div></section>
+        <section className="summary-card distribution-card"><div className="summary-card-head"><div><p className="eyebrow dark">RÉPARTITION</p><h2>Nature de l’activité</h2></div></div><div className="distribution-visual" style={{ "--recommendation-share": `${currentActivity.length ? (recommendationCount / currentActivity.length) * 100 : 50}%` }}><div><strong>{currentActivity.length}</strong><small>total</small></div></div><div className="distribution-details"><div><span><i className="recommendation" /> Recommandations</span><strong>{currentActivity.length ? Math.round((recommendationCount / currentActivity.length) * 100) : 0}%</strong></div><div><span><i className="observation" /> Observations</span><strong>{currentActivity.length ? Math.round((observationCount / currentActivity.length) * 100) : 0}%</strong></div></div></section>
+        <section className="summary-card ranking-card"><div className="summary-card-head"><div><p className="eyebrow dark">CLASSEMENT</p><h2>Sous-Officiers les plus actifs</h2><p>Recommandations et observations depuis le dernier reset.</p></div>{canManage && <button className="reset-ranking" onClick={onResetRanking}><RotateCcw size={15} /> Reset</button>}</div><div className="ranking-list">{ranking.map((item, index) => <article key={item.user.id}><span className={`rank-position rank-${index + 1}`}>{index < 3 ? <Trophy size={15} /> : index + 1}</span><div className={`avatar small ${ROLES[item.user.role].tone}`}>{initials(item.user)}</div><div className="rank-member"><strong>{item.user.grade} {item.user.lastName}</strong><small>{item.recommendations} reco · {item.observations} observation{item.observations > 1 ? "s" : ""}</small><div><i style={{ width: `${(item.total / rankingMaximum) * 100}%` }} /></div></div><strong className="rank-score">{item.total}</strong></article>)}</div>{rankingResetAt && <p className="ranking-reset-date">Classement réinitialisé le {new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(rankingResetAt))}</p>}</section>
+        <section className="summary-card arrivals-card"><div className="summary-card-head"><div><p className="eyebrow dark">EFFECTIFS</p><h2>Arrivées de Sous-Officiers</h2><p>{arrivals.length} arrivée{arrivals.length > 1 ? "s" : ""} sur la période.</p></div><span><UsersRound size={17} /> {team.length} membres</span></div><div className="arrivals-chart">{arrivalBins.map((bin, index) => <div key={`${bin.label}-${index}`}><i title={`${bin.count} arrivée(s)`} style={{ height: `${bin.count ? Math.max((bin.count / arrivalMaximum) * 100, 9) : 3}%` }}><b>{bin.count || ""}</b></i><span>{bin.label}</span></div>)}</div></section>
       </div>
     </div>
   );
@@ -816,6 +945,8 @@ function App() {
   const [missions, setMissions] = useState([]);
   const [chats, setChats] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
+  const [shortcutPreferences, setShortcutPreferences] = useState({});
+  const [summarySettings, setSummarySettings] = useState({ rankingResetAt: null });
   const [loginTransition, setLoginTransition] = useState(null);
 
   useEffect(() => {
@@ -849,11 +980,15 @@ function App() {
     const savedMissions = localStorage.getItem(MISSIONS_KEY);
     const savedChats = localStorage.getItem(CHAT_KEY);
     const savedLogs = localStorage.getItem(LOG_KEY);
+    const savedShortcuts = localStorage.getItem(SHORTCUTS_KEY);
+    const savedSummary = localStorage.getItem(SUMMARY_KEY);
     const parsedQuotas = savedQuotas ? JSON.parse(savedQuotas) : DEFAULT_QUOTAS;
     setQuotas({ targets: { ...DEFAULT_QUOTAS.targets, ...parsedQuotas.targets }, counts: parsedQuotas.counts || {}, exemptions: parsedQuotas.exemptions || {} });
     setMissions(savedMissions ? JSON.parse(savedMissions) : []);
     setChats(savedChats ? JSON.parse(savedChats) : []);
     setAuditLogs(savedLogs ? JSON.parse(savedLogs) : []);
+    setShortcutPreferences(savedShortcuts ? JSON.parse(savedShortcuts) : {});
+    setSummarySettings(savedSummary ? JSON.parse(savedSummary) : { rankingResetAt: null });
     setDarkMode(savedTheme);
     document.documentElement.dataset.theme = savedTheme ? "dark" : "light";
     setReady(true);
@@ -871,6 +1006,8 @@ function App() {
     if (!ready) return;
     try { localStorage.setItem(LOG_KEY, JSON.stringify(auditLogs)); } catch { /* Conserve l’application fonctionnelle si le stockage est plein. */ }
   }, [auditLogs, ready]);
+  useEffect(() => { if (ready) localStorage.setItem(SHORTCUTS_KEY, JSON.stringify(shortcutPreferences)); }, [shortcutPreferences, ready]);
+  useEffect(() => { if (ready) localStorage.setItem(SUMMARY_KEY, JSON.stringify(summarySettings)); }, [summarySettings, ready]);
   useEffect(() => {
     function syncAccounts(event) {
       if (event.key === SESSION_KEY && !event.newValue) {
@@ -885,6 +1022,14 @@ function App() {
       }
       if (event.key === LOG_KEY && event.newValue) {
         try { setAuditLogs(JSON.parse(event.newValue)); } catch { /* Ignore un journal invalide. */ }
+        return;
+      }
+      if (event.key === SHORTCUTS_KEY && event.newValue) {
+        try { setShortcutPreferences(JSON.parse(event.newValue)); } catch { /* Ignore des raccourcis invalides. */ }
+        return;
+      }
+      if (event.key === SUMMARY_KEY && event.newValue) {
+        try { setSummarySettings(JSON.parse(event.newValue)); } catch { /* Ignore des réglages invalides. */ }
         return;
       }
       if (event.key !== STORAGE_KEY || !event.newValue) return;
@@ -932,6 +1077,18 @@ function App() {
     setAuditLogs([]);
     addLog("system", "Journal des logs réinitialisé", "L’historique précédent a été supprimé.");
     flash("Le journal des logs a été réinitialisé.");
+  }
+  function saveHomeShortcuts(ids) {
+    setShortcutPreferences((current) => ({ ...current, [session.id]: ids }));
+    addLog("profile", "Raccourcis d’accueil modifiés", `${ids.length} raccourci${ids.length > 1 ? "s" : ""} sélectionné${ids.length > 1 ? "s" : ""}`);
+    flash("Vos raccourcis ont bien été enregistrés.");
+  }
+  function resetActivityRanking() {
+    if (!["admin", "referent"].includes(session.role) || !confirm("Réinitialiser le classement d’activité des Sous-Officiers ?")) return;
+    const rankingResetAt = new Date().toISOString();
+    setSummarySettings((current) => ({ ...current, rankingResetAt }));
+    addLog("summary", "Classement d’activité réinitialisé");
+    flash("Le classement d’activité a été réinitialisé.");
   }
   function flash(message) { setNotice(message); window.setTimeout(() => setNotice(""), 2500); }
   function transmissionSuccess(message, type) {
@@ -1089,7 +1246,8 @@ function App() {
       addLog("account", "Compte modifié", editedUser ? `${editedUser.firstName} ${editedUser.lastName}` : `${savedForm.firstName} ${savedForm.lastName}`);
       flash("Le compte a bien été modifié.");
     } else {
-      setUsers((current) => [...current, { ...savedForm, blocked: false, id: crypto.randomUUID(), createdAt: new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", year: "numeric" }).format(new Date()) }]);
+      const createdAt = new Date();
+      setUsers((current) => [...current, { ...savedForm, blocked: false, id: crypto.randomUUID(), createdAtIso: createdAt.toISOString(), createdAt: new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", year: "numeric" }).format(createdAt) }]);
       addLog("account", "Compte créé", `${savedForm.firstName} ${savedForm.lastName} · ${ROLES[savedForm.role].label}`);
       flash("Le compte a bien été créé.");
     }
@@ -1132,7 +1290,7 @@ function App() {
           <button className={`menu-item standalone-nav ${activeSection === "home" ? "active" : ""}`} onClick={() => setActiveSection("home")}><Home size={18} /> Accueil</button>
           {session.role === "admin" && <MenuGroup title="Admin" icon={ShieldCheck} open={openGroups.admin} onToggle={() => toggleGroup("admin")}><button className={`menu-item ${activeSection === "dashboard" ? "active" : ""}`} onClick={() => setActiveSection("dashboard")}><LayoutDashboard size={17} /> Tableau de bord</button></MenuGroup>}
           {["admin", "referent"].includes(session.role) && <MenuGroup title="Référent SO" icon={UsersRound} open={openGroups.referent} onToggle={() => toggleGroup("referent")}><button className={`menu-item ${activeSection === "presence" ? "active" : ""}`} onClick={() => setActiveSection("presence")}><UserCheck size={17} /> Présences</button><button className={`menu-item ${activeSection === "quotas" ? "active" : ""}`} onClick={() => setActiveSection("quotas")}><Gauge size={17} /> Quotas</button></MenuGroup>}
-          <MenuGroup title="Globale" icon={Send} open={openGroups.global} onToggle={() => toggleGroup("global")}><button className={`menu-item ${activeSection === "recommendation" ? "active" : ""}`} onClick={() => setActiveSection("recommendation")}><Medal size={17} /> Recommandation</button><button className={`menu-item ${activeSection === "pcs_exp" ? "active" : ""}`} onClick={() => setActiveSection("pcs_exp")}><ClipboardCheck size={17} /> Recommandation PCS EXP</button><button className={`menu-item ${activeSection === "observation_hdr" ? "active" : ""}`} onClick={() => setActiveSection("observation_hdr")}><MessageSquareText size={17} /> Observation HDR</button><button className={`menu-item ${activeSection === "mission_internal" ? "active" : ""}`} onClick={() => setActiveSection("mission_internal")}><FileText size={17} /> Mission interne</button></MenuGroup>
+          <MenuGroup title="Globale" icon={Send} open={openGroups.global} onToggle={() => toggleGroup("global")}><button className={`menu-item ${activeSection === "summary" ? "active" : ""}`} onClick={() => setActiveSection("summary")}><BarChart3 size={17} /> Résumé</button><button className={`menu-item ${activeSection === "recommendation" ? "active" : ""}`} onClick={() => setActiveSection("recommendation")}><Medal size={17} /> Recommandation</button><button className={`menu-item ${activeSection === "pcs_exp" ? "active" : ""}`} onClick={() => setActiveSection("pcs_exp")}><ClipboardCheck size={17} /> Recommandation PCS EXP</button><button className={`menu-item ${activeSection === "observation_hdr" ? "active" : ""}`} onClick={() => setActiveSection("observation_hdr")}><MessageSquareText size={17} /> Observation HDR</button><button className={`menu-item ${activeSection === "mission_internal" ? "active" : ""}`} onClick={() => setActiveSection("mission_internal")}><FileText size={17} /> Mission interne</button></MenuGroup>
           {["admin", "referent", "senior"].includes(session.role) && <MenuGroup title="Sous-Officier Supérieur" icon={BadgeCheck} open={openGroups.senior} onToggle={() => toggleGroup("senior")}><button className={`menu-item ${activeSection === "observation_so" ? "active" : ""}`} onClick={() => setActiveSection("observation_so")}><MessageSquareText size={17} /> Observation SO</button><button className={`menu-item ${activeSection === "sergeant_report" ? "active" : ""}`} onClick={() => setActiveSection("sergeant_report")}><FileText size={17} /> Rapport nouveau SO</button></MenuGroup>}
           <MenuGroup title="Chat" icon={MessageSquareText} open={openGroups.chat} onToggle={() => toggleGroup("chat")}><button className={`menu-item ${activeSection === "chat" ? "active" : ""}`} onClick={() => setActiveSection("chat")}><Send size={17} /> Messagerie</button></MenuGroup>
           {["admin", "referent"].includes(session.role) && <button className={`menu-item standalone-nav logs-nav ${activeSection === "logs" ? "active" : ""}`} onClick={() => setActiveSection("logs")}><ScrollText size={18} /> Logs</button>}
@@ -1149,10 +1307,10 @@ function App() {
       </aside>
 
       <main className="content">
-        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{session.role === "admin" && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{["admin", "referent"].includes(session.role) && <optgroup label="Référent SO"><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{["admin", "referent", "senior"].includes(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{["admin", "referent"].includes(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
-        {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
+        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{session.role === "admin" && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{["admin", "referent"].includes(session.role) && <optgroup label="Référent SO"><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="summary">Résumé</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{["admin", "referent", "senior"].includes(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{["admin", "referent"].includes(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
+        {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
-        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} onNavigate={setActiveSection} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
+        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={setActiveSection} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} logs={auditLogs} rankingResetAt={summarySettings.rankingResetAt} onResetRanking={resetActivityRanking} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
         <section className="stats">
           <article><span className="stat-icon blue"><UsersRound /></span><div><strong>{users.length}</strong><small>Comptes au total</small></div><span className="trend">Tous niveaux</span></article>
           <article><span className="stat-icon red"><UserX /></span><div><strong>{users.filter((user) => user.blocked).length}</strong><small>Comptes bloqués</small></div><span className="trend">Accès suspendu</span></article>
