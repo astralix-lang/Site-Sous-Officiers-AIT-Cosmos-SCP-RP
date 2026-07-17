@@ -138,11 +138,19 @@ function getTimeGreeting(date = new Date()) {
   return "Bonne nuit";
 }
 
-function getActivityType(entry) {
+function getActivitySubtype(entry) {
   if (entry?.category !== "form" || entry.action !== "Formulaire envoyé") return null;
   const details = String(entry.details || "").toLowerCase();
-  if (details.includes("observation")) return "observation";
+  if (details.includes("recommandation pcs exp")) return "pcs_exp";
   if (details.includes("recommandation")) return "recommendation";
+  if (details.includes("observation hdr")) return "observation_hdr";
+  if (details.includes("observation so")) return "observation_so";
+  return null;
+}
+
+function getActivityType(subtype) {
+  if (["recommendation", "pcs_exp"].includes(subtype)) return "recommendation";
+  if (["observation_hdr", "observation_so"].includes(subtype)) return "observation";
   return null;
 }
 
@@ -450,29 +458,42 @@ function HomePanel({ session, users, missions, chats, quotas, logs, shortcutIds,
   );
 }
 
-function SummaryPanel({ session, users, logs, rankingResetAt, onResetRanking }) {
+function SummaryPanel({ session, users, logs, activityResetAt, onResetActivity }) {
   const [period, setPeriod] = useState("week");
   const [scope, setScope] = useState("global");
   const periodData = getSummaryPeriod(period);
   const periodLabels = { day: "Aujourd’hui", week: "Cette semaine", month: "Ce mois", year: "Cette année" };
-  const allActivity = logs.map((entry) => ({ ...entry, type: getActivityType(entry), date: new Date(entry.createdAt) })).filter((entry) => entry.type && !Number.isNaN(entry.date.getTime()));
-  const scopedActivity = scope === "self" ? allActivity.filter((entry) => entry.actorId === session.id) : allActivity;
+  const allActivity = logs.map((entry) => {
+    const subtype = getActivitySubtype(entry);
+    return { ...entry, subtype, type: getActivityType(subtype), date: new Date(entry.createdAt) };
+  }).filter((entry) => entry.type && !Number.isNaN(entry.date.getTime()));
+  const resetDate = activityResetAt ? new Date(activityResetAt) : null;
+  const activityAfterReset = resetDate && !Number.isNaN(resetDate.getTime()) ? allActivity.filter((entry) => entry.date >= resetDate) : allActivity;
+  const scopedActivity = scope === "self" ? activityAfterReset.filter((entry) => entry.actorId === session.id) : activityAfterReset;
   const currentActivity = scopedActivity.filter((entry) => entry.date >= periodData.start && entry.date <= periodData.end);
   const duration = Math.max(periodData.end.getTime() - periodData.start.getTime(), 1);
   const previousStart = new Date(periodData.start.getTime() - duration);
   const previousActivity = scopedActivity.filter((entry) => entry.date >= previousStart && entry.date < periodData.start);
   const recommendationCount = currentActivity.filter((entry) => entry.type === "recommendation").length;
   const observationCount = currentActivity.filter((entry) => entry.type === "observation").length;
+  const standardRecommendationCount = currentActivity.filter((entry) => entry.subtype === "recommendation").length;
+  const pcsExpCount = currentActivity.filter((entry) => entry.subtype === "pcs_exp").length;
+  const observationHdrCount = currentActivity.filter((entry) => entry.subtype === "observation_hdr").length;
+  const observationSoCount = currentActivity.filter((entry) => entry.subtype === "observation_so").length;
   const trend = previousActivity.length ? Math.round(((currentActivity.length - previousActivity.length) / previousActivity.length) * 100) : currentActivity.length ? 100 : 0;
   const activeMembers = new Set(currentActivity.map((entry) => entry.actorId)).size;
   const chartBins = periodData.bins.map((bin) => {
     const entries = currentActivity.filter((entry) => entry.date >= bin.start && entry.date <= bin.end);
-    return { ...bin, recommendation: entries.filter((entry) => entry.type === "recommendation").length, observation: entries.filter((entry) => entry.type === "observation").length };
+    const recommendation = entries.filter((entry) => entry.subtype === "recommendation").length;
+    const pcsExp = entries.filter((entry) => entry.subtype === "pcs_exp").length;
+    const observationHdr = entries.filter((entry) => entry.subtype === "observation_hdr").length;
+    const observationSo = entries.filter((entry) => entry.subtype === "observation_so").length;
+    return { ...bin, recommendation, pcsExp, observationHdr, observationSo, recommendationTotal: recommendation + pcsExp, observationTotal: observationHdr + observationSo };
   });
-  const chartMaximum = Math.max(1, ...chartBins.flatMap((bin) => [bin.recommendation, bin.observation]));
-  const busiestBin = chartBins.reduce((best, bin) => (bin.recommendation + bin.observation) > (best.recommendation + best.observation) ? bin : best, chartBins[0]);
+  const chartMaximum = Math.max(1, ...chartBins.flatMap((bin) => [bin.recommendationTotal, bin.observationTotal]));
+  const busiestBin = chartBins.reduce((best, bin) => (bin.recommendationTotal + bin.observationTotal) > (best.recommendationTotal + best.observationTotal) ? bin : best, chartBins[0]);
   const team = users.filter((user) => ["senior", "officer"].includes(user.role));
-  const rankingFloor = rankingResetAt ? new Date(Math.max(periodData.start.getTime(), new Date(rankingResetAt).getTime())) : periodData.start;
+  const rankingFloor = resetDate && !Number.isNaN(resetDate.getTime()) ? new Date(Math.max(periodData.start.getTime(), resetDate.getTime())) : periodData.start;
   const rankingActivity = allActivity.filter((entry) => entry.date >= rankingFloor && entry.date <= periodData.end);
   const ranking = team.map((user) => {
     const entries = rankingActivity.filter((entry) => entry.actorId === user.id);
@@ -482,16 +503,16 @@ function SummaryPanel({ session, users, logs, rankingResetAt, onResetRanking }) 
   const arrivals = team.map((user) => ({ user, date: getUserCreatedDate(user) })).filter((item) => item.date && item.date >= periodData.start && item.date <= periodData.end);
   const arrivalBins = periodData.bins.map((bin) => ({ ...bin, count: arrivals.filter((item) => item.date >= bin.start && item.date <= bin.end).length }));
   const arrivalMaximum = Math.max(1, ...arrivalBins.map((bin) => bin.count));
-  const canManage = ["admin", "referent"].includes(session.role);
+  const canReset = session.role === "admin";
 
   return (
     <div className="summary-dashboard">
       <section className="summary-toolbar"><div><p className="eyebrow dark">PÉRIODE ANALYSÉE</p><h2>{periodLabels[period]}</h2><p>Les données sont calculées à partir des transmissions enregistrées sur le portail.</p></div><div className="summary-controls"><label>Affichage<select value={scope} onChange={(event) => setScope(event.target.value)}><option value="global">Vue globale</option><option value="self">Moi uniquement</option></select></label><label>Période<select value={period} onChange={(event) => setPeriod(event.target.value)}><option value="day">Jour</option><option value="week">Semaine</option><option value="month">Mois</option><option value="year">Année</option></select></label></div></section>
       <section className="summary-kpis"><article><span className="summary-kpi-icon blue"><BarChart3 size={20} /></span><div><strong>{currentActivity.length}</strong><small>Transmissions</small></div><em className={trend >= 0 ? "positive" : "negative"}><TrendingUp size={13} /> {trend >= 0 ? "+" : ""}{trend}%</em></article><article><span className="summary-kpi-icon gold"><Medal size={20} /></span><div><strong>{recommendationCount}</strong><small>Recommandations</small></div></article><article><span className="summary-kpi-icon violet"><MessageSquareText size={20} /></span><div><strong>{observationCount}</strong><small>Observations</small></div></article><article><span className="summary-kpi-icon green"><UsersRound size={20} /></span><div><strong>{activeMembers}</strong><small>Membres actifs</small></div></article></section>
       <div className="summary-grid">
-        <section className="summary-card activity-chart-card"><div className="summary-card-head"><div><p className="eyebrow dark">ÉVOLUTION</p><h2>Recommandations et observations</h2></div><div className="chart-legend"><span><i className="recommendation" /> Recommandations</span><span><i className="observation" /> Observations</span></div></div><div className="activity-chart">{chartBins.map((bin, index) => <div className="activity-column" key={`${bin.label}-${index}`}><div className="activity-bars"><i className="recommendation" title={`${bin.recommendation} recommandation(s)`} style={{ height: `${bin.recommendation ? Math.max((bin.recommendation / chartMaximum) * 100, 7) : 2}%` }} /><i className="observation" title={`${bin.observation} observation(s)`} style={{ height: `${bin.observation ? Math.max((bin.observation / chartMaximum) * 100, 7) : 2}%` }} /></div><span>{bin.label}</span></div>)}</div><div className="chart-insight"><CalendarDays size={16} /><span>Période la plus active : <strong>{busiestBin?.label || "—"}</strong></span></div></section>
-        <section className="summary-card distribution-card"><div className="summary-card-head"><div><p className="eyebrow dark">RÉPARTITION</p><h2>Nature de l’activité</h2></div></div><div className="distribution-visual" style={{ "--recommendation-share": `${currentActivity.length ? (recommendationCount / currentActivity.length) * 100 : 50}%` }}><div><strong>{currentActivity.length}</strong><small>total</small></div></div><div className="distribution-details"><div><span><i className="recommendation" /> Recommandations</span><strong>{currentActivity.length ? Math.round((recommendationCount / currentActivity.length) * 100) : 0}%</strong></div><div><span><i className="observation" /> Observations</span><strong>{currentActivity.length ? Math.round((observationCount / currentActivity.length) * 100) : 0}%</strong></div></div></section>
-        <section className="summary-card ranking-card"><div className="summary-card-head"><div><p className="eyebrow dark">CLASSEMENT</p><h2>Sous-Officiers les plus actifs</h2><p>Recommandations et observations depuis le dernier reset.</p></div>{canManage && <button className="reset-ranking" onClick={onResetRanking}><RotateCcw size={15} /> Reset</button>}</div><div className="ranking-list">{ranking.map((item, index) => <article key={item.user.id}><span className={`rank-position rank-${index + 1}`}>{index < 3 ? <Trophy size={15} /> : index + 1}</span><div className={`avatar small ${ROLES[item.user.role].tone}`}>{initials(item.user)}</div><div className="rank-member"><strong>{item.user.grade} {item.user.lastName}</strong><small>{item.recommendations} reco · {item.observations} observation{item.observations > 1 ? "s" : ""}</small><div><i style={{ width: `${(item.total / rankingMaximum) * 100}%` }} /></div></div><strong className="rank-score">{item.total}</strong></article>)}</div>{rankingResetAt && <p className="ranking-reset-date">Classement réinitialisé le {new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(rankingResetAt))}</p>}</section>
+        <section className="summary-card activity-chart-card"><div className="summary-card-head"><div><p className="eyebrow dark">ÉVOLUTION</p><h2>Recommandations et observations regroupées</h2></div><div className="chart-legend"><span><i className="recommendation" /> Reco</span><span><i className="pcs-exp" /> PCS EXP</span><span><i className="observation-hdr" /> HDR</span><span><i className="observation-so" /> Obs. SO</span></div></div><div className="activity-chart">{chartBins.map((bin, index) => <div className="activity-column" key={`${bin.label}-${index}`}><div className="activity-bars"><span className="series-stack recommendation-stack" title={`Recommandations : ${bin.recommendation} · PCS EXP : ${bin.pcsExp}`} style={{ height: `${bin.recommendationTotal ? Math.max((bin.recommendationTotal / chartMaximum) * 100, 7) : 2}%` }}>{bin.recommendation > 0 && <i className="recommendation" style={{ flexGrow: bin.recommendation }} />}{bin.pcsExp > 0 && <i className="pcs-exp" style={{ flexGrow: bin.pcsExp }} />}</span><span className="series-stack observation-stack" title={`Observations HDR : ${bin.observationHdr} · Observations SO : ${bin.observationSo}`} style={{ height: `${bin.observationTotal ? Math.max((bin.observationTotal / chartMaximum) * 100, 7) : 2}%` }}>{bin.observationHdr > 0 && <i className="observation-hdr" style={{ flexGrow: bin.observationHdr }} />}{bin.observationSo > 0 && <i className="observation-so" style={{ flexGrow: bin.observationSo }} />}</span></div><span>{bin.label}</span></div>)}</div><div className="chart-group-labels"><span><i className="recommendation" /> Recommandations : {recommendationCount}</span><span><i className="observation" /> Observations : {observationCount}</span></div><div className="chart-insight"><CalendarDays size={16} /><span>Période la plus active : <strong>{busiestBin?.label || "—"}</strong></span></div></section>
+        <section className="summary-card distribution-card"><div className="summary-card-head"><div><p className="eyebrow dark">RÉPARTITION</p><h2>Nature de l’activité</h2></div></div><div className="distribution-visual" style={{ "--recommendation-share": `${currentActivity.length ? (recommendationCount / currentActivity.length) * 100 : 50}%` }}><div><strong>{currentActivity.length}</strong><small>total</small></div></div><div className="distribution-details"><div><span><i className="recommendation" /><span>Recommandations<small>Reco : {standardRecommendationCount} · PCS EXP : {pcsExpCount}</small></span></span><strong>{currentActivity.length ? Math.round((recommendationCount / currentActivity.length) * 100) : 0}%</strong></div><div><span><i className="observation" /><span>Observations<small>HDR : {observationHdrCount} · SO : {observationSoCount}</small></span></span><strong>{currentActivity.length ? Math.round((observationCount / currentActivity.length) * 100) : 0}%</strong></div></div></section>
+        <section className="summary-card ranking-card"><div className="summary-card-head"><div><p className="eyebrow dark">CLASSEMENT</p><h2>Sous-Officiers les plus actifs</h2><p>Recommandations et observations depuis le dernier reset.</p></div>{canReset && <button className="reset-ranking" onClick={onResetActivity} title="Réservé à l’Admin"><RotateCcw size={15} /> Reset Admin</button>}</div><div className="ranking-list">{ranking.map((item, index) => <article key={item.user.id}><span className={`rank-position rank-${index + 1}`}>{index < 3 ? <Trophy size={15} /> : index + 1}</span><div className={`avatar small ${ROLES[item.user.role].tone}`}>{initials(item.user)}</div><div className="rank-member"><strong>{item.user.grade} {item.user.lastName}</strong><small>{item.recommendations} reco · {item.observations} observation{item.observations > 1 ? "s" : ""}</small><div><i style={{ width: `${(item.total / rankingMaximum) * 100}%` }} /></div></div><strong className="rank-score">{item.total}</strong></article>)}</div>{activityResetAt && <p className="ranking-reset-date">Compteurs réinitialisés le {new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(activityResetAt))}</p>}</section>
         <section className="summary-card arrivals-card"><div className="summary-card-head"><div><p className="eyebrow dark">EFFECTIFS</p><h2>Arrivées de Sous-Officiers</h2><p>{arrivals.length} arrivée{arrivals.length > 1 ? "s" : ""} sur la période.</p></div><span><UsersRound size={17} /> {team.length} membres</span></div><div className="arrivals-chart">{arrivalBins.map((bin, index) => <div key={`${bin.label}-${index}`}><i title={`${bin.count} arrivée(s)`} style={{ height: `${bin.count ? Math.max((bin.count / arrivalMaximum) * 100, 9) : 3}%` }}><b>{bin.count || ""}</b></i><span>{bin.label}</span></div>)}</div></section>
       </div>
     </div>
@@ -946,7 +967,7 @@ function App() {
   const [chats, setChats] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
   const [shortcutPreferences, setShortcutPreferences] = useState({});
-  const [summarySettings, setSummarySettings] = useState({ rankingResetAt: null });
+  const [summarySettings, setSummarySettings] = useState({ activityResetAt: null });
   const [loginTransition, setLoginTransition] = useState(null);
 
   useEffect(() => {
@@ -988,7 +1009,7 @@ function App() {
     setChats(savedChats ? JSON.parse(savedChats) : []);
     setAuditLogs(savedLogs ? JSON.parse(savedLogs) : []);
     setShortcutPreferences(savedShortcuts ? JSON.parse(savedShortcuts) : {});
-    setSummarySettings(savedSummary ? JSON.parse(savedSummary) : { rankingResetAt: null });
+    setSummarySettings(savedSummary ? JSON.parse(savedSummary) : { activityResetAt: null });
     setDarkMode(savedTheme);
     document.documentElement.dataset.theme = savedTheme ? "dark" : "light";
     setReady(true);
@@ -1083,12 +1104,12 @@ function App() {
     addLog("profile", "Raccourcis d’accueil modifiés", `${ids.length} raccourci${ids.length > 1 ? "s" : ""} sélectionné${ids.length > 1 ? "s" : ""}`);
     flash("Vos raccourcis ont bien été enregistrés.");
   }
-  function resetActivityRanking() {
-    if (!["admin", "referent"].includes(session.role) || !confirm("Réinitialiser le classement d’activité des Sous-Officiers ?")) return;
-    const rankingResetAt = new Date().toISOString();
-    setSummarySettings((current) => ({ ...current, rankingResetAt }));
-    addLog("summary", "Classement d’activité réinitialisé");
-    flash("Le classement d’activité a été réinitialisé.");
+  function resetActivitySummary() {
+    if (session.role !== "admin" || !confirm("Réinitialiser les compteurs de recommandations, d’observations et le classement ?")) return;
+    const activityResetAt = new Date().toISOString();
+    setSummarySettings((current) => ({ ...current, activityResetAt, rankingResetAt: activityResetAt }));
+    addLog("summary", "Statistiques d’activité réinitialisées", "Recommandations, observations et classement remis à zéro.");
+    flash("Les statistiques d’activité ont été réinitialisées.");
   }
   function flash(message) { setNotice(message); window.setTimeout(() => setNotice(""), 2500); }
   function transmissionSuccess(message, type) {
@@ -1310,7 +1331,7 @@ function App() {
         <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{session.role === "admin" && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{["admin", "referent"].includes(session.role) && <optgroup label="Référent SO"><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="summary">Résumé</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{["admin", "referent", "senior"].includes(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{["admin", "referent"].includes(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
         {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
-        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={setActiveSection} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} logs={auditLogs} rankingResetAt={summarySettings.rankingResetAt} onResetRanking={resetActivityRanking} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
+        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={setActiveSection} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} logs={auditLogs} activityResetAt={summarySettings.activityResetAt || summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
         <section className="stats">
           <article><span className="stat-icon blue"><UsersRound /></span><div><strong>{users.length}</strong><small>Comptes au total</small></div><span className="trend">Tous niveaux</span></article>
           <article><span className="stat-icon red"><UserX /></span><div><strong>{users.filter((user) => user.blocked).length}</strong><small>Comptes bloqués</small></div><span className="trend">Accès suspendu</span></article>
