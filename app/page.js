@@ -32,7 +32,24 @@ const ROLES = {
   officer: { label: "Sous-Officier", short: "SO", tone: "green" },
 };
 
-const GRADES = ["Sergent", "Sergent-Chef", "Adjudant", "Adjudant-Chef", "Major"];
+const GRADES = [
+  "Sergent",
+  "Sergent-Chef",
+  "Adjudant",
+  "Adjudant-Chef",
+  "Major",
+  "Élève Officier",
+  "Aspirant",
+  "Sous-Lieutenant",
+  "Lieutenant",
+  "Capitaine",
+  "Vice-Commandant",
+  "Commandant",
+  "Lieutenant-Colonel",
+  "Colonel",
+  "Général",
+  "Maréchal",
+];
 
 const INITIAL_USERS = [
   { id: "admin-1", firstName: "Camille", lastName: "Martin", email: "admin@portail-so.fr", grade: "Major", role: "admin", password: "Admin2026!", createdAt: "16 juil. 2026" },
@@ -167,7 +184,7 @@ function ProfileModal({ user, onClose, onSave }) {
         <form onSubmit={(event) => { event.preventDefault(); onSave(form); }}>
           <div className="form-grid"><div><label>Prénom</label><input value={form.firstName} onChange={(event) => set("firstName", event.target.value)} required /></div><div><label>Nom</label><input value={form.lastName} onChange={(event) => set("lastName", event.target.value)} required /></div></div>
           <label>Adresse e-mail</label><input type="email" value={form.email} onChange={(event) => set("email", event.target.value)} required />
-          <label>Grade</label><div className="readonly-grade"><span>{user.grade || GRADES[0]}</span><small>Le grade est géré par un responsable.</small></div>
+          <label>Grade</label><div className="readonly-grade"><span>{user.grade || GRADES[0]}</span><small>Le grade est géré par un Admin ou un Référent SO.</small></div>
           <label>Niveau d’accès</label><div className="readonly-role"><RoleBadge role={user.role} /><span>Ce niveau est géré par un responsable.</span></div>
           <label>Nouveau mot de passe <span className="optional">(facultatif)</span></label><input type="password" value={form.password} onChange={(event) => set("password", event.target.value)} minLength={8} placeholder="Laisser vide pour conserver le mot de passe actuel" />
           <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Annuler</button><button type="submit" className="primary">Enregistrer mon profil</button></div>
