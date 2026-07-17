@@ -122,6 +122,15 @@ function initials(user) {
   return `${user.firstName?.[0] || ""}${user.lastName?.[0] || ""}`.toUpperCase();
 }
 
+function getTimeGreeting(date = new Date()) {
+  const hour = date.getHours();
+  if (hour < 5) return "Bonne nuit";
+  if (hour < 12) return "Bonjour";
+  if (hour < 18) return "Bon après-midi";
+  if (hour < 23) return "Bonsoir";
+  return "Bonne nuit";
+}
+
 function sanitizeChatHtml(html) {
   if (typeof document === "undefined") return "";
   const template = document.createElement("template");
@@ -215,6 +224,22 @@ function Login({ onLogin, error }) {
   );
 }
 
+function LoginTransition({ user }) {
+  return (
+    <div className="login-transition" role="status" aria-live="polite">
+      <div className="transition-glow one" />
+      <div className="transition-glow two" />
+      <div className="transition-content">
+        <div className="transition-mark"><span /><ShieldCheck size={36} /></div>
+        <p>CONNEXION SÉCURISÉE</p>
+        <h2>{getTimeGreeting()},<br /><strong>{user.grade || GRADES[0]} {user.lastName}</strong></h2>
+        <div className="transition-line"><i /></div>
+        <small>Préparation de votre espace personnel</small>
+      </div>
+    </div>
+  );
+}
+
 function UserModal({ actor, editing, onClose, onSave }) {
   const allowedRoles = actor.role === "admin" ? ["referent", "senior", "officer"] : ["senior", "officer"];
   const [form, setForm] = useState(editing || { firstName: "", lastName: "", email: "", grade: GRADES[0], role: allowedRoles[0], password: "", presence: "present" });
@@ -292,6 +317,7 @@ function PresencePanel({ users, onChange }) {
 
 function HomePanel({ session, users, missions, chats, quotas, logs, onNavigate }) {
   const isManager = ["admin", "referent"].includes(session.role);
+  const isQuotaMember = ["senior", "officer"].includes(session.role);
   const team = users.filter((user) => ["senior", "officer"].includes(user.role));
   const activeAccounts = users.filter((user) => !user.blocked).length;
   const myChats = chats.filter((chat) => chat.participants.includes(session.id));
@@ -301,10 +327,20 @@ function HomePanel({ session, users, missions, chats, quotas, logs, onNavigate }
   const counts = quotas.counts?.[session.id] || {};
   const categoryCounts = { recommendation: counts.recommendation || 0, pcs_exp: counts.pcs_exp || 0, observations: (counts.observation_hdr || 0) + (counts.observation_so || 0), mission_internal: counts.mission_internal || 0 };
   const completedQuotaCategories = Object.keys(targets).filter((category) => categoryCounts[category] >= targets[category]).length;
+  const quotaItems = [
+    { key: "recommendation", label: "Recommandations", icon: <Medal size={17} /> },
+    { key: "pcs_exp", label: "Reco PCS EXP", icon: <ClipboardCheck size={17} /> },
+    { key: "observations", label: "Observations HDR + SO", icon: <MessageSquareText size={17} /> },
+    { key: "mission_internal", label: "Missions internes", icon: <FileText size={17} /> },
+  ];
+  const remainingTotal = quotaItems.reduce((total, item) => total + Math.max((targets[item.key] || 0) - (categoryCounts[item.key] || 0), 0), 0);
+  const isAbsent = session.presence === "absent";
+  const isExempted = quotas.exemptions?.[session.id] === true;
   const notifications = [];
   if (isManager && pendingMissions.length) notifications.push({ tone: "warning", icon: <FileText size={17} />, title: `${pendingMissions.length} mission${pendingMissions.length > 1 ? "s" : ""} en attente`, text: "Des documents attendent une validation ou un refus.", target: "mission_internal" });
   if (session.presence === "absent") notifications.push({ tone: "danger", icon: <UserX size={17} />, title: "Vous êtes indiqué absent", text: "Vos quotas sont temporairement affichés comme absents.", target: "home" });
   if (quotas.exemptions?.[session.id]) notifications.push({ tone: "info", icon: <ShieldCheck size={17} />, title: "Vous êtes exempté de quota", text: "Les objectifs restent enregistrés mais ne sont pas exigés.", target: "home" });
+  if (isQuotaMember && !isAbsent && !isExempted && remainingTotal > 0) notifications.push({ tone: "info", icon: <Gauge size={17} />, title: `${remainingTotal} action${remainingTotal > 1 ? "s" : ""} restante${remainingTotal > 1 ? "s" : ""}`, text: "Consultez le détail de vos quotas sur cette page.", target: "home" });
   const rejectedMissions = myMissions.filter((mission) => mission.status === "rejected").length;
   if (rejectedMissions) notifications.push({ tone: "danger", icon: <X size={17} />, title: `${rejectedMissions} mission${rejectedMissions > 1 ? "s" : ""} refusée${rejectedMissions > 1 ? "s" : ""}`, text: "Consultez vos dépôts pour les corriger ou les supprimer.", target: "mission_internal" });
   if (myChats.length) notifications.push({ tone: "info", icon: <MessageSquareText size={17} />, title: `${myChats.length} discussion${myChats.length > 1 ? "s" : ""} disponible${myChats.length > 1 ? "s" : ""}`, text: "Ouvrez la messagerie pour consulter vos échanges.", target: "chat" });
@@ -313,8 +349,16 @@ function HomePanel({ session, users, missions, chats, quotas, logs, onNavigate }
 
   return (
     <div className="home-dashboard">
-      <section className="home-hero"><div><span className="home-date">{today}</span><h2>Bienvenue, {session.firstName}</h2><p>Voici les informations importantes de votre espace Sous-Officiers.</p></div><div className={`avatar home-avatar ${ROLES[session.role].tone}`}>{initials(session)}</div></section>
-      <section className="home-stats"><article><span className="home-stat-icon blue"><UsersRound size={20} /></span><div><strong>{activeAccounts}</strong><small>Comptes actifs</small></div></article><article><span className="home-stat-icon violet"><MessageSquareText size={20} /></span><div><strong>{myChats.length}</strong><small>Mes discussions</small></div></article><article><span className="home-stat-icon gold"><FileText size={20} /></span><div><strong>{isManager ? pendingMissions.length : myMissions.length}</strong><small>{isManager ? "Missions à traiter" : "Mes missions"}</small></div></article><article><span className="home-stat-icon green"><Gauge size={20} /></span><div><strong>{["senior", "officer"].includes(session.role) ? `${completedQuotaCategories}/4` : team.filter((user) => user.presence !== "absent").length}</strong><small>{["senior", "officer"].includes(session.role) ? "Catégories de quota" : "SO présents"}</small></div></article></section>
+      <section className="home-hero"><div><span className="home-date">{today}</span><h2>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h2><p>Voici les informations importantes de votre espace Sous-Officiers.</p></div><div className={`avatar home-avatar ${ROLES[session.role].tone}`}>{initials(session)}</div></section>
+      <section className="home-stats"><article><span className="home-stat-icon blue"><UsersRound size={20} /></span><div><strong>{activeAccounts}</strong><small>Comptes actifs</small></div></article><article><span className="home-stat-icon violet"><MessageSquareText size={20} /></span><div><strong>{myChats.length}</strong><small>Mes discussions</small></div></article><article><span className="home-stat-icon gold"><FileText size={20} /></span><div><strong>{isManager ? pendingMissions.length : myMissions.length}</strong><small>{isManager ? "Missions à traiter" : "Mes missions"}</small></div></article><article><span className="home-stat-icon green"><Gauge size={20} /></span><div><strong>{isQuotaMember ? remainingTotal : team.filter((user) => user.presence !== "absent").length}</strong><small>{isQuotaMember ? "Actions restantes" : "SO présents"}</small></div></article></section>
+      {isQuotaMember && <section className="home-card home-quota-card"><div className="home-card-head"><div><p className="eyebrow dark">MES OBJECTIFS</p><h2>Mes quotas</h2></div><span className={isAbsent ? "quota-status-absent" : isExempted ? "quota-status-exempt" : ""}><Gauge size={17} /> {isAbsent ? "Absent" : isExempted ? "Exempté" : `${completedQuotaCategories}/4 terminés`}</span></div><div className="home-quota-grid">{quotaItems.map((item) => {
+        const target = targets[item.key] || 0;
+        const count = categoryCounts[item.key] || 0;
+        const remaining = Math.max(target - count, 0);
+        const progress = target === 0 ? 100 : Math.min((count / target) * 100, 100);
+        const status = isAbsent ? "Absent" : isExempted ? "Exempté" : target === 0 ? "Aucun quota demandé" : remaining > 0 ? `Reste ${remaining}` : "Terminé";
+        return <article key={item.key} className={remaining === 0 ? "completed" : ""}><div className="home-quota-title"><span>{item.icon}</span><strong>{item.label}</strong></div><div className="home-quota-numbers"><strong>{count}<small> / {target}</small></strong><em>{status}</em></div><div className="home-quota-progress"><i style={{ width: `${progress}%` }} /></div></article>;
+      })}</div></section>}
       <div className="home-grid">
         <section className="home-card notifications-card"><div className="home-card-head"><div><p className="eyebrow dark">CENTRE D’INFORMATIONS</p><h2>Notifications importantes</h2></div><span><Bell size={17} /> {notifications.length}</span></div><div className="notification-list">{notifications.map((notification, index) => <button type="button" className={notification.tone} key={`${notification.title}-${index}`} onClick={() => onNavigate(notification.target)}><span>{notification.icon}</span><span><strong>{notification.title}</strong><small>{notification.text}</small></span></button>)}{!notifications.length && <div className="no-notification"><BadgeCheck size={25} /><strong>Tout est à jour</strong><p>Aucune notification importante pour le moment.</p></div>}</div></section>
         <section className="home-card quick-card"><div className="home-card-head"><div><p className="eyebrow dark">ACCÈS RAPIDE</p><h2>Raccourcis</h2></div></div><div className="quick-actions"><button onClick={() => onNavigate("chat")}><MessageSquareText size={18} /><span><strong>Messagerie</strong><small>Ouvrir une discussion</small></span></button><button onClick={() => onNavigate("mission_internal")}><FileText size={18} /><span><strong>Mission interne</strong><small>Déposer ou contrôler un document</small></span></button><button onClick={() => onNavigate(session.role === "senior" ? "observation_so" : "observation_hdr")}><ClipboardCheck size={18} /><span><strong>Nouvelle observation</strong><small>Accéder au formulaire</small></span></button>{session.role === "admin" && <button onClick={() => onNavigate("dashboard")}><ShieldCheck size={18} /><span><strong>Gestion des comptes</strong><small>Administrer les accès</small></span></button>}{session.role === "referent" && <button onClick={() => onNavigate("presence")}><UserCheck size={18} /><span><strong>Présences</strong><small>Mettre l’équipe à jour</small></span></button>}</div></section>
@@ -772,6 +816,7 @@ function App() {
   const [missions, setMissions] = useState([]);
   const [chats, setChats] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
+  const [loginTransition, setLoginTransition] = useState(null);
 
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -1023,13 +1068,15 @@ function App() {
     if (user.blocked) return setLoginError("Ce compte est bloqué. Contactez un administrateur.");
     localStorage.setItem(SESSION_KEY, user.id);
     addLog("auth", "Connexion au portail", "Connexion réussie", user);
-    setLoginError(""); setSession(user); setActiveSection("home");
+    setLoginError(""); setSession(user); setActiveSection("home"); setLoginTransition(user);
+    window.setTimeout(() => setLoginTransition(null), 1850);
   }
   function logout() {
     addLog("auth", "Déconnexion du portail");
     localStorage.removeItem(SESSION_KEY);
     setProfileOpen(false);
     setLoginError("");
+    setLoginTransition(null);
     setSession(null);
   }
   function saveUser(form) {
@@ -1103,7 +1150,7 @@ function App() {
 
       <main className="content">
         <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{session.role === "admin" && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{["admin", "referent"].includes(session.role) && <optgroup label="Référent SO"><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{["admin", "referent", "senior"].includes(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{["admin", "referent"].includes(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
-        {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>Bonjour, {session.firstName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
+        {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
         {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} onNavigate={setActiveSection} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
         <section className="stats">
@@ -1121,6 +1168,7 @@ function App() {
       {notice && <div className="toast"><BadgeCheck size={19} />{notice}</div>}
       {modal && <UserModal actor={session} editing={modal.id ? modal : null} onClose={() => setModal(null)} onSave={saveUser} />}
       {profileOpen && <ProfileModal user={session} onClose={() => setProfileOpen(false)} onSave={saveProfile} />}
+      {loginTransition && <LoginTransition user={loginTransition} />}
     </div>
   );
 }
