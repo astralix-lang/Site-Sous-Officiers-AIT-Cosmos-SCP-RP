@@ -3,10 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BadgeCheck,
+  Bell,
   ClipboardCheck,
   ChevronDown,
   FileText,
   Gauge,
+  Home,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -18,6 +20,7 @@ import {
   Plus,
   RotateCcw,
   Search,
+  ScrollText,
   Send,
   ShieldCheck,
   Sun,
@@ -70,6 +73,7 @@ const ADMIN_RECOVERY_KEY = "portail-so-admin-recovery-v1";
 const QUOTA_KEY = "portail-so-quotas-v1";
 const MISSIONS_KEY = "portail-so-missions-v1";
 const CHAT_KEY = "portail-so-chats-v1";
+const LOG_KEY = "portail-so-logs-v1";
 const CHAT_ATTACHMENT_MAX_SIZE = 1024 * 1024;
 const CHAT_ATTACHMENT_MAX_COUNT = 3;
 const CHAT_ATTACHMENT_TYPES = new Set([
@@ -80,6 +84,7 @@ const CHAT_ATTACHMENT_TYPES = new Set([
 ]);
 const DEFAULT_QUOTAS = { targets: { recommendation: 1, pcs_exp: 1, observations: 1, mission_internal: 0 }, counts: {}, exemptions: {} };
 const QUOTA_TYPES = ["recommendation", "pcs_exp", "observation_hdr", "observation_so"];
+const LOG_CATEGORY_LABELS = { auth: "Connexion", account: "Comptes", presence: "Présences", quota: "Quotas", form: "Formulaires", mission: "Missions", chat: "Chat", profile: "Profils", system: "Système" };
 const REPORT_CONCLUSIONS = [
   "Passage confirmé en sergent",
   "Prolongation de la semaine de test",
@@ -282,6 +287,64 @@ function PresencePanel({ users, onChange }) {
         {!team.length && <tr><td colSpan="5" className="empty-presence">Aucun Sous-Officier à afficher.</td></tr>}
       </tbody></table></div>
     </section>
+  );
+}
+
+function HomePanel({ session, users, missions, chats, quotas, logs, onNavigate }) {
+  const isManager = ["admin", "referent"].includes(session.role);
+  const team = users.filter((user) => ["senior", "officer"].includes(user.role));
+  const activeAccounts = users.filter((user) => !user.blocked).length;
+  const myChats = chats.filter((chat) => chat.participants.includes(session.id));
+  const pendingMissions = missions.filter((mission) => mission.status === "pending");
+  const myMissions = missions.filter((mission) => mission.userId === session.id);
+  const targets = { ...DEFAULT_QUOTAS.targets, ...quotas.targets };
+  const counts = quotas.counts?.[session.id] || {};
+  const categoryCounts = { recommendation: counts.recommendation || 0, pcs_exp: counts.pcs_exp || 0, observations: (counts.observation_hdr || 0) + (counts.observation_so || 0), mission_internal: counts.mission_internal || 0 };
+  const completedQuotaCategories = Object.keys(targets).filter((category) => categoryCounts[category] >= targets[category]).length;
+  const notifications = [];
+  if (isManager && pendingMissions.length) notifications.push({ tone: "warning", icon: <FileText size={17} />, title: `${pendingMissions.length} mission${pendingMissions.length > 1 ? "s" : ""} en attente`, text: "Des documents attendent une validation ou un refus.", target: "mission_internal" });
+  if (session.presence === "absent") notifications.push({ tone: "danger", icon: <UserX size={17} />, title: "Vous êtes indiqué absent", text: "Vos quotas sont temporairement affichés comme absents.", target: "home" });
+  if (quotas.exemptions?.[session.id]) notifications.push({ tone: "info", icon: <ShieldCheck size={17} />, title: "Vous êtes exempté de quota", text: "Les objectifs restent enregistrés mais ne sont pas exigés.", target: "home" });
+  const rejectedMissions = myMissions.filter((mission) => mission.status === "rejected").length;
+  if (rejectedMissions) notifications.push({ tone: "danger", icon: <X size={17} />, title: `${rejectedMissions} mission${rejectedMissions > 1 ? "s" : ""} refusée${rejectedMissions > 1 ? "s" : ""}`, text: "Consultez vos dépôts pour les corriger ou les supprimer.", target: "mission_internal" });
+  if (myChats.length) notifications.push({ tone: "info", icon: <MessageSquareText size={17} />, title: `${myChats.length} discussion${myChats.length > 1 ? "s" : ""} disponible${myChats.length > 1 ? "s" : ""}`, text: "Ouvrez la messagerie pour consulter vos échanges.", target: "chat" });
+  const visibleActivity = isManager ? logs.slice(0, 5) : logs.filter((entry) => entry.actorId === session.id).slice(0, 5);
+  const today = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date());
+
+  return (
+    <div className="home-dashboard">
+      <section className="home-hero"><div><span className="home-date">{today}</span><h2>Bienvenue, {session.firstName}</h2><p>Voici les informations importantes de votre espace Sous-Officiers.</p></div><div className={`avatar home-avatar ${ROLES[session.role].tone}`}>{initials(session)}</div></section>
+      <section className="home-stats"><article><span className="home-stat-icon blue"><UsersRound size={20} /></span><div><strong>{activeAccounts}</strong><small>Comptes actifs</small></div></article><article><span className="home-stat-icon violet"><MessageSquareText size={20} /></span><div><strong>{myChats.length}</strong><small>Mes discussions</small></div></article><article><span className="home-stat-icon gold"><FileText size={20} /></span><div><strong>{isManager ? pendingMissions.length : myMissions.length}</strong><small>{isManager ? "Missions à traiter" : "Mes missions"}</small></div></article><article><span className="home-stat-icon green"><Gauge size={20} /></span><div><strong>{["senior", "officer"].includes(session.role) ? `${completedQuotaCategories}/4` : team.filter((user) => user.presence !== "absent").length}</strong><small>{["senior", "officer"].includes(session.role) ? "Catégories de quota" : "SO présents"}</small></div></article></section>
+      <div className="home-grid">
+        <section className="home-card notifications-card"><div className="home-card-head"><div><p className="eyebrow dark">CENTRE D’INFORMATIONS</p><h2>Notifications importantes</h2></div><span><Bell size={17} /> {notifications.length}</span></div><div className="notification-list">{notifications.map((notification, index) => <button type="button" className={notification.tone} key={`${notification.title}-${index}`} onClick={() => onNavigate(notification.target)}><span>{notification.icon}</span><span><strong>{notification.title}</strong><small>{notification.text}</small></span></button>)}{!notifications.length && <div className="no-notification"><BadgeCheck size={25} /><strong>Tout est à jour</strong><p>Aucune notification importante pour le moment.</p></div>}</div></section>
+        <section className="home-card quick-card"><div className="home-card-head"><div><p className="eyebrow dark">ACCÈS RAPIDE</p><h2>Raccourcis</h2></div></div><div className="quick-actions"><button onClick={() => onNavigate("chat")}><MessageSquareText size={18} /><span><strong>Messagerie</strong><small>Ouvrir une discussion</small></span></button><button onClick={() => onNavigate("mission_internal")}><FileText size={18} /><span><strong>Mission interne</strong><small>Déposer ou contrôler un document</small></span></button><button onClick={() => onNavigate(session.role === "senior" ? "observation_so" : "observation_hdr")}><ClipboardCheck size={18} /><span><strong>Nouvelle observation</strong><small>Accéder au formulaire</small></span></button>{session.role === "admin" && <button onClick={() => onNavigate("dashboard")}><ShieldCheck size={18} /><span><strong>Gestion des comptes</strong><small>Administrer les accès</small></span></button>}{session.role === "referent" && <button onClick={() => onNavigate("presence")}><UserCheck size={18} /><span><strong>Présences</strong><small>Mettre l’équipe à jour</small></span></button>}</div></section>
+        <section className="home-card activity-card"><div className="home-card-head"><div><p className="eyebrow dark">ACTIVITÉ RÉCENTE</p><h2>{isManager ? "Dernières actions du portail" : "Mes dernières actions"}</h2></div>{isManager && <button onClick={() => onNavigate("logs")}>Voir tous les logs</button>}</div><div className="home-activity-list">{visibleActivity.map((entry) => <article key={entry.id}><span className={`log-dot ${entry.category}`} /><div><strong>{entry.action}</strong><small>{entry.actorName} · {entry.displayAt}</small>{entry.details && <p>{entry.details}</p>}</div></article>)}{!visibleActivity.length && <p className="chat-empty-small">Aucune activité enregistrée pour le moment.</p>}</div></section>
+        <section className="home-card identity-card"><p className="eyebrow dark">MON ESPACE</p><h2>{session.grade || GRADES[0]}</h2><RoleBadge role={session.role} /><div><span>État du compte</span><strong className="identity-active"><BadgeCheck size={15} /> Actif</strong></div><div><span>Présence</span><strong>{session.presence === "absent" ? "Absent" : ["senior", "officer"].includes(session.role) ? "Présent" : "Non concerné"}</strong></div></section>
+      </div>
+    </div>
+  );
+}
+
+function LogsPanel({ session, logs, onClear }) {
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("all");
+  const categories = [...new Set(logs.map((entry) => entry.category))];
+  const filteredLogs = logs.filter((entry) => {
+    const haystack = `${entry.actorName} ${entry.action} ${entry.details || ""}`.toLowerCase();
+    return (category === "all" || entry.category === category) && haystack.includes(query.toLowerCase());
+  });
+
+  function exportLogs() {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(logs, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `logs-portail-so-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <section className="logs-card"><div className="logs-summary"><div><p className="eyebrow dark">JOURNAL D’AUDIT</p><h2>Activité du portail</h2><p className="muted">Les {Math.min(logs.length, 500)} dernières actions importantes sont conservées.</p></div><div><span><ScrollText size={18} /> {logs.length} entrées</span><button className="secondary" onClick={exportLogs}><Download size={16} /> Exporter</button>{session.role === "admin" && <button className="clear-logs" onClick={onClear}><Trash2 size={16} /> Réinitialiser</button>}</div></div><div className="logs-filters"><div className="search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Rechercher une action…" /></div><select value={category} onChange={(event) => setCategory(event.target.value)}><option value="all">Toutes les catégories</option>{categories.map((item) => <option value={item} key={item}>{LOG_CATEGORY_LABELS[item] || item}</option>)}</select></div><div className="table-wrap"><table className="logs-table"><thead><tr><th>Date</th><th>Acteur</th><th>Catégorie</th><th>Action</th><th>Détails</th></tr></thead><tbody>{filteredLogs.map((entry) => <tr key={entry.id}><td>{entry.displayAt}</td><td><strong>{entry.actorName}</strong><small>{entry.actorRole ? ROLES[entry.actorRole]?.label || entry.actorRole : "Système"}</small></td><td><span className={`log-category ${entry.category}`}>{LOG_CATEGORY_LABELS[entry.category] || entry.category}</span></td><td><strong>{entry.action}</strong></td><td>{entry.details || "—"}</td></tr>)}{!filteredLogs.length && <tr><td colSpan="5" className="empty-presence">Aucun log ne correspond à votre recherche.</td></tr>}</tbody></table></div></section>
   );
 }
 
@@ -701,13 +764,14 @@ function App() {
   const [roleFilter, setRoleFilter] = useState("all");
   const [modal, setModal] = useState(null);
   const [notice, setNotice] = useState("");
-  const [activeSection, setActiveSection] = useState("dashboard");
+  const [activeSection, setActiveSection] = useState("home");
   const [openGroups, setOpenGroups] = useState({ admin: true, referent: false, global: true, senior: false, chat: true });
   const [profileOpen, setProfileOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [quotas, setQuotas] = useState(DEFAULT_QUOTAS);
   const [missions, setMissions] = useState([]);
   const [chats, setChats] = useState([]);
+  const [auditLogs, setAuditLogs] = useState([]);
 
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -731,7 +795,7 @@ function App() {
     const rememberedUser = normalizedUsers.find((user) => user.id === rememberedSessionId && !user.blocked);
     if (rememberedUser) {
       setSession(rememberedUser);
-      setActiveSection(rememberedUser.role === "admin" ? "dashboard" : "recommendation");
+      setActiveSection("home");
     } else if (rememberedSessionId) {
       localStorage.removeItem(SESSION_KEY);
     }
@@ -739,10 +803,12 @@ function App() {
     const savedQuotas = localStorage.getItem(QUOTA_KEY);
     const savedMissions = localStorage.getItem(MISSIONS_KEY);
     const savedChats = localStorage.getItem(CHAT_KEY);
+    const savedLogs = localStorage.getItem(LOG_KEY);
     const parsedQuotas = savedQuotas ? JSON.parse(savedQuotas) : DEFAULT_QUOTAS;
     setQuotas({ targets: { ...DEFAULT_QUOTAS.targets, ...parsedQuotas.targets }, counts: parsedQuotas.counts || {}, exemptions: parsedQuotas.exemptions || {} });
     setMissions(savedMissions ? JSON.parse(savedMissions) : []);
     setChats(savedChats ? JSON.parse(savedChats) : []);
+    setAuditLogs(savedLogs ? JSON.parse(savedLogs) : []);
     setDarkMode(savedTheme);
     document.documentElement.dataset.theme = savedTheme ? "dark" : "light";
     setReady(true);
@@ -757,6 +823,10 @@ function App() {
     catch { flash("Stockage du chat saturé : supprimez d’anciennes pièces jointes."); }
   }, [chats, ready]);
   useEffect(() => {
+    if (!ready) return;
+    try { localStorage.setItem(LOG_KEY, JSON.stringify(auditLogs)); } catch { /* Conserve l’application fonctionnelle si le stockage est plein. */ }
+  }, [auditLogs, ready]);
+  useEffect(() => {
     function syncAccounts(event) {
       if (event.key === SESSION_KEY && !event.newValue) {
         setSession(null);
@@ -766,6 +836,10 @@ function App() {
       }
       if (event.key === CHAT_KEY && event.newValue) {
         try { setChats(JSON.parse(event.newValue)); } catch { /* Ignore une discussion invalide. */ }
+        return;
+      }
+      if (event.key === LOG_KEY && event.newValue) {
+        try { setAuditLogs(JSON.parse(event.newValue)); } catch { /* Ignore un journal invalide. */ }
         return;
       }
       if (event.key !== STORAGE_KEY || !event.newValue) return;
@@ -803,37 +877,59 @@ function App() {
     return text.includes(query.toLowerCase()) && (roleFilter === "all" || user.role === roleFilter);
   }), [users, query, roleFilter]);
 
+  function addLog(category, action, details = "", actor = session) {
+    const now = new Date();
+    const entry = { id: crypto.randomUUID(), createdAt: now.toISOString(), displayAt: new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "medium" }).format(now), actorId: actor?.id || "system", actorName: actor ? `${actor.firstName} ${actor.lastName}` : "Système", actorRole: actor?.role || "", category, action, details };
+    setAuditLogs((current) => [entry, ...current].slice(0, 500));
+  }
+  function clearAuditLogs() {
+    if (session.role !== "admin" || !confirm("Réinitialiser définitivement le journal des logs ?")) return;
+    setAuditLogs([]);
+    addLog("system", "Journal des logs réinitialisé", "L’historique précédent a été supprimé.");
+    flash("Le journal des logs a été réinitialisé.");
+  }
   function flash(message) { setNotice(message); window.setTimeout(() => setNotice(""), 2500); }
   function transmissionSuccess(message, type) {
     flash(message);
+    addLog("form", "Formulaire envoyé", TRANSMISSION_TYPES[type]?.title || type);
     if (!QUOTA_TYPES.includes(type) || !["senior", "officer"].includes(session.role)) return;
     setQuotas((current) => {
       const userCounts = current.counts?.[session.id] || {};
       return { ...current, counts: { ...current.counts, [session.id]: { ...userCounts, [type]: (userCounts[type] || 0) + 1 } } };
     });
   }
+  function sergeantReportSuccess(message) {
+    flash(message);
+    addLog("form", "Rapport nouveau Sous-Officier envoyé");
+  }
   function changeQuotaTarget(category, value) {
     const parsedTarget = Number.parseInt(value, 10);
     const target = Math.max(0, Math.min(100, Number.isNaN(parsedTarget) ? 0 : parsedTarget));
     setQuotas((current) => ({ ...current, targets: { ...current.targets, [category]: target } }));
+    addLog("quota", "Objectif de quota modifié", `${category} : ${target}`);
   }
   function resetQuotas() {
     if (!confirm("Réinitialiser tous les compteurs de quotas à zéro ?")) return;
     setQuotas((current) => ({ ...current, counts: {} }));
+    addLog("quota", "Compteurs de quotas réinitialisés");
     flash("Les quotas ont été réinitialisés.");
   }
   function toggleQuotaExemption(userId) {
     if (!["admin", "referent"].includes(session.role)) return;
+    const targetUser = users.find((user) => user.id === userId);
+    const willExempt = !quotas.exemptions?.[userId];
     setQuotas((current) => {
       const isExempted = current.exemptions?.[userId] === true;
       return { ...current, exemptions: { ...current.exemptions, [userId]: !isExempted } };
     });
+    addLog("quota", willExempt ? "Exemption de quota accordée" : "Exemption de quota retirée", targetUser ? `${targetUser.firstName} ${targetUser.lastName}` : "Compte inconnu");
     flash(quotas.exemptions?.[userId] ? "L’exemption de quota a été retirée." : "La personne est exemptée de quota.");
   }
   function submitMission({ title, documentUrl }) {
     if (!["senior", "officer"].includes(session.role)) return;
     const mission = { id: crypto.randomUUID(), userId: session.id, userName: `${session.firstName} ${session.lastName}`, grade: session.grade || GRADES[0], title, documentUrl, status: "pending", submittedAt: new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" }).format(new Date()) };
     setMissions((current) => [mission, ...current]);
+    addLog("mission", "Mission interne déposée", title);
     flash("Le document a été déposé et placé en attente.");
   }
   function validateMission(missionId) {
@@ -845,6 +941,7 @@ function App() {
       const userCounts = current.counts?.[mission.userId] || {};
       return { ...current, counts: { ...current.counts, [mission.userId]: { ...userCounts, mission_internal: (userCounts.mission_internal || 0) + 1 } } };
     });
+    addLog("mission", "Mission interne validée", `${mission.title} · ${mission.userName}`);
     flash("La mission interne est validée et ajoutée au quota.");
   }
   function rejectMission(missionId) {
@@ -852,6 +949,7 @@ function App() {
     const mission = missions.find((item) => item.id === missionId);
     if (!mission || mission.status !== "pending") return;
     setMissions((current) => current.map((item) => item.id === missionId ? { ...item, status: "rejected", rejectedBy: `${session.firstName} ${session.lastName}`, rejectedAt: new Date().toISOString() } : item));
+    addLog("mission", "Mission interne refusée", `${mission.title} · ${mission.userName}`);
     flash("La mission interne a été refusée.");
   }
   function deleteMission(missionId) {
@@ -859,12 +957,15 @@ function App() {
     if (!mission || mission.userId !== session.id || mission.status === "validated") return;
     if (!confirm("Supprimer ce document de mission interne ?")) return;
     setMissions((current) => current.filter((item) => item.id !== missionId));
+    addLog("mission", "Mission interne supprimée", mission.title);
     flash("Le document de mission interne a été supprimé.");
   }
   function resetMissions() {
     if (!["admin", "referent"].includes(session.role)) return;
     if (!confirm("Réinitialiser tous les documents de missions internes ? Les quotas déjà validés resteront inchangés.")) return;
+    const removedCount = missions.length;
     setMissions([]);
+    addLog("mission", "Documents de missions réinitialisés", `${removedCount} document${removedCount > 1 ? "s" : ""} supprimé${removedCount > 1 ? "s" : ""}`);
     flash("Les documents de missions internes ont été réinitialisés.");
   }
   function startChat(otherUserId) {
@@ -874,6 +975,7 @@ function App() {
     if (existingChat) return existingChat.id;
     const chatId = crypto.randomUUID();
     setChats((current) => [{ id: chatId, type: "direct", participants: [session.id, otherUserId], messages: [], updatedAt: new Date().toISOString() }, ...current]);
+    addLog("chat", "Discussion privée créée", `Avec ${contact.firstName} ${contact.lastName}`);
     return chatId;
   }
   function createChatGroup(name, memberIds) {
@@ -881,6 +983,7 @@ function App() {
     if (!name || !validMemberIds.length) return "";
     const chatId = crypto.randomUUID();
     setChats((current) => [{ id: chatId, type: "group", name, createdBy: session.id, participants: [session.id, ...validMemberIds], messages: [], updatedAt: new Date().toISOString() }, ...current]);
+    addLog("chat", "Groupe créé", `${name} · ${validMemberIds.length + 1} membres`);
     return chatId;
   }
   function sendChatMessage(chatId, html, text, attachments = []) {
@@ -891,9 +994,11 @@ function App() {
       const updatedChat = { ...chat, messages: [...chat.messages, message], updatedAt: new Date().toISOString() };
       return [updatedChat, ...current.filter((item) => item.id !== chatId)];
     });
+    addLog("chat", "Message envoyé", `${attachments.length ? `${attachments.length} pièce${attachments.length > 1 ? "s" : ""} jointe${attachments.length > 1 ? "s" : ""}` : "Sans pièce jointe"}`);
   }
   function editChatMessage(chatId, messageId, html, text) {
     setChats((current) => current.map((chat) => chat.id !== chatId ? chat : { ...chat, messages: chat.messages.map((message) => message.id === messageId && message.senderId === session.id ? { ...message, html: sanitizeChatHtml(html), text, editedAt: new Date().toISOString() } : message), updatedAt: new Date().toISOString() }));
+    addLog("chat", "Message modifié");
   }
   function deleteChatMessage(chatId, messageId) {
     const chat = chats.find((item) => item.id === chatId);
@@ -901,12 +1006,14 @@ function App() {
     const canModerate = ["admin", "referent"].includes(session.role);
     if (!message || (message.senderId !== session.id && !canModerate) || !confirm("Supprimer ce message ?")) return;
     setChats((current) => current.map((item) => item.id === chatId ? { ...item, messages: item.messages.filter((entry) => entry.id !== messageId), updatedAt: new Date().toISOString() } : item));
+    addLog("chat", canModerate && message.senderId !== session.id ? "Message supprimé par modération" : "Message supprimé", `Auteur : ${message.senderName}`);
   }
   function deleteChat(chatId) {
     const chat = chats.find((item) => item.id === chatId);
     const canModerate = ["admin", "referent"].includes(session.role);
     if (!chat || (!chat.participants.includes(session.id) && !canModerate) || !confirm("Supprimer définitivement cette conversation et tous ses messages ?")) return;
     setChats((current) => current.filter((item) => item.id !== chatId));
+    addLog("chat", "Conversation supprimée", `${chat.type === "group" ? chat.name || "Groupe" : "Discussion privée"} · ${chat.messages.length} messages`);
     flash("La conversation a été supprimée.");
   }
   function toggleGroup(group) { setOpenGroups((current) => ({ ...current, [group]: !current[group] })); }
@@ -915,9 +1022,11 @@ function App() {
     if (!user) return setLoginError("Identifiants incorrects.");
     if (user.blocked) return setLoginError("Ce compte est bloqué. Contactez un administrateur.");
     localStorage.setItem(SESSION_KEY, user.id);
-    setLoginError(""); setSession(user); setActiveSection(user.role === "admin" ? "dashboard" : "recommendation");
+    addLog("auth", "Connexion au portail", "Connexion réussie", user);
+    setLoginError(""); setSession(user); setActiveSection("home");
   }
   function logout() {
+    addLog("auth", "Déconnexion du portail");
     localStorage.removeItem(SESSION_KEY);
     setProfileOpen(false);
     setLoginError("");
@@ -928,26 +1037,32 @@ function App() {
     if (["senior", "officer"].includes(savedForm.role)) savedForm.presence ||= "present";
     else delete savedForm.presence;
     if (modal?.id) {
+      const editedUser = users.find((user) => user.id === modal.id);
       setUsers((current) => current.map((user) => user.id === modal.id ? { ...user, ...savedForm, password: savedForm.password || user.password } : user));
+      addLog("account", "Compte modifié", editedUser ? `${editedUser.firstName} ${editedUser.lastName}` : `${savedForm.firstName} ${savedForm.lastName}`);
       flash("Le compte a bien été modifié.");
     } else {
       setUsers((current) => [...current, { ...savedForm, blocked: false, id: crypto.randomUUID(), createdAt: new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", year: "numeric" }).format(new Date()) }]);
+      addLog("account", "Compte créé", `${savedForm.firstName} ${savedForm.lastName} · ${ROLES[savedForm.role].label}`);
       flash("Le compte a bien été créé.");
     }
     setModal(null);
   }
   function removeUser(user) {
     if (!manageable(user) || !confirm(`Supprimer le compte de ${user.firstName} ${user.lastName} ?`)) return;
-    setUsers((current) => current.filter((item) => item.id !== user.id)); flash("Le compte a été supprimé.");
+    setUsers((current) => current.filter((item) => item.id !== user.id)); addLog("account", "Compte supprimé", `${user.firstName} ${user.lastName}`); flash("Le compte a été supprimé.");
   }
   function changePresence(userId, presence) {
+    const targetUser = users.find((user) => user.id === userId);
     setUsers((current) => current.map((user) => user.id === userId ? { ...user, presence } : user));
+    addLog("presence", "Présence modifiée", `${targetUser ? `${targetUser.firstName} ${targetUser.lastName}` : "Compte inconnu"} · ${presence === "present" ? "Présent" : "Absent"}`);
     flash(presence === "present" ? "La personne est indiquée présente." : "La personne est indiquée absente.");
   }
   function toggleAccountBlock(user) {
     if (session.role !== "admin" || user.id === session.id || user.role === "admin") return;
     const willBlock = !user.blocked;
     setUsers((current) => current.map((item) => item.id === user.id ? { ...item, blocked: willBlock } : item));
+    addLog("account", willBlock ? "Compte bloqué" : "Compte débloqué", `${user.firstName} ${user.lastName}`);
     flash(willBlock ? "Le compte a été bloqué et ses sessions seront fermées." : "Le compte a été débloqué.");
   }
   function saveProfile(form) {
@@ -955,6 +1070,7 @@ function App() {
     setUsers((current) => current.map((user) => user.id === session.id ? updated : user));
     setSession(updated);
     setProfileOpen(false);
+    addLog("profile", "Profil personnel modifié", `${updated.firstName} ${updated.lastName}`);
     flash("Votre profil a bien été mis à jour.");
   }
 
@@ -966,11 +1082,13 @@ function App() {
       <aside className="sidebar">
         <div className="brand-row"><div className="brand-mark"><ShieldCheck size={23} /></div><div><strong>Portail SO</strong><small>Espace sécurisé</small></div></div>
         <nav>
+          <button className={`menu-item standalone-nav ${activeSection === "home" ? "active" : ""}`} onClick={() => setActiveSection("home")}><Home size={18} /> Accueil</button>
           {session.role === "admin" && <MenuGroup title="Admin" icon={ShieldCheck} open={openGroups.admin} onToggle={() => toggleGroup("admin")}><button className={`menu-item ${activeSection === "dashboard" ? "active" : ""}`} onClick={() => setActiveSection("dashboard")}><LayoutDashboard size={17} /> Tableau de bord</button></MenuGroup>}
           {["admin", "referent"].includes(session.role) && <MenuGroup title="Référent SO" icon={UsersRound} open={openGroups.referent} onToggle={() => toggleGroup("referent")}><button className={`menu-item ${activeSection === "presence" ? "active" : ""}`} onClick={() => setActiveSection("presence")}><UserCheck size={17} /> Présences</button><button className={`menu-item ${activeSection === "quotas" ? "active" : ""}`} onClick={() => setActiveSection("quotas")}><Gauge size={17} /> Quotas</button></MenuGroup>}
           <MenuGroup title="Globale" icon={Send} open={openGroups.global} onToggle={() => toggleGroup("global")}><button className={`menu-item ${activeSection === "recommendation" ? "active" : ""}`} onClick={() => setActiveSection("recommendation")}><Medal size={17} /> Recommandation</button><button className={`menu-item ${activeSection === "pcs_exp" ? "active" : ""}`} onClick={() => setActiveSection("pcs_exp")}><ClipboardCheck size={17} /> Recommandation PCS EXP</button><button className={`menu-item ${activeSection === "observation_hdr" ? "active" : ""}`} onClick={() => setActiveSection("observation_hdr")}><MessageSquareText size={17} /> Observation HDR</button><button className={`menu-item ${activeSection === "mission_internal" ? "active" : ""}`} onClick={() => setActiveSection("mission_internal")}><FileText size={17} /> Mission interne</button></MenuGroup>
           {["admin", "referent", "senior"].includes(session.role) && <MenuGroup title="Sous-Officier Supérieur" icon={BadgeCheck} open={openGroups.senior} onToggle={() => toggleGroup("senior")}><button className={`menu-item ${activeSection === "observation_so" ? "active" : ""}`} onClick={() => setActiveSection("observation_so")}><MessageSquareText size={17} /> Observation SO</button><button className={`menu-item ${activeSection === "sergeant_report" ? "active" : ""}`} onClick={() => setActiveSection("sergeant_report")}><FileText size={17} /> Rapport nouveau SO</button></MenuGroup>}
           <MenuGroup title="Chat" icon={MessageSquareText} open={openGroups.chat} onToggle={() => toggleGroup("chat")}><button className={`menu-item ${activeSection === "chat" ? "active" : ""}`} onClick={() => setActiveSection("chat")}><Send size={17} /> Messagerie</button></MenuGroup>
+          {["admin", "referent"].includes(session.role) && <button className={`menu-item standalone-nav logs-nav ${activeSection === "logs" ? "active" : ""}`} onClick={() => setActiveSection("logs")}><ScrollText size={18} /> Logs</button>}
         </nav>
         <button className="profile-card" onClick={() => setProfileOpen(true)} title="Personnaliser mon compte"><div className={`avatar ${ROLES[session.role].tone}`}>{initials(session)}</div><div><strong>{session.firstName} {session.lastName}</strong><small>{session.grade || GRADES[0]} · {ROLES[session.role].label}</small></div><ChevronDown size={16} /></button>
         <div className="sidebar-actions">
@@ -984,10 +1102,10 @@ function App() {
       </aside>
 
       <main className="content">
-        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}>{session.role === "admin" && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{["admin", "referent"].includes(session.role) && <optgroup label="Référent SO"><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{["admin", "referent", "senior"].includes(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup></select></div>
-        {activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>Bonjour, {session.firstName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
+        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{session.role === "admin" && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{["admin", "referent"].includes(session.role) && <optgroup label="Référent SO"><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{["admin", "referent", "senior"].includes(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{["admin", "referent"].includes(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
+        {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>Bonjour, {session.firstName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
-        {activeSection === "dashboard" ? <>
+        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} onNavigate={setActiveSection} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
         <section className="stats">
           <article><span className="stat-icon blue"><UsersRound /></span><div><strong>{users.length}</strong><small>Comptes au total</small></div><span className="trend">Tous niveaux</span></article>
           <article><span className="stat-icon red"><UserX /></span><div><strong>{users.filter((user) => user.blocked).length}</strong><small>Comptes bloqués</small></div><span className="trend">Accès suspendu</span></article>
@@ -998,7 +1116,7 @@ function App() {
           <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
           <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>État du compte</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.email}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td><RoleBadge role={user.role} /></td><td>{user.role === "admin" ? <span className="account-state active"><UserCheck size={15} /> Compte actif</span> : <button className={`account-state ${user.blocked ? "blocked" : "active"}`} type="button" onClick={() => toggleAccountBlock(user)}>{user.blocked ? <UserX size={15} /> : <UserCheck size={15} />}{user.blocked ? "Compte bloqué" : "Compte actif"}</button>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title="Modifier" onClick={() => setModal(user)}><Pencil size={17} /></button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
         </section>
-        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} onSuccess={flash} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} />}
+        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} onSuccess={sergeantReportSuccess} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} />}
       </main>
       {notice && <div className="toast"><BadgeCheck size={19} />{notice}</div>}
       {modal && <UserModal actor={session} editing={modal.id ? modal : null} onClose={() => setModal(null)} onSave={saveUser} />}
