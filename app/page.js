@@ -81,6 +81,7 @@ const CHAT_KEY = "portail-so-chats-v1";
 const LOG_KEY = "portail-so-logs-v1";
 const SHORTCUTS_KEY = "portail-so-shortcuts-v1";
 const SUMMARY_KEY = "portail-so-summary-v1";
+const ASSIGNMENTS_KEY = "portail-so-sergeant-assignments-v1";
 const CHAT_ATTACHMENT_MAX_SIZE = 1024 * 1024;
 const CHAT_ATTACHMENT_MAX_COUNT = 3;
 const CHAT_ATTACHMENT_TYPES = new Set([
@@ -91,7 +92,7 @@ const CHAT_ATTACHMENT_TYPES = new Set([
 ]);
 const DEFAULT_QUOTAS = { targets: { recommendation: 1, pcs_exp: 1, observations: 1, mission_internal: 0 }, counts: {}, exemptions: {} };
 const QUOTA_TYPES = ["recommendation", "pcs_exp", "observation_hdr", "observation_so"];
-const LOG_CATEGORY_LABELS = { auth: "Connexion", account: "Comptes", presence: "Présences", quota: "Quotas", form: "Formulaires", mission: "Missions", chat: "Chat", profile: "Profils", summary: "Résumé", system: "Système" };
+const LOG_CATEGORY_LABELS = { auth: "Connexion", account: "Comptes", presence: "Présences", quota: "Quotas", form: "Formulaires", mission: "Missions", chat: "Chat", assignment: "Référents", profile: "Profils", summary: "Résumé", system: "Système" };
 const REPORT_CONCLUSIONS = [
   "Passage confirmé en sergent",
   "Prolongation de la semaine de test",
@@ -386,7 +387,37 @@ function PresencePanel({ users, onChange }) {
   );
 }
 
-function HomePanel({ session, users, missions, chats, quotas, logs, shortcutIds, onSaveShortcuts, onNavigate }) {
+function WorkforcePanel({ users, quotas }) {
+  const roleOrder = ["admin", "referent", "senior", "officer"];
+  const targets = { ...DEFAULT_QUOTAS.targets, ...quotas.targets };
+  const roleDescriptions = { admin: "Administration du portail", referent: "Gestion et encadrement SO", senior: "Sous-Officiers Supérieurs", officer: "Sous-Officiers" };
+  const groups = roleOrder.map((role) => ({
+    role,
+    users: users.filter((user) => user.role === role).sort((a, b) => {
+      const gradeDifference = GRADES.indexOf(b.grade || GRADES[0]) - GRADES.indexOf(a.grade || GRADES[0]);
+      return gradeDifference || `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`);
+    }),
+  }));
+
+  function quotaState(user) {
+    if (!["senior", "officer"].includes(user.role)) return { label: "Non concerné", tone: "neutral", completed: 0 };
+    if (user.presence === "absent") return { label: "Absent", tone: "absent", completed: 0 };
+    if (quotas.exemptions?.[user.id]) return { label: "Exempté", tone: "exempt", completed: 4 };
+    const counts = quotas.counts?.[user.id] || {};
+    const values = { recommendation: counts.recommendation || 0, pcs_exp: counts.pcs_exp || 0, observations: (counts.observation_hdr || 0) + (counts.observation_so || 0), mission_internal: counts.mission_internal || 0 };
+    const completed = Object.keys(targets).filter((key) => values[key] >= targets[key]).length;
+    return { label: completed === 4 ? "Quota fait" : `${completed}/4 catégories`, tone: completed === 4 ? "done" : "progress", completed };
+  }
+
+  return (
+    <div className="workforce-directory">
+      <section className="workforce-summary"><div><p className="eyebrow dark">VUE D’ENSEMBLE</p><h2>Effectif du portail</h2><p>Les membres sont classés automatiquement par niveau d’accès puis du grade le plus élevé au plus bas.</p></div><div><span><strong>{users.length}</strong> membres</span><span><strong>{users.filter((user) => user.presence === "absent").length}</strong> absents</span><span><strong>{users.filter((user) => user.blocked).length}</strong> bloqués</span></div></section>
+      <div className="workforce-groups">{groups.map((group) => <section className={`workforce-group ${ROLES[group.role].tone}`} key={group.role}><header><div><RoleBadge role={group.role} /><span>{roleDescriptions[group.role]}</span></div><strong>{group.users.length}</strong></header><div className="workforce-list">{group.users.map((user) => { const quota = quotaState(user); const concerned = ["senior", "officer"].includes(user.role); return <article key={user.id}><div className={`avatar ${ROLES[user.role].tone}`}>{initials(user)}</div><div className="workforce-name"><strong>{user.grade || GRADES[0]} {user.firstName} {user.lastName}</strong><small>{ROLES[user.role].label}</small></div><span className={`workforce-presence ${concerned ? user.presence === "absent" ? "absent" : "present" : "neutral"}`}>{user.blocked ? "Compte bloqué" : concerned ? user.presence === "absent" ? "Absent" : "Présent" : "Actif"}</span><span className={`workforce-quota ${quota.tone}`}><Gauge size={14} /> {quota.label}</span></article>; })}{!group.users.length && <p className="workforce-empty">Aucun membre dans cette catégorie.</p>}</div></section>)}</div>
+    </div>
+  );
+}
+
+function HomePanel({ session, users, missions, chats, quotas, logs, assignments, shortcutIds, onSaveShortcuts, onNavigate }) {
   const isManager = ["admin", "referent"].includes(session.role);
   const isQuotaMember = ["senior", "officer"].includes(session.role);
   const shortcutCatalog = [
@@ -397,9 +428,11 @@ function HomePanel({ session, users, missions, chats, quotas, logs, shortcutIds,
     { id: "pcs_exp", label: "Reco PCS EXP", description: "Ouvrir le formulaire PCS EXP", icon: <ClipboardCheck size={18} />, allowed: true },
     { id: "observation_hdr", label: "Observation HDR", description: "Consigner une observation HDR", icon: <ClipboardCheck size={18} />, allowed: true },
     { id: "observation_so", label: "Observation SO", description: "Consigner une observation SO", icon: <MessageSquareText size={18} />, allowed: ["admin", "referent", "senior"].includes(session.role) },
+    { id: "sergeant_assignments", label: "Mes référents", description: "Consulter les Sergents assignés", icon: <UsersRound size={18} />, allowed: ["admin", "referent", "senior"].includes(session.role) },
     { id: "sergeant_report", label: "Rapport nouveau SO", description: "Évaluer un nouveau Sergent", icon: <FileText size={18} />, allowed: ["admin", "referent", "senior"].includes(session.role) },
     { id: "dashboard", label: "Gestion des comptes", description: "Administrer les accès", icon: <ShieldCheck size={18} />, allowed: session.role === "admin" },
     { id: "presence", label: "Présences", description: "Mettre l’équipe à jour", icon: <UserCheck size={18} />, allowed: isManager },
+    { id: "workforce", label: "Effectif", description: "Voir l’organisation de l’équipe", icon: <UsersRound size={18} />, allowed: isManager },
     { id: "quotas", label: "Gestion des quotas", description: "Consulter les objectifs de l’équipe", icon: <Gauge size={18} />, allowed: isManager },
   ].filter((item) => item.allowed);
   const defaultShortcutIds = ["summary", "chat", "mission_internal", session.role === "senior" ? "observation_so" : "observation_hdr"];
@@ -412,6 +445,7 @@ function HomePanel({ session, users, missions, chats, quotas, logs, shortcutIds,
   const myChats = chats.filter((chat) => chat.participants.includes(session.id));
   const pendingMissions = missions.filter((mission) => mission.status === "pending");
   const myMissions = missions.filter((mission) => mission.userId === session.id);
+  const myReportAssignments = assignments.filter((assignment) => assignment.observerId === session.id && assignment.status === "active");
   const targets = { ...DEFAULT_QUOTAS.targets, ...quotas.targets };
   const counts = quotas.counts?.[session.id] || {};
   const categoryCounts = { recommendation: counts.recommendation || 0, pcs_exp: counts.pcs_exp || 0, observations: (counts.observation_hdr || 0) + (counts.observation_so || 0), mission_internal: counts.mission_internal || 0 };
@@ -430,6 +464,13 @@ function HomePanel({ session, users, missions, chats, quotas, logs, shortcutIds,
   if (session.presence === "absent") notifications.push({ tone: "danger", icon: <UserX size={17} />, title: "Vous êtes indiqué absent", text: "Vos quotas sont temporairement affichés comme absents.", target: "home" });
   if (quotas.exemptions?.[session.id]) notifications.push({ tone: "info", icon: <ShieldCheck size={17} />, title: "Vous êtes exempté de quota", text: "Les objectifs restent enregistrés mais ne sont pas exigés.", target: "home" });
   if (isQuotaMember && !isAbsent && !isExempted && remainingTotal > 0) notifications.push({ tone: "info", icon: <Gauge size={17} />, title: `${remainingTotal} action${remainingTotal > 1 ? "s" : ""} restante${remainingTotal > 1 ? "s" : ""}`, text: "Consultez le détail de vos quotas sur cette page.", target: "home" });
+  myReportAssignments.forEach((assignment) => {
+    const sergeant = users.find((user) => user.id === assignment.sergeantId);
+    const deadline = assignment.dueDate ? new Date(`${assignment.dueDate}T23:59:59`) : null;
+    const overdue = deadline && deadline < new Date();
+    const formattedDeadline = deadline ? new Intl.DateTimeFormat("fr-FR", { dateStyle: "long" }).format(deadline) : "non définie";
+    notifications.push({ tone: overdue ? "danger" : assignment.reminderAt ? "warning" : "info", icon: <FileText size={17} />, title: `${assignment.reminderAt ? "Rappel : " : ""}rapport de ${sergeant ? `${sergeant.grade} ${sergeant.lastName}` : "votre Sergent"}`, text: overdue ? `Échéance dépassée depuis le ${formattedDeadline}.` : `Rapport à remettre avant le ${formattedDeadline}.`, target: "sergeant_report" });
+  });
   const rejectedMissions = myMissions.filter((mission) => mission.status === "rejected").length;
   if (rejectedMissions) notifications.push({ tone: "danger", icon: <X size={17} />, title: `${rejectedMissions} mission${rejectedMissions > 1 ? "s" : ""} refusée${rejectedMissions > 1 ? "s" : ""}`, text: "Consultez vos dépôts pour les corriger ou les supprimer.", target: "mission_internal" });
   if (myChats.length) notifications.push({ tone: "info", icon: <MessageSquareText size={17} />, title: `${myChats.length} discussion${myChats.length > 1 ? "s" : ""} disponible${myChats.length > 1 ? "s" : ""}`, text: "Ouvrez la messagerie pour consulter vos échanges.", target: "chat" });
@@ -507,12 +548,12 @@ function SummaryPanel({ session, users, logs, activityResetAt, onResetActivity }
 
   return (
     <div className="summary-dashboard">
-      <section className="summary-toolbar"><div><p className="eyebrow dark">PÉRIODE ANALYSÉE</p><h2>{periodLabels[period]}</h2><p>Les données sont calculées à partir des transmissions enregistrées sur le portail.</p></div><div className="summary-controls"><label>Affichage<select value={scope} onChange={(event) => setScope(event.target.value)}><option value="global">Vue globale</option><option value="self">Moi uniquement</option></select></label><label>Période<select value={period} onChange={(event) => setPeriod(event.target.value)}><option value="day">Jour</option><option value="week">Semaine</option><option value="month">Mois</option><option value="year">Année</option></select></label></div></section>
+      <section className="summary-toolbar"><div><p className="eyebrow dark">PÉRIODE ANALYSÉE</p><h2>{periodLabels[period]}</h2><p>Les données sont calculées à partir des transmissions enregistrées sur le portail.</p></div><div className="summary-controls"><label>Affichage<select value={scope} onChange={(event) => setScope(event.target.value)}><option value="global">Vue globale</option><option value="self">Moi uniquement</option></select></label><label>Période<select value={period} onChange={(event) => setPeriod(event.target.value)}><option value="day">Jour</option><option value="week">Semaine</option><option value="month">Mois</option><option value="year">Année</option></select></label>{canReset && <button className="summary-reset-button" onClick={onResetActivity}><RotateCcw size={16} /> Reset graphiques</button>}</div></section>
       <section className="summary-kpis"><article><span className="summary-kpi-icon blue"><BarChart3 size={20} /></span><div><strong>{currentActivity.length}</strong><small>Transmissions</small></div><em className={trend >= 0 ? "positive" : "negative"}><TrendingUp size={13} /> {trend >= 0 ? "+" : ""}{trend}%</em></article><article><span className="summary-kpi-icon gold"><Medal size={20} /></span><div><strong>{recommendationCount}</strong><small>Recommandations</small></div></article><article><span className="summary-kpi-icon violet"><MessageSquareText size={20} /></span><div><strong>{observationCount}</strong><small>Observations</small></div></article><article><span className="summary-kpi-icon green"><UsersRound size={20} /></span><div><strong>{activeMembers}</strong><small>Membres actifs</small></div></article></section>
       <div className="summary-grid">
         <section className="summary-card activity-chart-card"><div className="summary-card-head"><div><p className="eyebrow dark">ÉVOLUTION</p><h2>Recommandations et observations regroupées</h2></div><div className="chart-legend"><span><i className="recommendation" /> Reco</span><span><i className="pcs-exp" /> PCS EXP</span><span><i className="observation-hdr" /> HDR</span><span><i className="observation-so" /> Obs. SO</span></div></div><div className="activity-chart">{chartBins.map((bin, index) => <div className="activity-column" key={`${bin.label}-${index}`}><div className="activity-bars"><span className="series-stack recommendation-stack" title={`Recommandations : ${bin.recommendation} · PCS EXP : ${bin.pcsExp}`} style={{ height: `${bin.recommendationTotal ? Math.max((bin.recommendationTotal / chartMaximum) * 100, 7) : 2}%` }}>{bin.recommendation > 0 && <i className="recommendation" style={{ flexGrow: bin.recommendation }} />}{bin.pcsExp > 0 && <i className="pcs-exp" style={{ flexGrow: bin.pcsExp }} />}</span><span className="series-stack observation-stack" title={`Observations HDR : ${bin.observationHdr} · Observations SO : ${bin.observationSo}`} style={{ height: `${bin.observationTotal ? Math.max((bin.observationTotal / chartMaximum) * 100, 7) : 2}%` }}>{bin.observationHdr > 0 && <i className="observation-hdr" style={{ flexGrow: bin.observationHdr }} />}{bin.observationSo > 0 && <i className="observation-so" style={{ flexGrow: bin.observationSo }} />}</span></div><span>{bin.label}</span></div>)}</div><div className="chart-group-labels"><span><i className="recommendation" /> Recommandations : {recommendationCount}</span><span><i className="observation" /> Observations : {observationCount}</span></div><div className="chart-insight"><CalendarDays size={16} /><span>Période la plus active : <strong>{busiestBin?.label || "—"}</strong></span></div></section>
         <section className="summary-card distribution-card"><div className="summary-card-head"><div><p className="eyebrow dark">RÉPARTITION</p><h2>Nature de l’activité</h2></div></div><div className="distribution-visual" style={{ "--recommendation-share": `${currentActivity.length ? (recommendationCount / currentActivity.length) * 100 : 50}%` }}><div><strong>{currentActivity.length}</strong><small>total</small></div></div><div className="distribution-details"><div><span><i className="recommendation" /><span>Recommandations<small>Reco : {standardRecommendationCount} · PCS EXP : {pcsExpCount}</small></span></span><strong>{currentActivity.length ? Math.round((recommendationCount / currentActivity.length) * 100) : 0}%</strong></div><div><span><i className="observation" /><span>Observations<small>HDR : {observationHdrCount} · SO : {observationSoCount}</small></span></span><strong>{currentActivity.length ? Math.round((observationCount / currentActivity.length) * 100) : 0}%</strong></div></div></section>
-        <section className="summary-card ranking-card"><div className="summary-card-head"><div><p className="eyebrow dark">CLASSEMENT</p><h2>Sous-Officiers les plus actifs</h2><p>Recommandations et observations depuis le dernier reset.</p></div>{canReset && <button className="reset-ranking" onClick={onResetActivity} title="Réservé à l’Admin"><RotateCcw size={15} /> Reset Admin</button>}</div><div className="ranking-list">{ranking.map((item, index) => <article key={item.user.id}><span className={`rank-position rank-${index + 1}`}>{index < 3 ? <Trophy size={15} /> : index + 1}</span><div className={`avatar small ${ROLES[item.user.role].tone}`}>{initials(item.user)}</div><div className="rank-member"><strong>{item.user.grade} {item.user.lastName}</strong><small>{item.recommendations} reco · {item.observations} observation{item.observations > 1 ? "s" : ""}</small><div><i style={{ width: `${(item.total / rankingMaximum) * 100}%` }} /></div></div><strong className="rank-score">{item.total}</strong></article>)}</div>{activityResetAt && <p className="ranking-reset-date">Compteurs réinitialisés le {new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(activityResetAt))}</p>}</section>
+        <section className="summary-card ranking-card"><div className="summary-card-head"><div><p className="eyebrow dark">CLASSEMENT</p><h2>Sous-Officiers les plus actifs</h2><p>Recommandations et observations depuis le dernier reset.</p></div></div><div className="ranking-list">{ranking.map((item, index) => <article key={item.user.id}><span className={`rank-position rank-${index + 1}`}>{index < 3 ? <Trophy size={15} /> : index + 1}</span><div className={`avatar small ${ROLES[item.user.role].tone}`}>{initials(item.user)}</div><div className="rank-member"><strong>{item.user.grade} {item.user.lastName}</strong><small>{item.recommendations} reco · {item.observations} observation{item.observations > 1 ? "s" : ""}</small><div><i style={{ width: `${(item.total / rankingMaximum) * 100}%` }} /></div></div><strong className="rank-score">{item.total}</strong></article>)}</div>{activityResetAt && <p className="ranking-reset-date">Compteurs réinitialisés le {new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(activityResetAt))}</p>}</section>
         <section className="summary-card arrivals-card"><div className="summary-card-head"><div><p className="eyebrow dark">EFFECTIFS</p><h2>Arrivées de Sous-Officiers</h2><p>{arrivals.length} arrivée{arrivals.length > 1 ? "s" : ""} sur la période.</p></div><span><UsersRound size={17} /> {team.length} membres</span></div><div className="arrivals-chart">{arrivalBins.map((bin, index) => <div key={`${bin.label}-${index}`}><i title={`${bin.count} arrivée(s)`} style={{ height: `${bin.count ? Math.max((bin.count / arrivalMaximum) * 100, 9) : 3}%` }}><b>{bin.count || ""}</b></i><span>{bin.label}</span></div>)}</div></section>
       </div>
     </div>
@@ -810,8 +851,40 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onSend, onEd
   );
 }
 
-function SergeantReportPanel({ users, session, onSuccess }) {
-  const sergeants = users.filter((user) => user.role === "officer" && user.grade === "Sergent");
+function SergeantAssignmentPanel({ users, session, assignments, onAssign, onReminder, onDelete }) {
+  const canManage = ["admin", "referent"].includes(session.role);
+  const sergeants = users.filter((user) => user.role === "officer" && user.grade === "Sergent" && !user.blocked);
+  const supervisors = users.filter((user) => user.role === "senior" && !user.blocked).sort((a, b) => GRADES.indexOf(b.grade) - GRADES.indexOf(a.grade));
+  const defaultDueDate = (() => { const date = new Date(); date.setDate(date.getDate() + 7); return date.toISOString().slice(0, 10); })();
+  const [form, setForm] = useState({ sergeantId: sergeants[0]?.id || "", observerId: supervisors[0]?.id || "", dueDate: defaultDueDate });
+  useEffect(() => {
+    setForm((current) => ({ ...current, sergeantId: sergeants.some((user) => user.id === current.sergeantId) ? current.sergeantId : sergeants[0]?.id || "", observerId: supervisors.some((user) => user.id === current.observerId) ? current.observerId : supervisors[0]?.id || "" }));
+  }, [users]);
+  const visibleAssignments = canManage ? assignments : assignments.filter((assignment) => assignment.observerId === session.id);
+
+  function submit(event) {
+    event.preventDefault();
+    if (!canManage || !form.sergeantId || !form.observerId || !form.dueDate) return;
+    onAssign(form);
+  }
+
+  return (
+    <div className="assignment-layout">
+      {canManage && <section className="assignment-form-card"><div className="assignment-card-head"><span><UsersRound size={22} /></span><div><p className="eyebrow dark">NOUVELLE ATTRIBUTION</p><h2>Assigner un Référent</h2><p>Confiez le suivi de la semaine d’un nouveau Sergent à un Sous-Officier Supérieur.</p></div></div><form onSubmit={submit}><label>Nouveau Sergent</label><select value={form.sergeantId} onChange={(event) => setForm((current) => ({ ...current, sergeantId: event.target.value }))} disabled={!sergeants.length}>{!sergeants.length && <option value="">Aucun Sergent disponible</option>}{sergeants.map((user) => <option value={user.id} key={user.id}>{user.grade} {user.firstName} {user.lastName}</option>)}</select><label>Sous-Officier Supérieur référent</label><select value={form.observerId} onChange={(event) => setForm((current) => ({ ...current, observerId: event.target.value }))} disabled={!supervisors.length}>{!supervisors.length && <option value="">Aucun SO Sup disponible</option>}{supervisors.map((user) => <option value={user.id} key={user.id}>{user.grade} {user.firstName} {user.lastName}</option>)}</select><label>Date limite du rapport</label><input type="date" min={new Date().toISOString().slice(0, 10)} value={form.dueDate} onChange={(event) => setForm((current) => ({ ...current, dueDate: event.target.value }))} required />{(!sergeants.length || !supervisors.length) && <p className="form-warning">Un compte Sergent et un compte Sous-Officier Supérieur sont nécessaires.</p>}<button className="primary wide" type="submit" disabled={!sergeants.length || !supervisors.length}><UserCheck size={17} /> Enregistrer l’assignation</button></form></section>}
+      <section className="assignment-list-card"><div className="assignment-list-head"><div><p className="eyebrow dark">SUIVI DES SERGENTS</p><h2>{canManage ? "Assignations en cours" : "Mes Sergents assignés"}</h2><p>{canManage ? "Gérez les référents, les échéances et les rappels." : "Seuls ces Sergents seront disponibles dans vos rapports."}</p></div><span><strong>{visibleAssignments.filter((assignment) => assignment.status === "active").length}</strong> en cours</span></div><div className="assignment-list">{visibleAssignments.map((assignment) => {
+        const sergeant = users.find((user) => user.id === assignment.sergeantId);
+        const observer = users.find((user) => user.id === assignment.observerId);
+        const deadline = assignment.dueDate ? new Date(`${assignment.dueDate}T23:59:59`) : null;
+        const overdue = assignment.status === "active" && deadline && deadline < new Date();
+        return <article key={assignment.id}><div className="assignment-people"><div><span className={`avatar small ${sergeant ? ROLES[sergeant.role].tone : "green"}`}>{sergeant ? initials(sergeant) : "?"}</span><span><small>Nouveau Sergent</small><strong>{sergeant ? `${sergeant.grade} ${sergeant.firstName} ${sergeant.lastName}` : "Compte supprimé"}</strong></span></div><i>→</i><div><span className={`avatar small ${observer ? ROLES[observer.role].tone : "gold"}`}>{observer ? initials(observer) : "?"}</span><span><small>Référent SO Sup</small><strong>{observer ? `${observer.grade} ${observer.firstName} ${observer.lastName}` : "Compte supprimé"}</strong></span></div></div><div className="assignment-meta"><span className={`assignment-deadline ${overdue ? "overdue" : ""}`}><CalendarDays size={15} /> {deadline ? new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" }).format(deadline) : "Sans date"}</span><span className={`assignment-status ${assignment.status}`}>{assignment.status === "completed" ? "Rapport envoyé" : overdue ? "En retard" : assignment.reminderAt ? "Rappel envoyé" : "En suivi"}</span></div>{canManage && <div className="assignment-actions">{assignment.status === "active" && <button className="assignment-reminder" onClick={() => onReminder(assignment.id)}><Bell size={15} /> {assignment.reminderAt ? "Renvoyer un rappel" : "Envoyer un rappel"}</button>}<button className="icon-button danger" title="Supprimer l’assignation" onClick={() => onDelete(assignment.id)}><Trash2 size={16} /></button></div>}</article>;
+      })}{!visibleAssignments.length && <div className="assignment-empty"><UsersRound size={27} /><strong>Aucune assignation</strong><p>{canManage ? "Commencez par attribuer un nouveau Sergent." : "Aucun Sergent ne vous a encore été confié."}</p></div>}</div></section>
+    </div>
+  );
+}
+
+function SergeantReportPanel({ users, session, assignments, onSuccess }) {
+  const activeAssignments = assignments.filter((assignment) => assignment.observerId === session.id && assignment.status === "active");
+  const sergeants = activeAssignments.map((assignment) => users.find((user) => user.id === assignment.sergeantId)).filter((user) => user && user.role === "officer" && user.grade === "Sergent");
   const [form, setForm] = useState({
     sergeantId: sergeants[0]?.id || "",
     positivePoints: "",
@@ -822,11 +895,16 @@ function SergeantReportPanel({ users, session, onSuccess }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const selectedAssignment = activeAssignments.find((assignment) => assignment.sergeantId === form.sergeantId);
+  useEffect(() => {
+    if (!sergeants.some((user) => user.id === form.sergeantId)) setForm((current) => ({ ...current, sergeantId: sergeants[0]?.id || "" }));
+  }, [assignments, users]);
 
   async function submit(event) {
     event.preventDefault();
     const selectedSergeant = sergeants.find((user) => user.id === form.sergeantId);
-    if (!selectedSergeant) return setError("Sélectionnez un Sergent inscrit sur le site.");
+    const assignment = activeAssignments.find((item) => item.sergeantId === form.sergeantId);
+    if (session.role !== "senior" || !selectedSergeant || !assignment) return setError("Vous ne pouvez envoyer un rapport que pour un Sergent qui vous est assigné.");
     setSending(true);
     setError("");
     try {
@@ -848,7 +926,7 @@ function SergeantReportPanel({ users, session, onSuccess }) {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Envoi impossible.");
       setForm((current) => ({ ...current, positivePoints: "", negativePoints: "", globalOpinion: "", conclusion: REPORT_CONCLUSIONS[0] }));
-      onSuccess("Le rapport du nouveau Sous-Officier a été envoyé sur Discord.");
+      onSuccess("Le rapport du nouveau Sous-Officier a été envoyé sur Discord.", selectedSergeant.id);
     } catch (submissionError) {
       setError(submissionError.message || "Une erreur est survenue pendant l’envoi.");
     } finally {
@@ -859,20 +937,21 @@ function SergeantReportPanel({ users, session, onSuccess }) {
   return (
     <section className="transmissions-layout single">
       <div className="transmission-card report-card">
-        <div className="transmission-head"><span className="category-icon large gold"><FileText size={25} /></span><div><p className="eyebrow dark">NOUVEAU RAPPORT</p><h2>Rapport nouveau Sous-Officier</h2><p className="muted">Évaluez la semaine de test d’un Sergent inscrit sur le portail.</p></div></div>
+        <div className="transmission-head"><span className="category-icon large gold"><FileText size={25} /></span><div><p className="eyebrow dark">NOUVEAU RAPPORT</p><h2>Rapport nouveau Sous-Officier</h2><p className="muted">Évaluez uniquement les Sergents qui vous ont été confiés.</p></div></div>
         <form onSubmit={submit}>
           <label>Nom du Sergent</label>
           <select value={form.sergeantId} onChange={(event) => set("sergeantId", event.target.value)} required disabled={!sergeants.length}>
             {!sergeants.length && <option value="">Aucun Sergent disponible</option>}
             {sergeants.map((user) => <option key={user.id} value={user.id}>{user.firstName} {user.lastName}</option>)}
           </select>
-          {!sergeants.length && <p className="form-warning">Créez d’abord un compte de niveau Sous-Officier avec le grade Sergent.</p>}
+          {selectedAssignment?.dueDate && <p className="report-deadline"><CalendarDays size={15} /> Rapport attendu avant le <strong>{new Intl.DateTimeFormat("fr-FR", { dateStyle: "long" }).format(new Date(`${selectedAssignment.dueDate}T12:00:00`))}</strong></p>}
+          {!sergeants.length && <p className="form-warning">Aucun Sergent ne vous est assigné. Un Admin ou un Référent SO doit d’abord créer l’assignation.</p>}
           <label>Point positif</label><textarea value={form.positivePoints} onChange={(event) => set("positivePoints", event.target.value)} required maxLength={1000} rows={4} placeholder="Décrivez les points positifs observés…" />
           <label>Point négatif</label><textarea value={form.negativePoints} onChange={(event) => set("negativePoints", event.target.value)} required maxLength={1000} rows={4} placeholder="Décrivez les axes d’amélioration…" />
           <label>Avis global</label><textarea value={form.globalOpinion} onChange={(event) => set("globalOpinion", event.target.value)} required maxLength={1000} rows={5} placeholder="Rédigez votre avis général sur la semaine de test…" />
           <label>Conclusion</label><select value={form.conclusion} onChange={(event) => set("conclusion", event.target.value)} required>{REPORT_CONCLUSIONS.map((conclusion) => <option key={conclusion} value={conclusion}>{conclusion}</option>)}</select>
           {error && <p className="form-error transmission-error">{error}</p>}
-          <div className="transmission-actions"><span><ShieldCheck size={15} /> Envoi sécurisé vers le salon dédié</span><button className="primary" type="submit" disabled={sending || !sergeants.length}><Send size={17} />{sending ? "Envoi en cours…" : "Envoyer le rapport"}</button></div>
+          <div className="transmission-actions"><span><ShieldCheck size={15} /> Envoi réservé au SO Sup assigné</span><button className="primary" type="submit" disabled={sending || !sergeants.length || session.role !== "senior"}><Send size={17} />{sending ? "Envoi en cours…" : "Envoyer le rapport"}</button></div>
         </form>
       </div>
     </section>
@@ -968,6 +1047,7 @@ function App() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [shortcutPreferences, setShortcutPreferences] = useState({});
   const [summarySettings, setSummarySettings] = useState({ activityResetAt: null });
+  const [sergeantAssignments, setSergeantAssignments] = useState([]);
   const [loginTransition, setLoginTransition] = useState(null);
 
   useEffect(() => {
@@ -1003,6 +1083,7 @@ function App() {
     const savedLogs = localStorage.getItem(LOG_KEY);
     const savedShortcuts = localStorage.getItem(SHORTCUTS_KEY);
     const savedSummary = localStorage.getItem(SUMMARY_KEY);
+    const savedAssignments = localStorage.getItem(ASSIGNMENTS_KEY);
     const parsedQuotas = savedQuotas ? JSON.parse(savedQuotas) : DEFAULT_QUOTAS;
     setQuotas({ targets: { ...DEFAULT_QUOTAS.targets, ...parsedQuotas.targets }, counts: parsedQuotas.counts || {}, exemptions: parsedQuotas.exemptions || {} });
     setMissions(savedMissions ? JSON.parse(savedMissions) : []);
@@ -1010,6 +1091,7 @@ function App() {
     setAuditLogs(savedLogs ? JSON.parse(savedLogs) : []);
     setShortcutPreferences(savedShortcuts ? JSON.parse(savedShortcuts) : {});
     setSummarySettings(savedSummary ? JSON.parse(savedSummary) : { activityResetAt: null });
+    setSergeantAssignments(savedAssignments ? JSON.parse(savedAssignments) : []);
     setDarkMode(savedTheme);
     document.documentElement.dataset.theme = savedTheme ? "dark" : "light";
     setReady(true);
@@ -1029,6 +1111,7 @@ function App() {
   }, [auditLogs, ready]);
   useEffect(() => { if (ready) localStorage.setItem(SHORTCUTS_KEY, JSON.stringify(shortcutPreferences)); }, [shortcutPreferences, ready]);
   useEffect(() => { if (ready) localStorage.setItem(SUMMARY_KEY, JSON.stringify(summarySettings)); }, [summarySettings, ready]);
+  useEffect(() => { if (ready) localStorage.setItem(ASSIGNMENTS_KEY, JSON.stringify(sergeantAssignments)); }, [sergeantAssignments, ready]);
   useEffect(() => {
     function syncAccounts(event) {
       if (event.key === SESSION_KEY && !event.newValue) {
@@ -1051,6 +1134,10 @@ function App() {
       }
       if (event.key === SUMMARY_KEY && event.newValue) {
         try { setSummarySettings(JSON.parse(event.newValue)); } catch { /* Ignore des réglages invalides. */ }
+        return;
+      }
+      if (event.key === ASSIGNMENTS_KEY && event.newValue) {
+        try { setSergeantAssignments(JSON.parse(event.newValue)); } catch { /* Ignore des assignations invalides. */ }
         return;
       }
       if (event.key !== STORAGE_KEY || !event.newValue) return;
@@ -1121,9 +1208,44 @@ function App() {
       return { ...current, counts: { ...current.counts, [session.id]: { ...userCounts, [type]: (userCounts[type] || 0) + 1 } } };
     });
   }
-  function sergeantReportSuccess(message) {
+  function sergeantReportSuccess(message, sergeantId) {
     flash(message);
-    addLog("form", "Rapport nouveau Sous-Officier envoyé");
+    const sergeant = users.find((user) => user.id === sergeantId);
+    setSergeantAssignments((current) => current.map((assignment) => assignment.sergeantId === sergeantId && assignment.observerId === session.id && assignment.status === "active" ? { ...assignment, status: "completed", completedAt: new Date().toISOString() } : assignment));
+    addLog("form", "Rapport nouveau Sous-Officier envoyé", sergeant ? `${sergeant.grade} ${sergeant.firstName} ${sergeant.lastName}` : "Sergent assigné");
+  }
+  function assignSergeant({ sergeantId, observerId, dueDate }) {
+    if (!["admin", "referent"].includes(session.role)) return;
+    const sergeant = users.find((user) => user.id === sergeantId && user.role === "officer" && user.grade === "Sergent");
+    const observer = users.find((user) => user.id === observerId && user.role === "senior");
+    if (!sergeant || !observer || !dueDate) return flash("L’assignation est invalide.");
+    const now = new Date().toISOString();
+    setSergeantAssignments((current) => {
+      const existing = current.find((assignment) => assignment.sergeantId === sergeantId);
+      if (existing) return current.map((assignment) => assignment.id === existing.id ? { ...assignment, observerId, dueDate, status: "active", assignedAt: now, reminderAt: null, completedAt: null } : assignment);
+      return [{ id: crypto.randomUUID(), sergeantId, observerId, dueDate, status: "active", assignedAt: now, reminderAt: null }, ...current];
+    });
+    addLog("assignment", "Sergent assigné à un SO Sup", `${sergeant.grade} ${sergeant.lastName} → ${observer.grade} ${observer.lastName} · échéance ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "short" }).format(new Date(`${dueDate}T12:00:00`))}`);
+    flash("Le Référent du nouveau Sergent a bien été enregistré.");
+  }
+  function remindSergeantAssignment(assignmentId) {
+    if (!["admin", "referent"].includes(session.role)) return;
+    const assignment = sergeantAssignments.find((item) => item.id === assignmentId && item.status === "active");
+    if (!assignment) return;
+    const now = new Date().toISOString();
+    setSergeantAssignments((current) => current.map((item) => item.id === assignmentId ? { ...item, reminderAt: now } : item));
+    const sergeant = users.find((user) => user.id === assignment.sergeantId);
+    const observer = users.find((user) => user.id === assignment.observerId);
+    addLog("assignment", "Rappel de rapport envoyé", `${sergeant?.lastName || "Sergent"} → ${observer?.lastName || "SO Sup"}`);
+    flash("Le rappel apparaîtra sur l’accueil du SO Sup assigné.");
+  }
+  function deleteSergeantAssignment(assignmentId) {
+    if (!["admin", "referent"].includes(session.role)) return;
+    const assignment = sergeantAssignments.find((item) => item.id === assignmentId);
+    if (!assignment || !confirm("Supprimer cette assignation ?")) return;
+    setSergeantAssignments((current) => current.filter((item) => item.id !== assignmentId));
+    addLog("assignment", "Assignation de Sergent supprimée");
+    flash("L’assignation a été supprimée.");
   }
   function changeQuotaTarget(category, value) {
     const parsedTarget = Number.parseInt(value, 10);
@@ -1276,7 +1398,9 @@ function App() {
   }
   function removeUser(user) {
     if (!manageable(user) || !confirm(`Supprimer le compte de ${user.firstName} ${user.lastName} ?`)) return;
-    setUsers((current) => current.filter((item) => item.id !== user.id)); addLog("account", "Compte supprimé", `${user.firstName} ${user.lastName}`); flash("Le compte a été supprimé.");
+    setUsers((current) => current.filter((item) => item.id !== user.id));
+    setSergeantAssignments((current) => current.filter((assignment) => assignment.sergeantId !== user.id && assignment.observerId !== user.id));
+    addLog("account", "Compte supprimé", `${user.firstName} ${user.lastName}`); flash("Le compte a été supprimé.");
   }
   function changePresence(userId, presence) {
     const targetUser = users.find((user) => user.id === userId);
@@ -1310,9 +1434,9 @@ function App() {
         <nav>
           <button className={`menu-item standalone-nav ${activeSection === "home" ? "active" : ""}`} onClick={() => setActiveSection("home")}><Home size={18} /> Accueil</button>
           {session.role === "admin" && <MenuGroup title="Admin" icon={ShieldCheck} open={openGroups.admin} onToggle={() => toggleGroup("admin")}><button className={`menu-item ${activeSection === "dashboard" ? "active" : ""}`} onClick={() => setActiveSection("dashboard")}><LayoutDashboard size={17} /> Tableau de bord</button></MenuGroup>}
-          {["admin", "referent"].includes(session.role) && <MenuGroup title="Référent SO" icon={UsersRound} open={openGroups.referent} onToggle={() => toggleGroup("referent")}><button className={`menu-item ${activeSection === "presence" ? "active" : ""}`} onClick={() => setActiveSection("presence")}><UserCheck size={17} /> Présences</button><button className={`menu-item ${activeSection === "quotas" ? "active" : ""}`} onClick={() => setActiveSection("quotas")}><Gauge size={17} /> Quotas</button></MenuGroup>}
+          {["admin", "referent"].includes(session.role) && <MenuGroup title="Référent SO" icon={UsersRound} open={openGroups.referent} onToggle={() => toggleGroup("referent")}><button className={`menu-item ${activeSection === "workforce" ? "active" : ""}`} onClick={() => setActiveSection("workforce")}><UsersRound size={17} /> Effectif</button><button className={`menu-item ${activeSection === "presence" ? "active" : ""}`} onClick={() => setActiveSection("presence")}><UserCheck size={17} /> Présences</button><button className={`menu-item ${activeSection === "quotas" ? "active" : ""}`} onClick={() => setActiveSection("quotas")}><Gauge size={17} /> Quotas</button></MenuGroup>}
           <MenuGroup title="Globale" icon={Send} open={openGroups.global} onToggle={() => toggleGroup("global")}><button className={`menu-item ${activeSection === "summary" ? "active" : ""}`} onClick={() => setActiveSection("summary")}><BarChart3 size={17} /> Résumé</button><button className={`menu-item ${activeSection === "recommendation" ? "active" : ""}`} onClick={() => setActiveSection("recommendation")}><Medal size={17} /> Recommandation</button><button className={`menu-item ${activeSection === "pcs_exp" ? "active" : ""}`} onClick={() => setActiveSection("pcs_exp")}><ClipboardCheck size={17} /> Recommandation PCS EXP</button><button className={`menu-item ${activeSection === "observation_hdr" ? "active" : ""}`} onClick={() => setActiveSection("observation_hdr")}><MessageSquareText size={17} /> Observation HDR</button><button className={`menu-item ${activeSection === "mission_internal" ? "active" : ""}`} onClick={() => setActiveSection("mission_internal")}><FileText size={17} /> Mission interne</button></MenuGroup>
-          {["admin", "referent", "senior"].includes(session.role) && <MenuGroup title="Sous-Officier Supérieur" icon={BadgeCheck} open={openGroups.senior} onToggle={() => toggleGroup("senior")}><button className={`menu-item ${activeSection === "observation_so" ? "active" : ""}`} onClick={() => setActiveSection("observation_so")}><MessageSquareText size={17} /> Observation SO</button><button className={`menu-item ${activeSection === "sergeant_report" ? "active" : ""}`} onClick={() => setActiveSection("sergeant_report")}><FileText size={17} /> Rapport nouveau SO</button></MenuGroup>}
+          {["admin", "referent", "senior"].includes(session.role) && <MenuGroup title="Sous-Officier Supérieur" icon={BadgeCheck} open={openGroups.senior} onToggle={() => toggleGroup("senior")}><button className={`menu-item ${activeSection === "sergeant_assignments" ? "active" : ""}`} onClick={() => setActiveSection("sergeant_assignments")}><UsersRound size={17} /> Référent</button><button className={`menu-item ${activeSection === "observation_so" ? "active" : ""}`} onClick={() => setActiveSection("observation_so")}><MessageSquareText size={17} /> Observation SO</button><button className={`menu-item ${activeSection === "sergeant_report" ? "active" : ""}`} onClick={() => setActiveSection("sergeant_report")}><FileText size={17} /> Rapport nouveau SO</button></MenuGroup>}
           <MenuGroup title="Chat" icon={MessageSquareText} open={openGroups.chat} onToggle={() => toggleGroup("chat")}><button className={`menu-item ${activeSection === "chat" ? "active" : ""}`} onClick={() => setActiveSection("chat")}><Send size={17} /> Messagerie</button></MenuGroup>
           {["admin", "referent"].includes(session.role) && <button className={`menu-item standalone-nav logs-nav ${activeSection === "logs" ? "active" : ""}`} onClick={() => setActiveSection("logs")}><ScrollText size={18} /> Logs</button>}
         </nav>
@@ -1328,10 +1452,10 @@ function App() {
       </aside>
 
       <main className="content">
-        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{session.role === "admin" && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{["admin", "referent"].includes(session.role) && <optgroup label="Référent SO"><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="summary">Résumé</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{["admin", "referent", "senior"].includes(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{["admin", "referent"].includes(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
-        {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
+        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{session.role === "admin" && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{["admin", "referent"].includes(session.role) && <optgroup label="Référent SO"><option value="workforce">Effectif</option><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="summary">Résumé</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{["admin", "referent", "senior"].includes(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="sergeant_assignments">Référent</option><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{["admin", "referent"].includes(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
+        {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "workforce" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Effectif</h1><p className="muted">Consultez l’organisation complète des membres par accès et par grade.</p></div><span className="referent-access"><UsersRound size={16} /> Vue des effectifs</span></header> : activeSection === "sergeant_assignments" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Référent</h1><p className="muted">Attribuez et suivez les référents des nouveaux Sergents.</p></div><span className="senior-access"><BadgeCheck size={16} /> Suivi des semaines de test</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
-        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={setActiveSection} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} logs={auditLogs} activityResetAt={summarySettings.activityResetAt || summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
+        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={setActiveSection} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} logs={auditLogs} activityResetAt={summarySettings.activityResetAt || summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
         <section className="stats">
           <article><span className="stat-icon blue"><UsersRound /></span><div><strong>{users.length}</strong><small>Comptes au total</small></div><span className="trend">Tous niveaux</span></article>
           <article><span className="stat-icon red"><UserX /></span><div><strong>{users.filter((user) => user.blocked).length}</strong><small>Comptes bloqués</small></div><span className="trend">Accès suspendu</span></article>
@@ -1342,7 +1466,7 @@ function App() {
           <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
           <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>État du compte</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.email}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td><RoleBadge role={user.role} /></td><td>{user.role === "admin" ? <span className="account-state active"><UserCheck size={15} /> Compte actif</span> : <button className={`account-state ${user.blocked ? "blocked" : "active"}`} type="button" onClick={() => toggleAccountBlock(user)}>{user.blocked ? <UserX size={15} /> : <UserCheck size={15} />}{user.blocked ? "Compte bloqué" : "Compte actif"}</button>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title="Modifier" onClick={() => setModal(user)}><Pencil size={17} /></button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
         </section>
-        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} onSuccess={sergeantReportSuccess} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} />}
+        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} assignments={sergeantAssignments} onSuccess={sergeantReportSuccess} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} />}
       </main>
       {notice && <div className="toast"><BadgeCheck size={19} />{notice}</div>}
       {modal && <UserModal actor={session} editing={modal.id ? modal : null} onClose={() => setModal(null)} onSave={saveUser} />}
