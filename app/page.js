@@ -66,7 +66,7 @@ const THEME_KEY = "portail-so-theme";
 const ADMIN_RECOVERY_KEY = "portail-so-admin-recovery-v1";
 const QUOTA_KEY = "portail-so-quotas-v1";
 const MISSIONS_KEY = "portail-so-missions-v1";
-const DEFAULT_QUOTAS = { targets: { recommendation: 1, pcs_exp: 1, observations: 1, mission_internal: 0 }, counts: {} };
+const DEFAULT_QUOTAS = { targets: { recommendation: 1, pcs_exp: 1, observations: 1, mission_internal: 0 }, counts: {}, exemptions: {} };
 const QUOTA_TYPES = ["recommendation", "pcs_exp", "observation_hdr", "observation_so"];
 const REPORT_CONCLUSIONS = [
   "Passage confirmé en sergent",
@@ -228,7 +228,7 @@ function PresencePanel({ users, onChange }) {
   );
 }
 
-function QuotaPanel({ users, quotas, onTargetChange, onReset }) {
+function QuotaPanel({ users, quotas, onTargetChange, onReset, onToggleExemption }) {
   const team = users.filter((user) => ["senior", "officer"].includes(user.role));
   const targets = { ...DEFAULT_QUOTAS.targets, ...quotas.targets };
 
@@ -238,21 +238,25 @@ function QuotaPanel({ users, quotas, onTargetChange, onReset }) {
         <div><p className="eyebrow dark">SUIVI DES TRANSMISSIONS</p><h2>Quotas par catégorie</h2><p className="muted">Définissez un objectif distinct pour les recommandations, PCS EXP, observations et missions internes validées.</p></div>
         <div className="quota-controls"><label>Recommandation<input type="number" min="0" max="100" value={targets.recommendation} onChange={(event) => onTargetChange("recommendation", event.target.value)} /></label><label>PCS EXP<input type="number" min="0" max="100" value={targets.pcs_exp} onChange={(event) => onTargetChange("pcs_exp", event.target.value)} /></label><label>Observations<input type="number" min="0" max="100" value={targets.observations} onChange={(event) => onTargetChange("observations", event.target.value)} /></label><label>Missions internes<input type="number" min="0" max="100" value={targets.mission_internal} onChange={(event) => onTargetChange("mission_internal", event.target.value)} /></label><button className="reset-quota" onClick={onReset}><RotateCcw size={16} /> Réinitialiser</button></div>
       </div>
-      <div className="table-wrap"><table className="quota-table"><thead><tr><th>Utilisateur</th><th>Recommandation</th><th>Recommandation PCS EXP</th><th>Observations HDR + SO</th><th>Missions internes</th><th>Statut global</th></tr></thead><tbody>
+      <div className="table-wrap"><table className="quota-table"><thead><tr><th>Utilisateur</th><th>Recommandation</th><th>Recommandation PCS EXP</th><th>Observations HDR + SO</th><th>Missions internes</th><th>Statut global</th><th>Gestion</th></tr></thead><tbody>
         {team.map((user) => {
           const counts = quotas.counts?.[user.id] || {};
+          const isAbsent = user.presence === "absent";
+          const isExempted = quotas.exemptions?.[user.id] === true;
           const categoryCounts = { recommendation: counts.recommendation || 0, pcs_exp: counts.pcs_exp || 0, observations: (counts.observation_hdr || 0) + (counts.observation_so || 0), mission_internal: counts.mission_internal || 0 };
           const completed = Object.keys(targets).every((category) => categoryCounts[category] >= targets[category]);
           const quotaCell = (category, detail = "") => {
             const count = categoryCounts[category];
             const target = targets[category];
+            if (isAbsent || isExempted) return <div className={`quota-unavailable ${isAbsent ? "absent" : "exempted"}`}><span>{isAbsent ? <UserX size={15} /> : <ShieldCheck size={15} />}{isAbsent ? "Absent" : "Exempté"}</span><small>{count}/{target} enregistré</small></div>;
             const done = count >= target;
             const percentage = target === 0 ? 100 : Math.min(100, Math.round((count / target) * 100));
             return <div className="quota-category"><div className="quota-category-top"><strong>{count}/{target}</strong><span className={done ? "done" : "pending"}>{done ? "Fait" : "Non fait"}</span></div><div className="quota-progress"><i><span style={{ width: `${percentage}%` }} /></i><small>{percentage}%</small></div>{detail && <small className="quota-detail">{detail}</small>}</div>;
           };
-          return <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.grade || GRADES[0]}</small></div></div></td><td>{quotaCell("recommendation")}</td><td>{quotaCell("pcs_exp")}</td><td>{quotaCell("observations", `HDR : ${counts.observation_hdr || 0} • SO : ${counts.observation_so || 0}`)}</td><td>{quotaCell("mission_internal")}</td><td><span className={`quota-status ${completed ? "done" : "pending"}`}>{completed ? <BadgeCheck size={15} /> : <X size={15} />}{completed ? "Fait" : "Non fait"}</span></td></tr>;
+          const quotaStatus = isAbsent ? { tone: "absent", icon: <UserX size={15} />, label: "Absent" } : isExempted ? { tone: "exempted", icon: <ShieldCheck size={15} />, label: "Exempté" } : completed ? { tone: "done", icon: <BadgeCheck size={15} />, label: "Fait" } : { tone: "pending", icon: <X size={15} />, label: "Non fait" };
+          return <tr className={isAbsent || isExempted ? "quota-row-inactive" : ""} key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.grade || GRADES[0]}</small></div></div></td><td>{quotaCell("recommendation")}</td><td>{quotaCell("pcs_exp")}</td><td>{quotaCell("observations", `HDR : ${counts.observation_hdr || 0} • SO : ${counts.observation_so || 0}`)}</td><td>{quotaCell("mission_internal")}</td><td><span className={`quota-status ${quotaStatus.tone}`}>{quotaStatus.icon}{quotaStatus.label}</span></td><td><button className={`quota-exemption ${isExempted ? "active" : ""}`} type="button" onClick={() => onToggleExemption(user.id)}>{isExempted ? <UserCheck size={15} /> : <ShieldCheck size={15} />}{isExempted ? "Retirer l’exemption" : "Exempter"}</button></td></tr>;
         })}
-        {!team.length && <tr><td colSpan="6" className="empty-presence">Aucun Sous-Officier à afficher.</td></tr>}
+        {!team.length && <tr><td colSpan="7" className="empty-presence">Aucun Sous-Officier à afficher.</td></tr>}
       </tbody></table></div>
     </section>
   );
@@ -472,6 +476,7 @@ function App() {
     }
     setUsers(loadedUsers.map(({ discordId: _discardedDiscordId, status: _discardedStatus, ...user }) => ({
       ...user,
+      blocked: user.blocked === true,
       grade: user.grade || GRADES[0],
       ...(["senior", "officer"].includes(user.role) ? { presence: user.presence || "present" } : {}),
     })));
@@ -479,7 +484,7 @@ function App() {
     const savedQuotas = localStorage.getItem(QUOTA_KEY);
     const savedMissions = localStorage.getItem(MISSIONS_KEY);
     const parsedQuotas = savedQuotas ? JSON.parse(savedQuotas) : DEFAULT_QUOTAS;
-    setQuotas({ targets: { ...DEFAULT_QUOTAS.targets, ...parsedQuotas.targets }, counts: parsedQuotas.counts || {} });
+    setQuotas({ targets: { ...DEFAULT_QUOTAS.targets, ...parsedQuotas.targets }, counts: parsedQuotas.counts || {}, exemptions: parsedQuotas.exemptions || {} });
     setMissions(savedMissions ? JSON.parse(savedMissions) : []);
     setDarkMode(savedTheme);
     document.documentElement.dataset.theme = savedTheme ? "dark" : "light";
@@ -489,6 +494,29 @@ function App() {
   useEffect(() => { if (ready) localStorage.setItem(STORAGE_KEY, JSON.stringify(users)); }, [users, ready]);
   useEffect(() => { if (ready) localStorage.setItem(QUOTA_KEY, JSON.stringify(quotas)); }, [quotas, ready]);
   useEffect(() => { if (ready) localStorage.setItem(MISSIONS_KEY, JSON.stringify(missions)); }, [missions, ready]);
+  useEffect(() => {
+    function syncAccounts(event) {
+      if (event.key !== STORAGE_KEY || !event.newValue) return;
+      try {
+        const syncedUsers = JSON.parse(event.newValue);
+        setUsers(syncedUsers);
+        setSession((currentSession) => {
+          if (!currentSession) return currentSession;
+          const syncedSession = syncedUsers.find((user) => user.id === currentSession.id);
+          if (!syncedSession || syncedSession.blocked) {
+            setProfileOpen(false);
+            setLoginError(syncedSession?.blocked ? "Votre compte a été bloqué par un administrateur." : "Votre compte n’est plus disponible.");
+            return null;
+          }
+          return syncedSession;
+        });
+      } catch {
+        // Ignore une mise à jour de stockage invalide.
+      }
+    }
+    window.addEventListener("storage", syncAccounts);
+    return () => window.removeEventListener("storage", syncAccounts);
+  }, []);
   useEffect(() => {
     if (!ready) return;
     document.documentElement.dataset.theme = darkMode ? "dark" : "light";
@@ -520,6 +548,14 @@ function App() {
     if (!confirm("Réinitialiser tous les compteurs de quotas à zéro ?")) return;
     setQuotas((current) => ({ ...current, counts: {} }));
     flash("Les quotas ont été réinitialisés.");
+  }
+  function toggleQuotaExemption(userId) {
+    if (!["admin", "referent"].includes(session.role)) return;
+    setQuotas((current) => {
+      const isExempted = current.exemptions?.[userId] === true;
+      return { ...current, exemptions: { ...current.exemptions, [userId]: !isExempted } };
+    });
+    flash(quotas.exemptions?.[userId] ? "L’exemption de quota a été retirée." : "La personne est exemptée de quota.");
   }
   function submitMission({ title, documentUrl }) {
     if (!["senior", "officer"].includes(session.role)) return;
@@ -562,6 +598,7 @@ function App() {
   function login(email, password) {
     const user = users.find((item) => item.email.toLowerCase() === email.toLowerCase() && item.password === password);
     if (!user) return setLoginError("Identifiants incorrects.");
+    if (user.blocked) return setLoginError("Ce compte est bloqué. Contactez un administrateur.");
     setLoginError(""); setSession(user); setActiveSection(user.role === "admin" ? "dashboard" : "recommendation");
   }
   function saveUser(form) {
@@ -572,7 +609,7 @@ function App() {
       setUsers((current) => current.map((user) => user.id === modal.id ? { ...user, ...savedForm, password: savedForm.password || user.password } : user));
       flash("Le compte a bien été modifié.");
     } else {
-      setUsers((current) => [...current, { ...savedForm, id: crypto.randomUUID(), createdAt: new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", year: "numeric" }).format(new Date()) }]);
+      setUsers((current) => [...current, { ...savedForm, blocked: false, id: crypto.randomUUID(), createdAt: new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", year: "numeric" }).format(new Date()) }]);
       flash("Le compte a bien été créé.");
     }
     setModal(null);
@@ -584,6 +621,12 @@ function App() {
   function changePresence(userId, presence) {
     setUsers((current) => current.map((user) => user.id === userId ? { ...user, presence } : user));
     flash(presence === "present" ? "La personne est indiquée présente." : "La personne est indiquée absente.");
+  }
+  function toggleAccountBlock(user) {
+    if (session.role !== "admin" || user.id === session.id || user.role === "admin") return;
+    const willBlock = !user.blocked;
+    setUsers((current) => current.map((item) => item.id === user.id ? { ...item, blocked: willBlock } : item));
+    flash(willBlock ? "Le compte a été bloqué et ses sessions seront fermées." : "Le compte a été débloqué.");
   }
   function saveProfile(form) {
     const updated = { ...session, ...form, password: form.password || session.password };
@@ -624,15 +667,15 @@ function App() {
         {activeSection === "dashboard" ? <>
         <section className="stats">
           <article><span className="stat-icon blue"><UsersRound /></span><div><strong>{users.length}</strong><small>Comptes au total</small></div><span className="trend">Tous niveaux</span></article>
-          <article><span className="stat-icon green"><UserCheck /></span><div><strong>{users.filter((u) => ["senior", "officer"].includes(u.role) && u.presence !== "absent").length}</strong><small>SO présents</small></div><span className="trend green-text">Disponibles</span></article>
+          <article><span className="stat-icon red"><UserX /></span><div><strong>{users.filter((user) => user.blocked).length}</strong><small>Comptes bloqués</small></div><span className="trend">Accès suspendu</span></article>
           <article><span className="stat-icon violet"><ShieldCheck /></span><div><strong>{users.filter((u) => ["admin", "referent"].includes(u.role)).length}</strong><small>Gestionnaires</small></div><span className="trend">Admin & Référent</span></article>
         </section>
 
         <section className="accounts-card">
           <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
-          <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>Présence</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.email}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td><RoleBadge role={user.role} /></td><td>{["senior", "officer"].includes(user.role) ? <span className={`presence-status ${user.presence === "absent" ? "absent" : "present"}`}><i />{user.presence === "absent" ? "Absent" : "Présent"}</span> : <span className="not-applicable">Non concerné</span>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title="Modifier" onClick={() => setModal(user)}><Pencil size={17} /></button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
+          <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>État du compte</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.email}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td><RoleBadge role={user.role} /></td><td>{user.role === "admin" ? <span className="account-state active"><UserCheck size={15} /> Compte actif</span> : <button className={`account-state ${user.blocked ? "blocked" : "active"}`} type="button" onClick={() => toggleAccountBlock(user)}>{user.blocked ? <UserX size={15} /> : <UserCheck size={15} />}{user.blocked ? "Compte bloqué" : "Compte actif"}</button>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title="Modifier" onClick={() => setModal(user)}><Pencil size={17} /></button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
         </section>
-        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} onSuccess={flash} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} />}
+        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} onSuccess={flash} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} />}
       </main>
       {notice && <div className="toast"><BadgeCheck size={19} />{notice}</div>}
       {modal && <UserModal actor={session} editing={modal.id ? modal : null} onClose={() => setModal(null)} onSave={saveUser} />}
