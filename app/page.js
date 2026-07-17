@@ -114,8 +114,8 @@ function MenuGroup({ title, icon: Icon, open, onToggle, children }) {
 }
 
 function Login({ onLogin, error }) {
-  const [email, setEmail] = useState("admin@portail-so.fr");
-  const [password, setPassword] = useState("Admin2026!");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
 
   return (
     <main className="login-page">
@@ -133,11 +133,11 @@ function Login({ onLogin, error }) {
           <p className="eyebrow dark">CONNEXION</p>
           <h2>Bienvenue</h2>
           <p className="muted">Identifiez-vous pour accéder à votre espace.</p>
-          <form onSubmit={(event) => { event.preventDefault(); onLogin(email, password); }}>
+          <form autoComplete="off" onSubmit={(event) => { event.preventDefault(); onLogin(email, password); }}>
             <label>Adresse e-mail</label>
-            <div className="input-wrap"><UserRound size={19} /><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></div>
+            <div className="input-wrap"><UserRound size={19} /><input type="email" name="portal-email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} required /></div>
             <label>Mot de passe</label>
-            <div className="input-wrap"><KeyRound size={19} /><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required /></div>
+            <div className="input-wrap"><KeyRound size={19} /><input type="password" name="portal-password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></div>
             {error && <p className="form-error">{error}</p>}
             <button className="primary wide" type="submit">Se connecter <span>→</span></button>
           </form>

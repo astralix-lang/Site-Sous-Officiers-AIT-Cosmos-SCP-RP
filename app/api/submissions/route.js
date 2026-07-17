@@ -1,32 +1,37 @@
 const TYPE_CONFIG = {
   recommendation: {
-    title: "Nouvelle recommandation",
+    title: "🏅 Nouvelle recommandation",
     color: 0x2d66d5,
     envKey: "DISCORD_WEBHOOK_RECOMMENDATION",
     aitLabel: "AIT recommandé",
+    description: "Recommandation transmise pour valoriser le parcours d’un AIT.",
   },
   pcs_exp: {
-    title: "Nouvelle recommandation PCS EXP",
+    title: "🎯 Nouvelle recommandation PCS EXP",
     color: 0xb97918,
     envKey: "DISCORD_WEBHOOK_PCS_EXP",
     aitLabel: "AIT recommandé",
+    description: "Recommandation transmise pour le parcours PCS EXP.",
   },
   observation_hdr: {
-    title: "Nouvelle observation HDR",
+    title: "📝 Nouvelle observation HDR",
     color: 0x20896b,
     envKey: "DISCORD_WEBHOOK_OBSERVATION_HDR",
     aitLabel: "AIT observé",
+    description: "Compte rendu d’une observation HDR.",
   },
   observation_so: {
-    title: "Nouvelle observation SO",
+    title: "👁️ Nouvelle observation SO",
     color: 0x7957c8,
     envKey: "DISCORD_WEBHOOK_OBSERVATION_SO",
     aitLabel: "Nom de l’AIT",
+    description: "Compte rendu d’une observation concernant un Sous-Officier.",
   },
   sergeant_report: {
-    title: "Rapport nouveau Sous-Officier",
+    title: "📋 Rapport nouveau Sous-Officier",
     color: 0xb97918,
     envKey: "DISCORD_WEBHOOK_SERGEANT_REPORT",
+    description: "Bilan de la semaine de test d’un nouveau Sergent.",
   },
 };
 
@@ -60,12 +65,14 @@ export async function POST(request) {
       if (!sergeantName || !positivePoints || !negativePoints || !globalOpinion || !REPORT_CONCLUSIONS.includes(conclusion)) {
         return Response.json({ error: "Veuillez remplir tous les champs du rapport." }, { status: 400 });
       }
+      embedColor = conclusion === "Passage confirmé en sergent" ? 0x20896b : conclusion === "Retour caporal-chef" ? 0xd64550 : 0xe0a526;
+      const conclusionIcon = conclusion === "Passage confirmé en sergent" ? "🟢" : conclusion === "Retour caporal-chef" ? "🔴" : "🟡";
       fields = [
-        { name: "Nom du Sergent", value: sergeantName, inline: false },
-        { name: "Point positif", value: positivePoints, inline: false },
-        { name: "Point négatif", value: negativePoints, inline: false },
-        { name: "Avis global", value: globalOpinion, inline: false },
-        { name: "Conclusion", value: conclusion, inline: false },
+        { name: "👤 Nom du Sergent", value: sergeantName, inline: false },
+        { name: "✅ Point positif", value: positivePoints, inline: false },
+        { name: "⚠️ Point négatif", value: negativePoints, inline: false },
+        { name: "🧭 Avis global", value: globalOpinion, inline: false },
+        { name: `${conclusionIcon} Conclusion`, value: `**${conclusion}**`, inline: false },
       ];
     } else {
       const aitName = clean(body.values?.aitName, 100);
@@ -78,11 +85,11 @@ export async function POST(request) {
         return Response.json({ error: "Veuillez remplir tous les champs obligatoires." }, { status: 400 });
       }
       fields = [
-        { name: config.aitLabel, value: aitName, inline: false },
-        { name: body.type === "observation_hdr" ? "S-OFF/-SUP faisant l’observation" : body.type === "observation_so" ? "S-OFF SUP faisant l’observation" : "S-OFF/-SUP à l’origine", value: author, inline: false },
+        { name: `👤 ${config.aitLabel}`, value: aitName, inline: false },
+        { name: body.type === "observation_hdr" ? "🎖️ S-OFF/-SUP faisant l’observation" : body.type === "observation_so" ? "🎖️ S-OFF SUP faisant l’observation" : "🎖️ S-OFF/-SUP à l’origine", value: author, inline: false },
         ...(isObservation
-          ? [{ name: "Observation", value: observation, inline: true }, { name: "Raison", value: reason, inline: false }]
-          : [{ name: "Raison", value: reason, inline: false }]),
+          ? [{ name: "📌 Nature de l’observation", value: observation === "Négative" ? "❌ **Négative**" : "✅ **Positive**", inline: false }, { name: "📝 Raison", value: reason, inline: false }]
+          : [{ name: "📝 Raison", value: reason, inline: false }]),
       ];
     }
 
@@ -96,10 +103,12 @@ export async function POST(request) {
         username: "Portail Sous-Officiers",
         allowed_mentions: { parse: [] },
         embeds: [{
+          author: { name: "🛡️ Portail Sous-Officiers • Transmission officielle" },
           title: config.title,
+          description: `${config.description}\n\n━━━━━━━━━━━━━━━━━━━━`,
           color: embedColor,
           fields,
-          footer: { text: `Transmis par ${senderName}${senderRole ? ` • ${senderRole}` : ""}${senderEmail ? ` • ${senderEmail}` : ""}` },
+          footer: { text: `🔒 Transmis par ${senderName}${senderRole ? ` • ${senderRole}` : ""}${senderEmail ? ` • ${senderEmail}` : ""}` },
           timestamp: new Date().toISOString(),
         }],
       }),
