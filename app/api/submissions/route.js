@@ -88,10 +88,11 @@ export async function POST(request) {
       ];
     }
 
-    fields = fields.map((field) => ({ ...field, name: `${field.name} :`, value: `\u200b\n${field.value}` }))
-      .flatMap((field, index) => index === fields.length - 1
-      ? [field]
-      : [field, { name: "\u200b", value: "━━━━━━━━━━━━━━━━━━━━", inline: false }]);
+    fields = fields.map((field, index) => ({
+      ...field,
+      name: `${field.name} :`,
+      value: `\u200b\n${field.value}${index < fields.length - 1 ? "\n━━━━━━━━━━━━━━━━━━━━" : ""}`,
+    }));
 
     const senderName = clean(body.submittedBy?.name, 100) || "Utilisateur du portail";
     const senderRole = clean(body.submittedBy?.role, 100);
