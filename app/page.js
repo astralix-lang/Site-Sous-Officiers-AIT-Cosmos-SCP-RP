@@ -62,6 +62,7 @@ const INITIAL_USERS = [
 ];
 
 const STORAGE_KEY = "portail-so-users-v1";
+const SESSION_KEY = "portail-so-session-v1";
 const THEME_KEY = "portail-so-theme";
 const ADMIN_RECOVERY_KEY = "portail-so-admin-recovery-v1";
 const QUOTA_KEY = "portail-so-quotas-v1";
@@ -474,12 +475,21 @@ function App() {
         : [defaultAdmin, ...loadedUsers];
       localStorage.setItem(ADMIN_RECOVERY_KEY, "done");
     }
-    setUsers(loadedUsers.map(({ discordId: _discardedDiscordId, status: _discardedStatus, ...user }) => ({
+    const normalizedUsers = loadedUsers.map(({ discordId: _discardedDiscordId, status: _discardedStatus, ...user }) => ({
       ...user,
       blocked: user.blocked === true,
       grade: user.grade || GRADES[0],
       ...(["senior", "officer"].includes(user.role) ? { presence: user.presence || "present" } : {}),
-    })));
+    }));
+    setUsers(normalizedUsers);
+    const rememberedSessionId = localStorage.getItem(SESSION_KEY);
+    const rememberedUser = normalizedUsers.find((user) => user.id === rememberedSessionId && !user.blocked);
+    if (rememberedUser) {
+      setSession(rememberedUser);
+      setActiveSection(rememberedUser.role === "admin" ? "dashboard" : "recommendation");
+    } else if (rememberedSessionId) {
+      localStorage.removeItem(SESSION_KEY);
+    }
     const savedTheme = localStorage.getItem(THEME_KEY) === "dark";
     const savedQuotas = localStorage.getItem(QUOTA_KEY);
     const savedMissions = localStorage.getItem(MISSIONS_KEY);
@@ -496,6 +506,12 @@ function App() {
   useEffect(() => { if (ready) localStorage.setItem(MISSIONS_KEY, JSON.stringify(missions)); }, [missions, ready]);
   useEffect(() => {
     function syncAccounts(event) {
+      if (event.key === SESSION_KEY && !event.newValue) {
+        setSession(null);
+        setProfileOpen(false);
+        setLoginError("");
+        return;
+      }
       if (event.key !== STORAGE_KEY || !event.newValue) return;
       try {
         const syncedUsers = JSON.parse(event.newValue);
@@ -504,6 +520,7 @@ function App() {
           if (!currentSession) return currentSession;
           const syncedSession = syncedUsers.find((user) => user.id === currentSession.id);
           if (!syncedSession || syncedSession.blocked) {
+            localStorage.removeItem(SESSION_KEY);
             setProfileOpen(false);
             setLoginError(syncedSession?.blocked ? "Votre compte a été bloqué par un administrateur." : "Votre compte n’est plus disponible.");
             return null;
@@ -599,7 +616,14 @@ function App() {
     const user = users.find((item) => item.email.toLowerCase() === email.toLowerCase() && item.password === password);
     if (!user) return setLoginError("Identifiants incorrects.");
     if (user.blocked) return setLoginError("Ce compte est bloqué. Contactez un administrateur.");
+    localStorage.setItem(SESSION_KEY, user.id);
     setLoginError(""); setSession(user); setActiveSection(user.role === "admin" ? "dashboard" : "recommendation");
+  }
+  function logout() {
+    localStorage.removeItem(SESSION_KEY);
+    setProfileOpen(false);
+    setLoginError("");
+    setSession(null);
   }
   function saveUser(form) {
     const savedForm = { ...form };
@@ -651,7 +675,7 @@ function App() {
         </nav>
         <button className="profile-card" onClick={() => setProfileOpen(true)} title="Personnaliser mon compte"><div className={`avatar ${ROLES[session.role].tone}`}>{initials(session)}</div><div><strong>{session.firstName} {session.lastName}</strong><small>{session.grade || GRADES[0]} · {ROLES[session.role].label}</small></div><ChevronDown size={16} /></button>
         <div className="sidebar-actions">
-          <button className="logout" onClick={() => setSession(null)}><LogOut size={18} /><span>Se déconnecter</span></button>
+          <button className="logout" onClick={logout}><LogOut size={18} /><span>Se déconnecter</span></button>
           <label className="theme-toggle" title={darkMode ? "Passer en mode clair" : "Passer en mode sombre"}>
             <input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} aria-label="Activer le mode sombre" />
             {darkMode ? <Sun size={17} /> : <Moon size={17} />}
