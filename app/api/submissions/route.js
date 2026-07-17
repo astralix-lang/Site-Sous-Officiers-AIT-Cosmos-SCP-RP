@@ -23,7 +23,18 @@ const TYPE_CONFIG = {
     envKey: "DISCORD_WEBHOOK_OBSERVATION_SO",
     aitLabel: "Nom de l’AIT",
   },
+  sergeant_report: {
+    title: "Rapport nouveau Sous-Officier",
+    color: 0xb97918,
+    envKey: "DISCORD_WEBHOOK_SERGEANT_REPORT",
+  },
 };
+
+const REPORT_CONCLUSIONS = [
+  "Passage confirmé en sergent",
+  "Prolongation de la semaine de test",
+  "Retour caporal-chef",
+];
 
 function clean(value, maxLength = 1000) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -35,26 +46,45 @@ export async function POST(request) {
     const config = TYPE_CONFIG[body.type];
     if (!config) return Response.json({ error: "Catégorie inconnue." }, { status: 400 });
 
-    const aitName = clean(body.values?.aitName, 100);
-    const author = clean(body.values?.author, 100);
-    const reason = clean(body.values?.reason, 1000);
-    const observation = body.values?.observation === "negative" ? "Négative" : "Positive";
-    const isObservation = ["observation_hdr", "observation_so"].includes(body.type);
-    const embedColor = isObservation ? (body.values?.observation === "negative" ? 0xd64550 : 0x20896b) : config.color;
-    if (!aitName || !author || !reason) {
-      return Response.json({ error: "Veuillez remplir tous les champs obligatoires." }, { status: 400 });
-    }
-
     const webhookUrl = process.env[config.envKey];
     if (!webhookUrl) return Response.json({ error: "Le salon Discord de cette catégorie n’est pas configuré." }, { status: 503 });
 
-    const fields = [
-      { name: config.aitLabel, value: aitName, inline: false },
-      { name: body.type === "observation_hdr" ? "S-OFF/-SUP faisant l’observation" : body.type === "observation_so" ? "S-OFF SUP faisant l’observation" : "S-OFF/-SUP à l’origine", value: author, inline: false },
-      ...(isObservation
-        ? [{ name: "Observation", value: observation, inline: true }, { name: "Raison", value: reason, inline: false }]
-        : [{ name: "Raison", value: reason, inline: false }]),
-    ];
+    let fields;
+    let embedColor = config.color;
+    if (body.type === "sergeant_report") {
+      const sergeantName = clean(body.values?.sergeantName, 100);
+      const positivePoints = clean(body.values?.positivePoints, 1000);
+      const negativePoints = clean(body.values?.negativePoints, 1000);
+      const globalOpinion = clean(body.values?.globalOpinion, 1000);
+      const conclusion = clean(body.values?.conclusion, 100);
+      if (!sergeantName || !positivePoints || !negativePoints || !globalOpinion || !REPORT_CONCLUSIONS.includes(conclusion)) {
+        return Response.json({ error: "Veuillez remplir tous les champs du rapport." }, { status: 400 });
+      }
+      fields = [
+        { name: "Nom du Sergent", value: sergeantName, inline: false },
+        { name: "Point positif", value: positivePoints, inline: false },
+        { name: "Point négatif", value: negativePoints, inline: false },
+        { name: "Avis global", value: globalOpinion, inline: false },
+        { name: "Conclusion", value: conclusion, inline: false },
+      ];
+    } else {
+      const aitName = clean(body.values?.aitName, 100);
+      const author = clean(body.values?.author, 100);
+      const reason = clean(body.values?.reason, 1000);
+      const observation = body.values?.observation === "negative" ? "Négative" : "Positive";
+      const isObservation = ["observation_hdr", "observation_so"].includes(body.type);
+      embedColor = isObservation ? (body.values?.observation === "negative" ? 0xd64550 : 0x20896b) : config.color;
+      if (!aitName || !author || !reason) {
+        return Response.json({ error: "Veuillez remplir tous les champs obligatoires." }, { status: 400 });
+      }
+      fields = [
+        { name: config.aitLabel, value: aitName, inline: false },
+        { name: body.type === "observation_hdr" ? "S-OFF/-SUP faisant l’observation" : body.type === "observation_so" ? "S-OFF SUP faisant l’observation" : "S-OFF/-SUP à l’origine", value: author, inline: false },
+        ...(isObservation
+          ? [{ name: "Observation", value: observation, inline: true }, { name: "Raison", value: reason, inline: false }]
+          : [{ name: "Raison", value: reason, inline: false }]),
+      ];
+    }
 
     const senderName = clean(body.submittedBy?.name, 100) || "Utilisateur du portail";
     const senderRole = clean(body.submittedBy?.role, 100);

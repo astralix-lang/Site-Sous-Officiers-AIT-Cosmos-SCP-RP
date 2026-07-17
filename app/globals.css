@@ -66,6 +66,7 @@ nav { padding-top:28px; flex:1; }nav button { width:100%; display:flex; align-it
 
 .all-access { display:inline-flex; align-items:center; gap:8px; color:#305e91; background:#eaf1fa; border:1px solid #d4e0ef; border-radius:999px; padding:8px 12px; font-size:11px; font-weight:700; }
 .referent-access { display:inline-flex; align-items:center; gap:8px; color:#765414; background:#fff5db; border:1px solid #ead8a9; border-radius:999px; padding:8px 12px; font-size:11px; font-weight:700; }
+.senior-access { display:inline-flex; align-items:center; gap:8px; color:#6546aa; background:#f1edfb; border:1px solid #ddd2f4; border-radius:999px; padding:8px 12px; font-size:11px; font-weight:700; }
 .presence-card { background:white; border:1px solid var(--line); border-radius:15px; box-shadow:0 6px 22px #1c2e4910; overflow:hidden; }
 .presence-summary { display:flex; justify-content:space-between; align-items:center; gap:25px; padding:25px 26px; border-bottom:1px solid var(--line); }.presence-summary .eyebrow { margin-bottom:7px; }.presence-summary h2 { margin-bottom:5px; font-size:21px; }.presence-summary p { margin:0; font-size:12px; }.presence-counts { display:flex; gap:8px; }.presence-counts > span { display:flex; align-items:center; gap:6px; padding:9px 11px; border-radius:9px; font-size:11px; white-space:nowrap; }.presence-counts strong { font-size:14px; }.presence-counts .present { color:#1d775c; background:#eaf8f2; }.presence-counts .absent { color:#aa3b47; background:#fff0f2; }
 .presence-table { min-width:900px; }.presence-status { width:max-content; display:inline-flex; align-items:center; gap:7px; padding:6px 9px; border-radius:999px; font-size:11px; font-weight:700; }.presence-status i { width:7px; height:7px; border-radius:50%; }.presence-status.present { color:#23765e; background:#e9f8f2; }.presence-status.present i { background:#2e9c78; box-shadow:0 0 0 3px #2e9c7818; }.presence-status.absent { color:#a73441; background:#fff0f2; }.presence-status.absent i { background:#cf5964; box-shadow:0 0 0 3px #cf596418; }.presence-actions { display:flex; gap:6px; }.presence-actions button { min-height:35px; display:inline-flex; align-items:center; gap:6px; padding:0 10px; border:1px solid #dfe4eb; border-radius:8px; color:#748196; background:white; font-size:10px; font-weight:700; }.presence-actions button:hover { border-color:#b8c5d6; }.presence-actions button.selected.present { color:#23765e; background:#e9f8f2; border-color:#8bcbb7; }.presence-actions button.selected.absent { color:#a73441; background:#fff0f2; border-color:#e1a3aa; }.not-applicable { color:#9aa5b4; font-size:10px; }.empty-presence { padding:35px; color:#8b97a8; text-align:center; }
@@ -82,6 +83,7 @@ nav { padding-top:28px; flex:1; }nav button { width:100%; display:flex; align-it
 .transmission-head { display:flex; align-items:flex-start; gap:15px; padding-bottom:22px; border-bottom:1px solid #edf0f4; }.transmission-head .eyebrow { margin-bottom:7px; }.transmission-head h2 { font-size:22px; margin:0 0 5px; }.transmission-head p:last-child { margin:0; font-size:12px; }
 .choice-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }.choice-row label { min-height:48px; margin:0; display:flex; align-items:center; gap:9px; border:1px solid #dce2e9; border-radius:10px; padding:0 13px; color:#667589; cursor:pointer; }.choice-row label.checked { border-color:#38a17d; color:#23765e; background:#ecf9f4; box-shadow:0 0 0 3px #38a17d12; }.choice-row label.checked.negative { border-color:#cf5964; color:#a73441; background:#fff1f2; box-shadow:0 0 0 3px #cf596412; }.choice-row input { width:auto; min-height:auto; accent-color:#2d66d5; }
 .transmission-actions { display:flex; justify-content:space-between; align-items:center; gap:15px; margin-top:25px; }.transmission-actions > span { display:flex; align-items:center; gap:7px; color:#8190a3; font-size:11px; }.transmission-actions button:disabled { opacity:.65; cursor:wait; transform:none; }.transmission-error { margin:16px 0 0; }
+.form-warning { margin:8px 0 0; padding:9px 11px; color:#8b641f; background:#fff6e2; border-radius:8px; font-size:11px; }.report-card textarea { min-height:105px; }
 .mobile-section-nav { display:none; }
 
 [data-theme="dark"] body { background:#081421; }
@@ -100,6 +102,7 @@ nav { padding-top:28px; flex:1; }nav button { width:100%; display:flex; align-it
 [data-theme="dark"] .role-badge { color:#c9d5e4; background:#172a40; }
 [data-theme="dark"] .all-access { color:#a9c8f1; background:#142a45; border-color:#294564; }
 [data-theme="dark"] .referent-access { color:#efd693; background:#342b18; border-color:#5a4926; }
+[data-theme="dark"] .senior-access { color:#c9b8f0; background:#281f3c; border-color:#4c3b70; }
 [data-theme="dark"] .presence-card { color:var(--ink); background:#0e1c2b; box-shadow:0 8px 24px #0003; }
 [data-theme="dark"] .presence-summary { border-color:#223449; }
 [data-theme="dark"] .presence-counts .present,[data-theme="dark"] .presence-status.present { color:#8ed8bd; background:#12352d; }
@@ -107,6 +110,7 @@ nav { padding-top:28px; flex:1; }nav button { width:100%; display:flex; align-it
 [data-theme="dark"] .presence-actions button { color:#a8b7c9; background:#122235; border-color:#2a3c51; }
 [data-theme="dark"] .presence-actions button.selected.present { color:#91dbc1; background:#12352d; border-color:#367d68; }
 [data-theme="dark"] .presence-actions button.selected.absent { color:#f2a4ad; background:#3b1c26; border-color:#85434b; }
+[data-theme="dark"] .form-warning { color:#efd693; background:#342b18; }
 [data-theme="dark"] .eyebrow.dark { color:#78a0cf; }
 [data-theme="dark"] .secondary { color:#d8e2ee; background:#203248; }
 [data-theme="dark"] .form-error { color:#ff9ca6; background:#3b1c26; }
