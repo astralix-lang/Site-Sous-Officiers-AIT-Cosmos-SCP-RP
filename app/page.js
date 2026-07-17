@@ -65,7 +65,7 @@ const STORAGE_KEY = "portail-so-users-v1";
 const THEME_KEY = "portail-so-theme";
 const ADMIN_RECOVERY_KEY = "portail-so-admin-recovery-v1";
 const QUOTA_KEY = "portail-so-quotas-v1";
-const DEFAULT_QUOTAS = { target: 4, counts: {} };
+const DEFAULT_QUOTAS = { targets: { recommendation: 1, pcs_exp: 1, observations: 1 }, counts: {} };
 const QUOTA_TYPES = ["recommendation", "pcs_exp", "observation_hdr", "observation_so"];
 const REPORT_CONCLUSIONS = [
   "Passage confirmé en sergent",
@@ -229,23 +229,29 @@ function PresencePanel({ users, onChange }) {
 
 function QuotaPanel({ users, quotas, onTargetChange, onReset }) {
   const team = users.filter((user) => ["senior", "officer"].includes(user.role));
-  const target = quotas.target || 1;
+  const targets = { ...DEFAULT_QUOTAS.targets, ...quotas.targets };
 
   return (
     <section className="quota-card">
       <div className="quota-head">
-        <div><p className="eyebrow dark">SUIVI DES TRANSMISSIONS</p><h2>Quotas des Sous-Officiers</h2><p className="muted">Le total regroupe les recommandations, PCS EXP, observations HDR et observations SO envoyées.</p></div>
-        <div className="quota-controls"><label>Quota à atteindre<input type="number" min="1" max="100" value={target} onChange={(event) => onTargetChange(event.target.value)} /></label><button className="reset-quota" onClick={onReset}><RotateCcw size={16} /> Réinitialiser</button></div>
+        <div><p className="eyebrow dark">SUIVI DES TRANSMISSIONS</p><h2>Quotas par catégorie</h2><p className="muted">Définissez un objectif distinct pour les recommandations, PCS EXP et observations.</p></div>
+        <div className="quota-controls"><label>Recommandation<input type="number" min="1" max="100" value={targets.recommendation} onChange={(event) => onTargetChange("recommendation", event.target.value)} /></label><label>PCS EXP<input type="number" min="1" max="100" value={targets.pcs_exp} onChange={(event) => onTargetChange("pcs_exp", event.target.value)} /></label><label>Observations<input type="number" min="1" max="100" value={targets.observations} onChange={(event) => onTargetChange("observations", event.target.value)} /></label><button className="reset-quota" onClick={onReset}><RotateCcw size={16} /> Réinitialiser</button></div>
       </div>
-      <div className="table-wrap"><table className="quota-table"><thead><tr><th>Utilisateur</th><th>Reco.</th><th>PCS EXP</th><th>Obs. HDR</th><th>Obs. SO</th><th>Total</th><th>Progression</th><th>Quota</th></tr></thead><tbody>
+      <div className="table-wrap"><table className="quota-table"><thead><tr><th>Utilisateur</th><th>Recommandation</th><th>Recommandation PCS EXP</th><th>Observations HDR + SO</th><th>Statut global</th></tr></thead><tbody>
         {team.map((user) => {
           const counts = quotas.counts?.[user.id] || {};
-          const total = QUOTA_TYPES.reduce((sum, type) => sum + (counts[type] || 0), 0);
-          const completed = total >= target;
-          const percentage = Math.min(100, Math.round((total / target) * 100));
-          return <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.grade || GRADES[0]}</small></div></div></td><td>{counts.recommendation || 0}</td><td>{counts.pcs_exp || 0}</td><td>{counts.observation_hdr || 0}</td><td>{counts.observation_so || 0}</td><td><strong className="quota-total">{total}/{target}</strong></td><td><div className="quota-progress"><i><span style={{ width: `${percentage}%` }} /></i><small>{percentage}%</small></div></td><td><span className={`quota-status ${completed ? "done" : "pending"}`}>{completed ? <BadgeCheck size={15} /> : <X size={15} />}{completed ? "Fait" : "Non fait"}</span></td></tr>;
+          const categoryCounts = { recommendation: counts.recommendation || 0, pcs_exp: counts.pcs_exp || 0, observations: (counts.observation_hdr || 0) + (counts.observation_so || 0) };
+          const completed = Object.keys(targets).every((category) => categoryCounts[category] >= targets[category]);
+          const quotaCell = (category, detail = "") => {
+            const count = categoryCounts[category];
+            const target = targets[category];
+            const done = count >= target;
+            const percentage = Math.min(100, Math.round((count / target) * 100));
+            return <div className="quota-category"><div className="quota-category-top"><strong>{count}/{target}</strong><span className={done ? "done" : "pending"}>{done ? "Fait" : "Non fait"}</span></div><div className="quota-progress"><i><span style={{ width: `${percentage}%` }} /></i><small>{percentage}%</small></div>{detail && <small className="quota-detail">{detail}</small>}</div>;
+          };
+          return <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.grade || GRADES[0]}</small></div></div></td><td>{quotaCell("recommendation")}</td><td>{quotaCell("pcs_exp")}</td><td>{quotaCell("observations", `HDR : ${counts.observation_hdr || 0} • SO : ${counts.observation_so || 0}`)}</td><td><span className={`quota-status ${completed ? "done" : "pending"}`}>{completed ? <BadgeCheck size={15} /> : <X size={15} />}{completed ? "Fait" : "Non fait"}</span></td></tr>;
         })}
-        {!team.length && <tr><td colSpan="8" className="empty-presence">Aucun Sous-Officier à afficher.</td></tr>}
+        {!team.length && <tr><td colSpan="5" className="empty-presence">Aucun Sous-Officier à afficher.</td></tr>}
       </tbody></table></div>
     </section>
   );
@@ -423,7 +429,8 @@ function App() {
     })));
     const savedTheme = localStorage.getItem(THEME_KEY) === "dark";
     const savedQuotas = localStorage.getItem(QUOTA_KEY);
-    setQuotas(savedQuotas ? JSON.parse(savedQuotas) : DEFAULT_QUOTAS);
+    const parsedQuotas = savedQuotas ? JSON.parse(savedQuotas) : DEFAULT_QUOTAS;
+    setQuotas({ targets: { ...DEFAULT_QUOTAS.targets, ...parsedQuotas.targets }, counts: parsedQuotas.counts || {} });
     setDarkMode(savedTheme);
     document.documentElement.dataset.theme = savedTheme ? "dark" : "light";
     setReady(true);
@@ -453,9 +460,9 @@ function App() {
       return { ...current, counts: { ...current.counts, [session.id]: { ...userCounts, [type]: (userCounts[type] || 0) + 1 } } };
     });
   }
-  function changeQuotaTarget(value) {
+  function changeQuotaTarget(category, value) {
     const target = Math.max(1, Math.min(100, Number.parseInt(value, 10) || 1));
-    setQuotas((current) => ({ ...current, target }));
+    setQuotas((current) => ({ ...current, targets: { ...current.targets, [category]: target } }));
   }
   function resetQuotas() {
     if (!confirm("Réinitialiser tous les compteurs de quotas à zéro ?")) return;
