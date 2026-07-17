@@ -60,6 +60,7 @@ const INITIAL_USERS = [
 
 const STORAGE_KEY = "portail-so-users-v1";
 const THEME_KEY = "portail-so-theme";
+const ADMIN_RECOVERY_KEY = "portail-so-admin-recovery-v1";
 
 const TRANSMISSION_TYPES = {
   recommendation: {
@@ -302,7 +303,15 @@ function App() {
 
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
-    const loadedUsers = stored ? JSON.parse(stored) : INITIAL_USERS;
+    let loadedUsers = stored ? JSON.parse(stored) : INITIAL_USERS;
+    if (localStorage.getItem(ADMIN_RECOVERY_KEY) !== "done") {
+      const defaultAdmin = INITIAL_USERS[0];
+      const hasAdmin = loadedUsers.some((user) => user.role === "admin");
+      loadedUsers = hasAdmin
+        ? loadedUsers.map((user) => user.role === "admin" ? { ...user, email: defaultAdmin.email, password: defaultAdmin.password } : user)
+        : [defaultAdmin, ...loadedUsers];
+      localStorage.setItem(ADMIN_RECOVERY_KEY, "done");
+    }
     setUsers(loadedUsers.map(({ discordId: _discardedDiscordId, status: _discardedStatus, ...user }) => ({
       ...user,
       grade: user.grade || GRADES[0],
