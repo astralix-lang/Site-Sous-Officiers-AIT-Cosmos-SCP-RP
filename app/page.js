@@ -64,6 +64,14 @@ const GRADES = [
   "Maréchal",
 ];
 
+function compareUsersByGrade(left, right) {
+  const leftGrade = Math.max(0, GRADES.indexOf(left.grade || GRADES[0]));
+  const rightGrade = Math.max(0, GRADES.indexOf(right.grade || GRADES[0]));
+  const gradeDifference = rightGrade - leftGrade;
+  if (gradeDifference) return gradeDifference;
+  return `${left.lastName || ""} ${left.firstName || ""}`.localeCompare(`${right.lastName || ""} ${right.firstName || ""}`, "fr", { sensitivity: "base" });
+}
+
 const STORAGE_KEY = "portail-so-users-v1";
 const SESSION_KEY = "portail-so-session-v1";
 const THEME_KEY = "portail-so-theme";
@@ -516,13 +524,13 @@ function ProfileModal({ user, onClose, onSave }) {
 }
 
 function PresencePanel({ users, onChange }) {
-  const team = users.filter((user) => ["senior", "officer"].includes(user.role));
+  const team = users.filter((user) => ["senior", "officer"].includes(user.role)).sort(compareUsersByGrade);
   const presentCount = team.filter((user) => user.presence !== "absent").length;
 
   return (
     <section className="presence-card">
       <div className="presence-summary">
-        <div><p className="eyebrow dark">SUIVI DE L’ÉQUIPE</p><h2>Tableau des présences</h2><p className="muted">Mettez à jour la situation des Sous-Officiers et Sous-Officiers Supérieurs.</p></div>
+        <div><p className="eyebrow dark">SUIVI DE L’ÉQUIPE</p><h2>Tableau des présences</h2><p className="muted">Membres classés du grade le plus élevé au plus bas.</p></div>
         <div className="presence-counts"><span className="present"><UserCheck size={17} /><strong>{presentCount}</strong> présent{presentCount > 1 ? "s" : ""}</span><span className="absent"><UserX size={17} /><strong>{team.length - presentCount}</strong> absent{team.length - presentCount > 1 ? "s" : ""}</span></div>
       </div>
       <div className="table-wrap"><table className="presence-table"><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>Situation</th><th>Mettre à jour</th></tr></thead><tbody>
@@ -542,10 +550,7 @@ function WorkforcePanel({ users, quotas }) {
   const roleDescriptions = { admin: "Administration du portail", referent: "Gestion et encadrement SO", senior: "Sous-Officiers Supérieurs", officer: "Sous-Officiers" };
   const groups = roleOrder.map((role) => ({
     role,
-    users: users.filter((user) => user.role === role).sort((a, b) => {
-      const gradeDifference = GRADES.indexOf(b.grade || GRADES[0]) - GRADES.indexOf(a.grade || GRADES[0]);
-      return gradeDifference || `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`);
-    }),
+    users: users.filter((user) => user.role === role).sort(compareUsersByGrade),
   }));
 
   function quotaState(user) {
@@ -741,13 +746,13 @@ function LogsPanel({ session, logs, onClear }) {
 }
 
 function QuotaPanel({ users, quotas, onTargetChange, onReset, onToggleExemption }) {
-  const team = users.filter((user) => ["senior", "officer"].includes(user.role));
+  const team = users.filter((user) => ["senior", "officer"].includes(user.role)).sort(compareUsersByGrade);
   const targets = { ...DEFAULT_QUOTAS.targets, ...quotas.targets };
 
   return (
     <section className="quota-card">
       <div className="quota-head">
-        <div><p className="eyebrow dark">SUIVI DES TRANSMISSIONS</p><h2>Quotas par catégorie</h2><p className="muted">Définissez un objectif distinct pour les recommandations, PCS EXP, observations et missions internes validées.</p></div>
+        <div><p className="eyebrow dark">SUIVI DES TRANSMISSIONS</p><h2>Quotas par catégorie</h2><p className="muted">Membres classés du grade le plus élevé au plus bas.</p></div>
         <div className="quota-controls"><label>Recommandation<input type="number" min="0" max="100" value={targets.recommendation} onChange={(event) => onTargetChange("recommendation", event.target.value)} /></label><label>PCS EXP<input type="number" min="0" max="100" value={targets.pcs_exp} onChange={(event) => onTargetChange("pcs_exp", event.target.value)} /></label><label>Observations<input type="number" min="0" max="100" value={targets.observations} onChange={(event) => onTargetChange("observations", event.target.value)} /></label><label>Missions internes<input type="number" min="0" max="100" value={targets.mission_internal} onChange={(event) => onTargetChange("mission_internal", event.target.value)} /></label><button className="reset-quota" onClick={onReset}><RotateCcw size={16} /> Réinitialiser</button></div>
       </div>
       <div className="table-wrap"><table className="quota-table"><thead><tr><th>Utilisateur</th><th>Recommandation</th><th>Recommandation PCS EXP</th><th>Observations HDR + SO</th><th>Missions internes</th><th>Statut global</th><th>Gestion</th></tr></thead><tbody>
@@ -822,7 +827,7 @@ function MissionInternalPanel({ session, missions, onSubmit, onValidate, onRejec
 
 function ChatPanel({ session, users, chats, onStart, onCreateGroup, onSend, onEditMessage, onDeleteMessage, onDeleteChat }) {
   const isModerator = ["admin", "referent"].includes(session.role);
-  const availableContacts = users.filter((user) => user.id !== session.id && !user.blocked);
+  const availableContacts = users.filter((user) => user.id !== session.id && !user.blocked).sort(compareUsersByGrade);
   const supportContacts = availableContacts.filter((user) => ["admin", "referent"].includes(user.role));
   const visibleChats = useMemo(() => isModerator ? chats : chats.filter((chat) => chat.participants.includes(session.id)), [chats, isModerator, session.id]);
   const [selectedChatId, setSelectedChatId] = useState("");
@@ -1011,8 +1016,8 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onSend, onEd
 
 function SergeantAssignmentPanel({ users, session, assignments, onAssign, onReminder, onDelete }) {
   const canManage = ["admin", "referent"].includes(session.role);
-  const sergeants = users.filter((user) => user.role === "officer" && user.grade === "Sergent" && !user.blocked);
-  const supervisors = users.filter((user) => user.role === "senior" && !user.blocked).sort((a, b) => GRADES.indexOf(b.grade) - GRADES.indexOf(a.grade));
+  const sergeants = users.filter((user) => user.role === "officer" && user.grade === "Sergent" && !user.blocked).sort(compareUsersByGrade);
+  const supervisors = users.filter((user) => user.role === "senior" && !user.blocked).sort(compareUsersByGrade);
   const defaultDueDate = (() => { const date = new Date(); date.setDate(date.getDate() + 7); return date.toISOString().slice(0, 10); })();
   const [form, setForm] = useState({ sergeantId: sergeants[0]?.id || "", observerId: supervisors[0]?.id || "", dueDate: defaultDueDate });
   useEffect(() => {
@@ -1435,7 +1440,7 @@ function App() {
   const visibleUsers = useMemo(() => users.filter((user) => {
     const text = `${user.firstName} ${user.lastName} ${user.email}`.toLowerCase();
     return text.includes(query.toLowerCase()) && (roleFilter === "all" || user.role === roleFilter);
-  }), [users, query, roleFilter]);
+  }).sort(compareUsersByGrade), [users, query, roleFilter]);
 
   function addLog(category, action, details = "", actor = session) {
     const now = new Date();
