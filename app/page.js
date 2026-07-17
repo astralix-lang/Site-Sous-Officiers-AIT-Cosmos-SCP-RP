@@ -258,7 +258,7 @@ function QuotaPanel({ users, quotas, onTargetChange, onReset }) {
   );
 }
 
-function MissionInternalPanel({ session, missions, onSubmit, onValidate }) {
+function MissionInternalPanel({ session, missions, onSubmit, onValidate, onReject, onDelete, onReset }) {
   const [title, setTitle] = useState("");
   const [documentUrl, setDocumentUrl] = useState("");
   const [error, setError] = useState("");
@@ -283,7 +283,23 @@ function MissionInternalPanel({ session, missions, onSubmit, onValidate }) {
   return (
     <section className="mission-layout">
       {canSubmit && <div className="mission-submit-card"><div className="transmission-head"><span className="category-icon large blue"><FileText size={25} /></span><div><p className="eyebrow dark">NOUVEAU DÉPÔT</p><h2>Mission interne</h2><p className="muted">Déposez votre Google Docs pour validation par un Référent SO.</p></div></div><form onSubmit={submit}><label>Titre de la mission</label><input value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={100} placeholder="Ex. Compte rendu de mission interne" /><label>Lien Google Docs</label><input type="url" value={documentUrl} onChange={(event) => setDocumentUrl(event.target.value)} required placeholder="https://docs.google.com/document/d/…" />{error && <p className="form-error transmission-error">{error}</p>}<div className="transmission-actions"><span><ShieldCheck size={15} /> Le dépôt sera placé en attente</span><button className="primary" type="submit"><FileText size={17} /> Déposer le document</button></div></form></div>}
-      <div className="mission-list-card"><div className="mission-list-head"><div><p className="eyebrow dark">{canValidate ? "VALIDATION RÉFÉRENT SO" : "MES DÉPÔTS"}</p><h2>{canValidate ? "Documents à contrôler" : "Suivi des missions"}</h2></div><span>{displayedMissions.filter((mission) => mission.status === "pending").length} en attente</span></div><div className="mission-list">{displayedMissions.map((mission) => <article key={mission.id}><div className="mission-document"><span className="mission-file-icon"><FileText size={19} /></span><div><strong>{mission.title}</strong><small>{mission.userName} • {mission.grade} • {mission.submittedAt}</small></div></div><a href={mission.documentUrl} target="_blank" rel="noreferrer">Ouvrir le Google Docs</a><span className={`mission-status ${mission.status}`}>{mission.status === "validated" ? <BadgeCheck size={15} /> : <Gauge size={15} />}{mission.status === "validated" ? "Validé" : "En attente"}</span>{canValidate && mission.status === "pending" && <button className="validate-mission" onClick={() => onValidate(mission.id)}><BadgeCheck size={16} /> Valider</button>}</article>)}{!displayedMissions.length && <p className="mission-empty">Aucun document déposé pour le moment.</p>}</div></div>
+      <div className="mission-list-card">
+        <div className="mission-list-head">
+          <div><p className="eyebrow dark">{canValidate ? "VALIDATION RÉFÉRENT SO" : "MES DÉPÔTS"}</p><h2>{canValidate ? "Documents à contrôler" : "Suivi des missions"}</h2></div>
+          <div className="mission-list-actions">
+            <span className="mission-pending-count">{displayedMissions.filter((mission) => mission.status === "pending").length} en attente</span>
+            {canValidate && <button className="reset-missions" type="button" onClick={onReset}><RotateCcw size={15} /> Réinitialiser les documents</button>}
+          </div>
+        </div>
+        <div className="mission-list">
+          {displayedMissions.map((mission) => {
+            const canDelete = mission.userId === session.id && mission.status !== "validated";
+            const status = mission.status === "validated" ? { icon: <BadgeCheck size={15} />, label: "Validé" } : mission.status === "rejected" ? { icon: <X size={15} />, label: "Refusé" } : { icon: <Gauge size={15} />, label: "En attente" };
+            return <article key={mission.id}><div className="mission-document"><span className="mission-file-icon"><FileText size={19} /></span><div><strong>{mission.title}</strong><small>{mission.userName} • {mission.grade} • {mission.submittedAt}</small></div></div><a href={mission.documentUrl} target="_blank" rel="noreferrer">Ouvrir le Google Docs</a><span className={`mission-status ${mission.status}`}>{status.icon}{status.label}</span><div className="mission-item-actions">{canValidate && mission.status === "pending" && <><button className="reject-mission" type="button" onClick={() => onReject(mission.id)}><X size={16} /> Refuser</button><button className="validate-mission" type="button" onClick={() => onValidate(mission.id)}><BadgeCheck size={16} /> Valider</button></>}{canDelete && <button className="delete-mission" type="button" onClick={() => onDelete(mission.id)}><Trash2 size={16} /> Supprimer</button>}</div></article>;
+          })}
+          {!displayedMissions.length && <p className="mission-empty">Aucun document déposé pour le moment.</p>}
+        </div>
+      </div>
     </section>
   );
 }
@@ -522,6 +538,26 @@ function App() {
     });
     flash("La mission interne est validée et ajoutée au quota.");
   }
+  function rejectMission(missionId) {
+    if (!["admin", "referent"].includes(session.role)) return;
+    const mission = missions.find((item) => item.id === missionId);
+    if (!mission || mission.status !== "pending") return;
+    setMissions((current) => current.map((item) => item.id === missionId ? { ...item, status: "rejected", rejectedBy: `${session.firstName} ${session.lastName}`, rejectedAt: new Date().toISOString() } : item));
+    flash("La mission interne a été refusée.");
+  }
+  function deleteMission(missionId) {
+    const mission = missions.find((item) => item.id === missionId);
+    if (!mission || mission.userId !== session.id || mission.status === "validated") return;
+    if (!confirm("Supprimer ce document de mission interne ?")) return;
+    setMissions((current) => current.filter((item) => item.id !== missionId));
+    flash("Le document de mission interne a été supprimé.");
+  }
+  function resetMissions() {
+    if (!["admin", "referent"].includes(session.role)) return;
+    if (!confirm("Réinitialiser tous les documents de missions internes ? Les quotas déjà validés resteront inchangés.")) return;
+    setMissions([]);
+    flash("Les documents de missions internes ont été réinitialisés.");
+  }
   function toggleGroup(group) { setOpenGroups((current) => ({ ...current, [group]: !current[group] })); }
   function login(email, password) {
     const user = users.find((item) => item.email.toLowerCase() === email.toLowerCase() && item.password === password);
@@ -583,7 +619,7 @@ function App() {
 
       <main className="content">
         <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}>{session.role === "admin" && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{["admin", "referent"].includes(session.role) && <optgroup label="Référent SO"><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{["admin", "referent", "senior"].includes(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}</select></div>
-        {activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>Bonjour, {session.firstName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès supérieur</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
+        {activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>Bonjour, {session.firstName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
         {activeSection === "dashboard" ? <>
         <section className="stats">
@@ -596,7 +632,7 @@ function App() {
           <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
           <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>Présence</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.email}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td><RoleBadge role={user.role} /></td><td>{["senior", "officer"].includes(user.role) ? <span className={`presence-status ${user.presence === "absent" ? "absent" : "present"}`}><i />{user.presence === "absent" ? "Absent" : "Présent"}</span> : <span className="not-applicable">Non concerné</span>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title="Modifier" onClick={() => setModal(user)}><Pencil size={17} /></button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
         </section>
-        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} onSuccess={flash} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} />}
+        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} onSuccess={flash} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} />}
       </main>
       {notice && <div className="toast"><BadgeCheck size={19} />{notice}</div>}
       {modal && <UserModal actor={session} editing={modal.id ? modal : null} onClose={() => setModal(null)} onSave={saveUser} />}
