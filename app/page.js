@@ -235,7 +235,7 @@ function QuotaPanel({ users, quotas, onTargetChange, onReset }) {
     <section className="quota-card">
       <div className="quota-head">
         <div><p className="eyebrow dark">SUIVI DES TRANSMISSIONS</p><h2>Quotas par catégorie</h2><p className="muted">Définissez un objectif distinct pour les recommandations, PCS EXP et observations.</p></div>
-        <div className="quota-controls"><label>Recommandation<input type="number" min="1" max="100" value={targets.recommendation} onChange={(event) => onTargetChange("recommendation", event.target.value)} /></label><label>PCS EXP<input type="number" min="1" max="100" value={targets.pcs_exp} onChange={(event) => onTargetChange("pcs_exp", event.target.value)} /></label><label>Observations<input type="number" min="1" max="100" value={targets.observations} onChange={(event) => onTargetChange("observations", event.target.value)} /></label><button className="reset-quota" onClick={onReset}><RotateCcw size={16} /> Réinitialiser</button></div>
+        <div className="quota-controls"><label>Recommandation<input type="number" min="0" max="100" value={targets.recommendation} onChange={(event) => onTargetChange("recommendation", event.target.value)} /></label><label>PCS EXP<input type="number" min="0" max="100" value={targets.pcs_exp} onChange={(event) => onTargetChange("pcs_exp", event.target.value)} /></label><label>Observations<input type="number" min="0" max="100" value={targets.observations} onChange={(event) => onTargetChange("observations", event.target.value)} /></label><button className="reset-quota" onClick={onReset}><RotateCcw size={16} /> Réinitialiser</button></div>
       </div>
       <div className="table-wrap"><table className="quota-table"><thead><tr><th>Utilisateur</th><th>Recommandation</th><th>Recommandation PCS EXP</th><th>Observations HDR + SO</th><th>Statut global</th></tr></thead><tbody>
         {team.map((user) => {
@@ -246,7 +246,7 @@ function QuotaPanel({ users, quotas, onTargetChange, onReset }) {
             const count = categoryCounts[category];
             const target = targets[category];
             const done = count >= target;
-            const percentage = Math.min(100, Math.round((count / target) * 100));
+            const percentage = target === 0 ? 100 : Math.min(100, Math.round((count / target) * 100));
             return <div className="quota-category"><div className="quota-category-top"><strong>{count}/{target}</strong><span className={done ? "done" : "pending"}>{done ? "Fait" : "Non fait"}</span></div><div className="quota-progress"><i><span style={{ width: `${percentage}%` }} /></i><small>{percentage}%</small></div>{detail && <small className="quota-detail">{detail}</small>}</div>;
           };
           return <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.grade || GRADES[0]}</small></div></div></td><td>{quotaCell("recommendation")}</td><td>{quotaCell("pcs_exp")}</td><td>{quotaCell("observations", `HDR : ${counts.observation_hdr || 0} • SO : ${counts.observation_so || 0}`)}</td><td><span className={`quota-status ${completed ? "done" : "pending"}`}>{completed ? <BadgeCheck size={15} /> : <X size={15} />}{completed ? "Fait" : "Non fait"}</span></td></tr>;
@@ -461,7 +461,8 @@ function App() {
     });
   }
   function changeQuotaTarget(category, value) {
-    const target = Math.max(1, Math.min(100, Number.parseInt(value, 10) || 1));
+    const parsedTarget = Number.parseInt(value, 10);
+    const target = Math.max(0, Math.min(100, Number.isNaN(parsedTarget) ? 0 : parsedTarget));
     setQuotas((current) => ({ ...current, targets: { ...current.targets, [category]: target } }));
   }
   function resetQuotas() {
