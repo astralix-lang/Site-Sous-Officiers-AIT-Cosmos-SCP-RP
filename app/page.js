@@ -6,6 +6,7 @@ import {
   ClipboardCheck,
   ChevronDown,
   FileText,
+  Gauge,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -14,6 +15,7 @@ import {
   Moon,
   Pencil,
   Plus,
+  RotateCcw,
   Search,
   Send,
   ShieldCheck,
@@ -62,6 +64,9 @@ const INITIAL_USERS = [
 const STORAGE_KEY = "portail-so-users-v1";
 const THEME_KEY = "portail-so-theme";
 const ADMIN_RECOVERY_KEY = "portail-so-admin-recovery-v1";
+const QUOTA_KEY = "portail-so-quotas-v1";
+const DEFAULT_QUOTAS = { target: 4, counts: {} };
+const QUOTA_TYPES = ["recommendation", "pcs_exp", "observation_hdr", "observation_so"];
 const REPORT_CONCLUSIONS = [
   "Passage confirmé en sergent",
   "Prolongation de la semaine de test",
@@ -222,6 +227,30 @@ function PresencePanel({ users, onChange }) {
   );
 }
 
+function QuotaPanel({ users, quotas, onTargetChange, onReset }) {
+  const team = users.filter((user) => ["senior", "officer"].includes(user.role));
+  const target = quotas.target || 1;
+
+  return (
+    <section className="quota-card">
+      <div className="quota-head">
+        <div><p className="eyebrow dark">SUIVI DES TRANSMISSIONS</p><h2>Quotas des Sous-Officiers</h2><p className="muted">Le total regroupe les recommandations, PCS EXP, observations HDR et observations SO envoyées.</p></div>
+        <div className="quota-controls"><label>Quota à atteindre<input type="number" min="1" max="100" value={target} onChange={(event) => onTargetChange(event.target.value)} /></label><button className="reset-quota" onClick={onReset}><RotateCcw size={16} /> Réinitialiser</button></div>
+      </div>
+      <div className="table-wrap"><table className="quota-table"><thead><tr><th>Utilisateur</th><th>Reco.</th><th>PCS EXP</th><th>Obs. HDR</th><th>Obs. SO</th><th>Total</th><th>Progression</th><th>Quota</th></tr></thead><tbody>
+        {team.map((user) => {
+          const counts = quotas.counts?.[user.id] || {};
+          const total = QUOTA_TYPES.reduce((sum, type) => sum + (counts[type] || 0), 0);
+          const completed = total >= target;
+          const percentage = Math.min(100, Math.round((total / target) * 100));
+          return <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.grade || GRADES[0]}</small></div></div></td><td>{counts.recommendation || 0}</td><td>{counts.pcs_exp || 0}</td><td>{counts.observation_hdr || 0}</td><td>{counts.observation_so || 0}</td><td><strong className="quota-total">{total}/{target}</strong></td><td><div className="quota-progress"><i><span style={{ width: `${percentage}%` }} /></i><small>{percentage}%</small></div></td><td><span className={`quota-status ${completed ? "done" : "pending"}`}>{completed ? <BadgeCheck size={15} /> : <X size={15} />}{completed ? "Fait" : "Non fait"}</span></td></tr>;
+        })}
+        {!team.length && <tr><td colSpan="8" className="empty-presence">Aucun Sous-Officier à afficher.</td></tr>}
+      </tbody></table></div>
+    </section>
+  );
+}
+
 function SergeantReportPanel({ users, session, onSuccess }) {
   const sergeants = users.filter((user) => user.role === "officer" && user.grade === "Sergent");
   const [form, setForm] = useState({
@@ -325,7 +354,7 @@ function TransmissionPanel({ session, onSuccess, type }) {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Envoi impossible.");
       setForm((current) => ({ ...current, aitName: "", reason: "", observation: "positive" }));
-      onSuccess(`${selected.title} envoyée sur Discord.`);
+      onSuccess(`${selected.title} envoyée sur Discord.`, type);
     } catch (submissionError) {
       setError(submissionError.message || "Une erreur est survenue pendant l’envoi.");
     } finally {
@@ -374,6 +403,7 @@ function App() {
   const [openGroups, setOpenGroups] = useState({ admin: true, referent: false, global: true, senior: false });
   const [profileOpen, setProfileOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
+  const [quotas, setQuotas] = useState(DEFAULT_QUOTAS);
 
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -392,12 +422,15 @@ function App() {
       ...(["senior", "officer"].includes(user.role) ? { presence: user.presence || "present" } : {}),
     })));
     const savedTheme = localStorage.getItem(THEME_KEY) === "dark";
+    const savedQuotas = localStorage.getItem(QUOTA_KEY);
+    setQuotas(savedQuotas ? JSON.parse(savedQuotas) : DEFAULT_QUOTAS);
     setDarkMode(savedTheme);
     document.documentElement.dataset.theme = savedTheme ? "dark" : "light";
     setReady(true);
   }, []);
 
   useEffect(() => { if (ready) localStorage.setItem(STORAGE_KEY, JSON.stringify(users)); }, [users, ready]);
+  useEffect(() => { if (ready) localStorage.setItem(QUOTA_KEY, JSON.stringify(quotas)); }, [quotas, ready]);
   useEffect(() => {
     if (!ready) return;
     document.documentElement.dataset.theme = darkMode ? "dark" : "light";
@@ -412,6 +445,23 @@ function App() {
   }), [users, query, roleFilter]);
 
   function flash(message) { setNotice(message); window.setTimeout(() => setNotice(""), 2500); }
+  function transmissionSuccess(message, type) {
+    flash(message);
+    if (!QUOTA_TYPES.includes(type) || !["senior", "officer"].includes(session.role)) return;
+    setQuotas((current) => {
+      const userCounts = current.counts?.[session.id] || {};
+      return { ...current, counts: { ...current.counts, [session.id]: { ...userCounts, [type]: (userCounts[type] || 0) + 1 } } };
+    });
+  }
+  function changeQuotaTarget(value) {
+    const target = Math.max(1, Math.min(100, Number.parseInt(value, 10) || 1));
+    setQuotas((current) => ({ ...current, target }));
+  }
+  function resetQuotas() {
+    if (!confirm("Réinitialiser tous les compteurs de quotas à zéro ?")) return;
+    setQuotas((current) => ({ ...current, counts: {} }));
+    flash("Les quotas ont été réinitialisés.");
+  }
   function toggleGroup(group) { setOpenGroups((current) => ({ ...current, [group]: !current[group] })); }
   function login(email, password) {
     const user = users.find((item) => item.email.toLowerCase() === email.toLowerCase() && item.password === password);
@@ -456,7 +506,7 @@ function App() {
         <div className="brand-row"><div className="brand-mark"><ShieldCheck size={23} /></div><div><strong>Portail SO</strong><small>Espace sécurisé</small></div></div>
         <nav>
           {session.role === "admin" && <MenuGroup title="Admin" icon={ShieldCheck} open={openGroups.admin} onToggle={() => toggleGroup("admin")}><button className={`menu-item ${activeSection === "dashboard" ? "active" : ""}`} onClick={() => setActiveSection("dashboard")}><LayoutDashboard size={17} /> Tableau de bord</button></MenuGroup>}
-          {["admin", "referent"].includes(session.role) && <MenuGroup title="Référent SO" icon={UsersRound} open={openGroups.referent} onToggle={() => toggleGroup("referent")}><button className={`menu-item ${activeSection === "presence" ? "active" : ""}`} onClick={() => setActiveSection("presence")}><UserCheck size={17} /> Présences</button></MenuGroup>}
+          {["admin", "referent"].includes(session.role) && <MenuGroup title="Référent SO" icon={UsersRound} open={openGroups.referent} onToggle={() => toggleGroup("referent")}><button className={`menu-item ${activeSection === "presence" ? "active" : ""}`} onClick={() => setActiveSection("presence")}><UserCheck size={17} /> Présences</button><button className={`menu-item ${activeSection === "quotas" ? "active" : ""}`} onClick={() => setActiveSection("quotas")}><Gauge size={17} /> Quotas</button></MenuGroup>}
           <MenuGroup title="Globale" icon={Send} open={openGroups.global} onToggle={() => toggleGroup("global")}><button className={`menu-item ${activeSection === "recommendation" ? "active" : ""}`} onClick={() => setActiveSection("recommendation")}><Medal size={17} /> Recommandation</button><button className={`menu-item ${activeSection === "pcs_exp" ? "active" : ""}`} onClick={() => setActiveSection("pcs_exp")}><ClipboardCheck size={17} /> Recommandation PCS EXP</button><button className={`menu-item ${activeSection === "observation_hdr" ? "active" : ""}`} onClick={() => setActiveSection("observation_hdr")}><MessageSquareText size={17} /> Observation HDR</button></MenuGroup>
           {["admin", "referent", "senior"].includes(session.role) && <MenuGroup title="Sous-Officier Supérieur" icon={BadgeCheck} open={openGroups.senior} onToggle={() => toggleGroup("senior")}><button className={`menu-item ${activeSection === "observation_so" ? "active" : ""}`} onClick={() => setActiveSection("observation_so")}><MessageSquareText size={17} /> Observation SO</button><button className={`menu-item ${activeSection === "sergeant_report" ? "active" : ""}`} onClick={() => setActiveSection("sergeant_report")}><FileText size={17} /> Rapport nouveau SO</button></MenuGroup>}
         </nav>
@@ -472,8 +522,8 @@ function App() {
       </aside>
 
       <main className="content">
-        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}>{session.role === "admin" && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{["admin", "referent"].includes(session.role) && <optgroup label="Référent SO"><option value="presence">Présences</option></optgroup>}<optgroup label="Globale"><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option></optgroup>{["admin", "referent", "senior"].includes(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}</select></div>
-        {activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>Bonjour, {session.firstName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès supérieur</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
+        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}>{session.role === "admin" && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{["admin", "referent"].includes(session.role) && <optgroup label="Référent SO"><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option></optgroup>{["admin", "referent", "senior"].includes(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}</select></div>
+        {activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>Bonjour, {session.firstName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès supérieur</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
         {activeSection === "dashboard" ? <>
         <section className="stats">
@@ -486,7 +536,7 @@ function App() {
           <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
           <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>Présence</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.email}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td><RoleBadge role={user.role} /></td><td>{["senior", "officer"].includes(user.role) ? <span className={`presence-status ${user.presence === "absent" ? "absent" : "present"}`}><i />{user.presence === "absent" ? "Absent" : "Présent"}</span> : <span className="not-applicable">Non concerné</span>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title="Modifier" onClick={() => setModal(user)}><Pencil size={17} /></button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
         </section>
-        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} onSuccess={flash} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={flash} type={activeSection} />}
+        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} onSuccess={flash} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} />}
       </main>
       {notice && <div className="toast"><BadgeCheck size={19} />{notice}</div>}
       {modal && <UserModal actor={session} editing={modal.id ? modal : null} onClose={() => setModal(null)} onSave={saveUser} />}
