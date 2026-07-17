@@ -1,10 +1,15 @@
 node_modules
 .pnpm-store
+.env
+.env.local
+.env.*.local
 .next
 dist
 .open-next
 .wrangler
 .wrangler-config
 .vinext
+/Livraison Portail Sous-Officiers/
+/Portail Sous-Officiers - Source.zip
 *.log
 next-env.d.ts
