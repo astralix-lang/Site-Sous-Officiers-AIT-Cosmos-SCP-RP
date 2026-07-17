@@ -82,6 +82,8 @@ const LOG_KEY = "portail-so-logs-v1";
 const SHORTCUTS_KEY = "portail-so-shortcuts-v1";
 const SUMMARY_KEY = "portail-so-summary-v1";
 const ASSIGNMENTS_KEY = "portail-so-sergeant-assignments-v1";
+const DRAFTS_KEY = "portail-so-form-drafts-v1";
+const SUBMISSION_HISTORY_KEY = "portail-so-submission-history-v1";
 const CHAT_ATTACHMENT_MAX_SIZE = 1024 * 1024;
 const CHAT_ATTACHMENT_MAX_COUNT = 3;
 const CHAT_ATTACHMENT_TYPES = new Set([
@@ -125,6 +127,36 @@ const TRANSMISSION_TYPES = {
     tone: "violet",
   },
 };
+
+function readFormDraft(userId, type) {
+  if (typeof window === "undefined") return null;
+  try {
+    const drafts = JSON.parse(localStorage.getItem(DRAFTS_KEY) || "{}");
+    return drafts[`${userId}:${type}`] || null;
+  } catch {
+    return null;
+  }
+}
+
+function saveFormDraft(userId, type, values) {
+  try {
+    const drafts = JSON.parse(localStorage.getItem(DRAFTS_KEY) || "{}");
+    drafts[`${userId}:${type}`] = { values, savedAt: new Date().toISOString() };
+    localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
+  } catch {
+    // Le formulaire reste utilisable si le stockage local est indisponible.
+  }
+}
+
+function clearFormDraft(userId, type) {
+  try {
+    const drafts = JSON.parse(localStorage.getItem(DRAFTS_KEY) || "{}");
+    delete drafts[`${userId}:${type}`];
+    localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
+  } catch {
+    // Le formulaire reste utilisable si le stockage local est indisponible.
+  }
+}
 
 function initials(user) {
   return `${user.firstName?.[0] || ""}${user.lastName?.[0] || ""}`.toUpperCase();
@@ -446,6 +478,8 @@ function HomePanel({ session, users, missions, chats, quotas, logs, assignments,
   const pendingMissions = missions.filter((mission) => mission.status === "pending");
   const myMissions = missions.filter((mission) => mission.userId === session.id);
   const myReportAssignments = assignments.filter((assignment) => assignment.observerId === session.id && assignment.status === "active");
+  const mySergeantAssignment = assignments.find((assignment) => assignment.sergeantId === session.id && assignment.status === "active");
+  const mySergeantReferent = mySergeantAssignment ? users.find((user) => user.id === mySergeantAssignment.observerId) : null;
   const targets = { ...DEFAULT_QUOTAS.targets, ...quotas.targets };
   const counts = quotas.counts?.[session.id] || {};
   const categoryCounts = { recommendation: counts.recommendation || 0, pcs_exp: counts.pcs_exp || 0, observations: (counts.observation_hdr || 0) + (counts.observation_so || 0), mission_internal: counts.mission_internal || 0 };
@@ -464,6 +498,11 @@ function HomePanel({ session, users, missions, chats, quotas, logs, assignments,
   if (session.presence === "absent") notifications.push({ tone: "danger", icon: <UserX size={17} />, title: "Vous êtes indiqué absent", text: "Vos quotas sont temporairement affichés comme absents.", target: "home" });
   if (quotas.exemptions?.[session.id]) notifications.push({ tone: "info", icon: <ShieldCheck size={17} />, title: "Vous êtes exempté de quota", text: "Les objectifs restent enregistrés mais ne sont pas exigés.", target: "home" });
   if (isQuotaMember && !isAbsent && !isExempted && remainingTotal > 0) notifications.push({ tone: "info", icon: <Gauge size={17} />, title: `${remainingTotal} action${remainingTotal > 1 ? "s" : ""} restante${remainingTotal > 1 ? "s" : ""}`, text: "Consultez le détail de vos quotas sur cette page.", target: "home" });
+  if (mySergeantAssignment) {
+    const deadline = mySergeantAssignment.dueDate ? new Intl.DateTimeFormat("fr-FR", { dateStyle: "long" }).format(new Date(`${mySergeantAssignment.dueDate}T12:00:00`)) : "non définie";
+    const referentName = mySergeantReferent ? `${mySergeantReferent.grade || GRADES[0]} ${mySergeantReferent.firstName} ${mySergeantReferent.lastName}` : "Référent à confirmer";
+    notifications.push({ tone: "info", icon: <UserCheck size={17} />, title: `Votre référent de suivi : ${referentName}`, text: `Il vous accompagne pendant votre semaine de test. Date limite du rapport : ${deadline}.`, target: "home" });
+  }
   myReportAssignments.forEach((assignment) => {
     const sergeant = users.find((user) => user.id === assignment.sergeantId);
     const deadline = assignment.dueDate ? new Date(`${assignment.dueDate}T23:59:59`) : null;
@@ -493,7 +532,7 @@ function HomePanel({ session, users, missions, chats, quotas, logs, assignments,
         <section className="home-card notifications-card"><div className="home-card-head"><div><p className="eyebrow dark">CENTRE D’INFORMATIONS</p><h2>Notifications importantes</h2></div><span><Bell size={17} /> {notifications.length}</span></div><div className="notification-list">{notifications.map((notification, index) => <button type="button" className={notification.tone} key={`${notification.title}-${index}`} onClick={() => onNavigate(notification.target)}><span>{notification.icon}</span><span><strong>{notification.title}</strong><small>{notification.text}</small></span></button>)}{!notifications.length && <div className="no-notification"><BadgeCheck size={25} /><strong>Tout est à jour</strong><p>Aucune notification importante pour le moment.</p></div>}</div></section>
         <section className="home-card quick-card"><div className="home-card-head"><div><p className="eyebrow dark">ACCÈS RAPIDE</p><h2>Mes raccourcis</h2></div><button className="shortcut-edit-button" onClick={() => { setShortcutDraft(selectedShortcutIds); setEditingShortcuts((current) => !current); }}><Settings2 size={15} /> {editingShortcuts ? "Fermer" : "Personnaliser"}</button></div>{editingShortcuts ? <div className="shortcut-editor"><p>Choisissez les rubriques affichées sur votre accueil.</p><div className="shortcut-options">{shortcutCatalog.map((item) => <label className={shortcutDraft.includes(item.id) ? "selected" : ""} key={item.id}><input type="checkbox" checked={shortcutDraft.includes(item.id)} onChange={() => setShortcutDraft((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])} /><span>{item.icon}</span>{item.label}</label>)}</div><div className="shortcut-editor-actions"><button className="secondary" onClick={() => setShortcutDraft(defaultShortcutIds)}>Par défaut</button><button className="primary" disabled={!shortcutDraft.length} onClick={() => { onSaveShortcuts(shortcutDraft); setEditingShortcuts(false); }}>Enregistrer</button></div></div> : <div className="quick-actions">{shortcutCatalog.filter((item) => selectedShortcutIds.includes(item.id)).map((item) => <button key={item.id} onClick={() => onNavigate(item.id)}>{item.icon}<span><strong>{item.label}</strong><small>{item.description}</small></span></button>)}</div>}</section>
         <section className="home-card activity-card"><div className="home-card-head"><div><p className="eyebrow dark">ACTIVITÉ RÉCENTE</p><h2>{isManager ? "Dernières actions du portail" : "Mes dernières actions"}</h2></div>{isManager && <button onClick={() => onNavigate("logs")}>Voir tous les logs</button>}</div><div className="home-activity-list">{visibleActivity.map((entry) => <article key={entry.id}><span className={`log-dot ${entry.category}`} /><div><strong>{entry.action}</strong><small>{entry.actorName} · {entry.displayAt}</small>{entry.details && <p>{entry.details}</p>}</div></article>)}{!visibleActivity.length && <p className="chat-empty-small">Aucune activité enregistrée pour le moment.</p>}</div></section>
-        <section className="home-card identity-card"><p className="eyebrow dark">MON ESPACE</p><h2>{session.grade || GRADES[0]}</h2><RoleBadge role={session.role} /><div><span>État du compte</span><strong className="identity-active"><BadgeCheck size={15} /> Actif</strong></div><div><span>Présence</span><strong>{session.presence === "absent" ? "Absent" : ["senior", "officer"].includes(session.role) ? "Présent" : "Non concerné"}</strong></div></section>
+        <section className="home-card identity-card"><p className="eyebrow dark">MON ESPACE</p><h2>{session.grade || GRADES[0]}</h2><RoleBadge role={session.role} /><div><span>État du compte</span><strong className="identity-active"><BadgeCheck size={15} /> Actif</strong></div><div><span>Présence</span><strong>{session.presence === "absent" ? "Absent" : ["senior", "officer"].includes(session.role) ? "Présent" : "Non concerné"}</strong></div>{mySergeantAssignment && <div className="identity-referent"><span>Référent de suivi</span><strong>{mySergeantReferent ? `${mySergeantReferent.grade || GRADES[0]} ${mySergeantReferent.firstName} ${mySergeantReferent.lastName}` : "À confirmer"}</strong></div>}</section>
       </div>
     </div>
   );
@@ -883,16 +922,43 @@ function SergeantAssignmentPanel({ users, session, assignments, onAssign, onRemi
   );
 }
 
-function SergeantReportPanel({ users, session, assignments, onSuccess }) {
+function SubmissionHistoryPanel({ type, entries = [], canReset, onReset }) {
+  const historyTitles = { recommendation: "Recommandations effectuées", pcs_exp: "Recommandations PCS EXP effectuées", observation_hdr: "Observations HDR effectuées", observation_so: "Observations SO effectuées", sergeant_report: "Rapports envoyés" };
+  const title = historyTitles[type] || "Transmissions effectuées";
+
+  return (
+    <aside className="submission-history-card">
+      <div className="submission-history-head">
+        <div><p className="eyebrow dark">HISTORIQUE PUBLIC</p><h2>{title}</h2><p>Visible par les membres ayant accès à cette rubrique.</p></div>
+        <span><ScrollText size={16} /> {entries.length}</span>
+      </div>
+      {canReset && entries.length > 0 && <button className="submission-history-reset" type="button" onClick={() => onReset(type)}><RotateCcw size={15} /> Réinitialiser uniquement cet historique</button>}
+      <div className="submission-history-list">
+        {entries.map((entry) => {
+          const values = entry.values || {};
+          const subject = type === "sergeant_report" ? values.sergeantName : values.aitName;
+          const observationLabel = values.observation === "negative" ? "Négative" : "Positive";
+          const HistoryIcon = type === "sergeant_report" ? FileText : TRANSMISSION_TYPES[type]?.icon || FileText;
+          return <article key={entry.id}>
+            <div className="submission-history-title"><span className={`category-icon ${type === "sergeant_report" ? "gold" : TRANSMISSION_TYPES[type]?.tone || "blue"}`}><HistoryIcon size={17} /></span><div><strong>{subject || "Transmission"}</strong><small>{entry.displayAt}</small></div></div>
+            <div className="submission-history-author"><span>Envoyé par</span><strong>{entry.authorGrade ? `${entry.authorGrade} ` : ""}{entry.authorName}</strong></div>
+            {["observation_hdr", "observation_so"].includes(type) && <span className={`history-observation ${values.observation === "negative" ? "negative" : "positive"}`}>{observationLabel}</span>}
+            {type === "sergeant_report" && <span className={`history-conclusion conclusion-${REPORT_CONCLUSIONS.indexOf(values.conclusion)}`}>{values.conclusion}</span>}
+            {type === "sergeant_report" ? <div className="history-report-details"><p><strong>Point positif</strong>{values.positivePoints}</p><p><strong>Point négatif</strong>{values.negativePoints}</p><p><strong>Avis global</strong>{values.globalOpinion}</p></div> : <p className="submission-history-reason"><strong>Raison</strong>{values.reason}</p>}
+          </article>;
+        })}
+        {!entries.length && <div className="submission-history-empty"><ScrollText size={25} /><strong>Aucun envoi</strong><p>Les prochaines transmissions apparaîtront ici.</p></div>}
+      </div>
+    </aside>
+  );
+}
+
+function SergeantReportPanel({ users, session, assignments, onSuccess, history, canResetHistory, onResetHistory }) {
   const activeAssignments = assignments.filter((assignment) => assignment.observerId === session.id && assignment.status === "active");
   const sergeants = activeAssignments.map((assignment) => users.find((user) => user.id === assignment.sergeantId)).filter((user) => user && user.role === "officer" && user.grade === "Sergent");
-  const [form, setForm] = useState({
-    sergeantId: sergeants[0]?.id || "",
-    positivePoints: "",
-    negativePoints: "",
-    globalOpinion: "",
-    conclusion: REPORT_CONCLUSIONS[0],
-  });
+  const initialDraft = readFormDraft(session.id, "sergeant_report");
+  const [form, setForm] = useState(() => ({ sergeantId: sergeants[0]?.id || "", positivePoints: "", negativePoints: "", globalOpinion: "", conclusion: REPORT_CONCLUSIONS[0], ...(initialDraft?.values || {}) }));
+  const [draftSavedAt, setDraftSavedAt] = useState(initialDraft?.savedAt || "");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
@@ -900,6 +966,19 @@ function SergeantReportPanel({ users, session, assignments, onSuccess }) {
   useEffect(() => {
     if (!sergeants.some((user) => user.id === form.sergeantId)) setForm((current) => ({ ...current, sergeantId: sergeants[0]?.id || "" }));
   }, [assignments, users]);
+  useEffect(() => {
+    const meaningful = form.positivePoints.trim() || form.negativePoints.trim() || form.globalOpinion.trim() || form.conclusion !== REPORT_CONCLUSIONS[0];
+    const timer = window.setTimeout(() => {
+      if (meaningful) {
+        saveFormDraft(session.id, "sergeant_report", form);
+        setDraftSavedAt(new Date().toISOString());
+      } else {
+        clearFormDraft(session.id, "sergeant_report");
+        setDraftSavedAt("");
+      }
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [form, session.id]);
 
   async function submit(event) {
     event.preventDefault();
@@ -909,25 +988,28 @@ function SergeantReportPanel({ users, session, assignments, onSuccess }) {
     setSending(true);
     setError("");
     try {
+      const reportValues = {
+        sergeantName: `${selectedSergeant.firstName} ${selectedSergeant.lastName}`,
+        positivePoints: form.positivePoints,
+        negativePoints: form.negativePoints,
+        globalOpinion: form.globalOpinion,
+        conclusion: form.conclusion,
+      };
       const response = await fetch("/api/submissions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "sergeant_report",
-          values: {
-            sergeantName: `${selectedSergeant.firstName} ${selectedSergeant.lastName}`,
-            positivePoints: form.positivePoints,
-            negativePoints: form.negativePoints,
-            globalOpinion: form.globalOpinion,
-            conclusion: form.conclusion,
-          },
+          values: reportValues,
           submittedBy: { name: `${session.firstName} ${session.lastName}`, role: ROLES[session.role].label },
         }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Envoi impossible.");
+      clearFormDraft(session.id, "sergeant_report");
+      setDraftSavedAt("");
       setForm((current) => ({ ...current, positivePoints: "", negativePoints: "", globalOpinion: "", conclusion: REPORT_CONCLUSIONS[0] }));
-      onSuccess("Le rapport du nouveau Sous-Officier a été envoyé sur Discord.", selectedSergeant.id);
+      onSuccess("Le rapport du nouveau Sous-Officier a été envoyé sur Discord.", selectedSergeant.id, reportValues);
     } catch (submissionError) {
       setError(submissionError.message || "Une erreur est survenue pendant l’envoi.");
     } finally {
@@ -936,7 +1018,7 @@ function SergeantReportPanel({ users, session, assignments, onSuccess }) {
   }
 
   return (
-    <section className="transmissions-layout single">
+    <section className="transmissions-layout with-history">
       <div className="transmission-card report-card">
         <div className="transmission-head"><span className="category-icon large gold"><FileText size={25} /></span><div><p className="eyebrow dark">NOUVEAU RAPPORT</p><h2>Rapport nouveau Sous-Officier</h2><p className="muted">Évaluez uniquement les Sergents qui vous ont été confiés.</p></div></div>
         <form onSubmit={submit}>
@@ -951,33 +1033,47 @@ function SergeantReportPanel({ users, session, assignments, onSuccess }) {
           <label>Point négatif</label><textarea value={form.negativePoints} onChange={(event) => set("negativePoints", event.target.value)} required maxLength={1000} rows={4} placeholder="Décrivez les axes d’amélioration…" />
           <label>Avis global</label><textarea value={form.globalOpinion} onChange={(event) => set("globalOpinion", event.target.value)} required maxLength={1000} rows={5} placeholder="Rédigez votre avis général sur la semaine de test…" />
           <label>Conclusion</label><select value={form.conclusion} onChange={(event) => set("conclusion", event.target.value)} required>{REPORT_CONCLUSIONS.map((conclusion) => <option key={conclusion} value={conclusion}>{conclusion}</option>)}</select>
+          {draftSavedAt && <p className="draft-status"><BadgeCheck size={14} /> Brouillon sauvegardé automatiquement à {new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(new Date(draftSavedAt))}</p>}
           {error && <p className="form-error transmission-error">{error}</p>}
           <div className="transmission-actions"><span><ShieldCheck size={15} /> Envoi réservé au SO Sup assigné</span><button className="primary" type="submit" disabled={sending || !sergeants.length || session.role !== "senior"}><Send size={17} />{sending ? "Envoi en cours…" : "Envoyer le rapport"}</button></div>
         </form>
       </div>
+      <SubmissionHistoryPanel type="sergeant_report" entries={history} canReset={canResetHistory} onReset={onResetHistory} />
     </section>
   );
 }
 
-function TransmissionPanel({ session, onSuccess, type }) {
-  const [form, setForm] = useState({
-    aitName: "",
-    author: `${session.firstName} ${session.lastName}`,
-    reason: "",
-    observation: "positive",
-  });
+function TransmissionPanel({ session, onSuccess, type, history, canResetHistory, onResetHistory }) {
+  const defaultAuthor = `${session.firstName} ${session.lastName}`;
+  const initialDraft = readFormDraft(session.id, type);
+  const [form, setForm] = useState(() => ({ aitName: "", author: defaultAuthor, reason: "", observation: "positive", ...(initialDraft?.values || {}) }));
+  const [draftSavedAt, setDraftSavedAt] = useState(initialDraft?.savedAt || "");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const selected = TRANSMISSION_TYPES[type];
   const SelectedIcon = selected.icon;
   const isObservation = ["observation_hdr", "observation_so"].includes(type);
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  useEffect(() => {
+    const meaningful = form.aitName.trim() || form.reason.trim() || form.author.trim() !== defaultAuthor || form.observation !== "positive";
+    const timer = window.setTimeout(() => {
+      if (meaningful) {
+        saveFormDraft(session.id, type, form);
+        setDraftSavedAt(new Date().toISOString());
+      } else {
+        clearFormDraft(session.id, type);
+        setDraftSavedAt("");
+      }
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [form, session.id, type, defaultAuthor]);
 
   async function submit(event) {
     event.preventDefault();
     setSending(true);
     setError("");
     try {
+      const submittedValues = { ...form };
       const response = await fetch("/api/submissions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -992,8 +1088,10 @@ function TransmissionPanel({ session, onSuccess, type }) {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Envoi impossible.");
+      clearFormDraft(session.id, type);
+      setDraftSavedAt("");
       setForm((current) => ({ ...current, aitName: "", reason: "", observation: "positive" }));
-      onSuccess(`${selected.title} envoyée sur Discord.`, type);
+      onSuccess(`${selected.title} envoyée sur Discord.`, type, submittedValues);
     } catch (submissionError) {
       setError(submissionError.message || "Une erreur est survenue pendant l’envoi.");
     } finally {
@@ -1002,7 +1100,7 @@ function TransmissionPanel({ session, onSuccess, type }) {
   }
 
   return (
-    <section className="transmissions-layout single">
+    <section className="transmissions-layout with-history">
       <div className="transmission-card">
         <div className="transmission-head">
           <span className={`category-icon large ${selected.tone}`}><SelectedIcon size={25} /></span>
@@ -1021,10 +1119,12 @@ function TransmissionPanel({ session, onSuccess, type }) {
             <><label>Raison</label><textarea value={form.reason} onChange={(e) => set("reason", e.target.value)} required maxLength={1000} rows={6} placeholder="Décrivez les éléments qui motivent cette recommandation…" /></>
           )}
 
+          {draftSavedAt && <p className="draft-status"><BadgeCheck size={14} /> Brouillon sauvegardé automatiquement à {new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(new Date(draftSavedAt))}</p>}
           {error && <p className="form-error transmission-error">{error}</p>}
           <div className="transmission-actions"><span><ShieldCheck size={15} /> Envoi sécurisé via le serveur</span><button className="primary" type="submit" disabled={sending}><Send size={17} />{sending ? "Envoi en cours…" : "Envoyer sur Discord"}</button></div>
         </form>
       </div>
+      <SubmissionHistoryPanel type={type} entries={history} canReset={canResetHistory} onReset={onResetHistory} />
     </section>
   );
 }
@@ -1049,6 +1149,7 @@ function App() {
   const [shortcutPreferences, setShortcutPreferences] = useState({});
   const [summarySettings, setSummarySettings] = useState({ activityResetAt: null });
   const [sergeantAssignments, setSergeantAssignments] = useState([]);
+  const [submissionHistory, setSubmissionHistory] = useState([]);
   const [loginTransition, setLoginTransition] = useState(null);
 
   useEffect(() => {
@@ -1085,6 +1186,7 @@ function App() {
     const savedShortcuts = localStorage.getItem(SHORTCUTS_KEY);
     const savedSummary = localStorage.getItem(SUMMARY_KEY);
     const savedAssignments = localStorage.getItem(ASSIGNMENTS_KEY);
+    const savedSubmissionHistory = localStorage.getItem(SUBMISSION_HISTORY_KEY);
     const parsedQuotas = savedQuotas ? JSON.parse(savedQuotas) : DEFAULT_QUOTAS;
     setQuotas({ targets: { ...DEFAULT_QUOTAS.targets, ...parsedQuotas.targets }, counts: parsedQuotas.counts || {}, exemptions: parsedQuotas.exemptions || {} });
     setMissions(savedMissions ? JSON.parse(savedMissions) : []);
@@ -1093,6 +1195,7 @@ function App() {
     setShortcutPreferences(savedShortcuts ? JSON.parse(savedShortcuts) : {});
     setSummarySettings(savedSummary ? JSON.parse(savedSummary) : { activityResetAt: null });
     setSergeantAssignments(savedAssignments ? JSON.parse(savedAssignments) : []);
+    setSubmissionHistory(savedSubmissionHistory ? JSON.parse(savedSubmissionHistory) : []);
     setDarkMode(savedTheme);
     document.documentElement.dataset.theme = savedTheme ? "dark" : "light";
     setReady(true);
@@ -1113,6 +1216,7 @@ function App() {
   useEffect(() => { if (ready) localStorage.setItem(SHORTCUTS_KEY, JSON.stringify(shortcutPreferences)); }, [shortcutPreferences, ready]);
   useEffect(() => { if (ready) localStorage.setItem(SUMMARY_KEY, JSON.stringify(summarySettings)); }, [summarySettings, ready]);
   useEffect(() => { if (ready) localStorage.setItem(ASSIGNMENTS_KEY, JSON.stringify(sergeantAssignments)); }, [sergeantAssignments, ready]);
+  useEffect(() => { if (ready) localStorage.setItem(SUBMISSION_HISTORY_KEY, JSON.stringify(submissionHistory)); }, [submissionHistory, ready]);
   useEffect(() => {
     function syncAccounts(event) {
       if (event.key === SESSION_KEY && !event.newValue) {
@@ -1139,6 +1243,10 @@ function App() {
       }
       if (event.key === ASSIGNMENTS_KEY && event.newValue) {
         try { setSergeantAssignments(JSON.parse(event.newValue)); } catch { /* Ignore des assignations invalides. */ }
+        return;
+      }
+      if (event.key === SUBMISSION_HISTORY_KEY && event.newValue) {
+        try { setSubmissionHistory(JSON.parse(event.newValue)); } catch { /* Ignore un historique invalide. */ }
         return;
       }
       if (event.key !== STORAGE_KEY || !event.newValue) return;
@@ -1200,8 +1308,32 @@ function App() {
     flash("Les statistiques d’activité ont été réinitialisées.");
   }
   function flash(message) { setNotice(message); window.setTimeout(() => setNotice(""), 2500); }
-  function transmissionSuccess(message, type) {
+  function recordSubmission(type, values) {
+    const now = new Date();
+    const entry = {
+      id: crypto.randomUUID(),
+      type,
+      values,
+      authorId: session.id,
+      authorName: `${session.firstName} ${session.lastName}`,
+      authorGrade: session.grade || GRADES[0],
+      authorRole: session.role,
+      createdAt: now.toISOString(),
+      displayAt: new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(now),
+    };
+    setSubmissionHistory((current) => [entry, ...current].slice(0, 300));
+  }
+  function resetSubmissionHistory(type) {
+    if (!["admin", "referent"].includes(session.role)) return;
+    const label = type === "sergeant_report" ? "Rapports nouveau Sous-Officier" : TRANSMISSION_TYPES[type]?.title || type;
+    if (!confirm(`Réinitialiser uniquement l’historique « ${label} » ?`)) return;
+    setSubmissionHistory((current) => current.filter((entry) => entry.type !== type));
+    addLog("form", "Historique de formulaire réinitialisé", label);
+    flash(`L’historique « ${label} » a été réinitialisé.`);
+  }
+  function transmissionSuccess(message, type, values) {
     flash(message);
+    recordSubmission(type, values);
     addLog("form", "Formulaire envoyé", TRANSMISSION_TYPES[type]?.title || type);
     if (!QUOTA_TYPES.includes(type) || !["senior", "officer"].includes(session.role)) return;
     setQuotas((current) => {
@@ -1209,8 +1341,9 @@ function App() {
       return { ...current, counts: { ...current.counts, [session.id]: { ...userCounts, [type]: (userCounts[type] || 0) + 1 } } };
     });
   }
-  function sergeantReportSuccess(message, sergeantId) {
+  function sergeantReportSuccess(message, sergeantId, values) {
     flash(message);
+    recordSubmission("sergeant_report", values);
     const sergeant = users.find((user) => user.id === sergeantId);
     setSergeantAssignments((current) => current.map((assignment) => assignment.sergeantId === sergeantId && assignment.observerId === session.id && assignment.status === "active" ? { ...assignment, status: "completed", completedAt: new Date().toISOString() } : assignment));
     addLog("form", "Rapport nouveau Sous-Officier envoyé", sergeant ? `${sergeant.grade} ${sergeant.firstName} ${sergeant.lastName}` : "Sergent assigné");
@@ -1467,7 +1600,7 @@ function App() {
           <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
           <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>État du compte</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.email}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td><RoleBadge role={user.role} /></td><td>{user.role === "admin" ? <span className="account-state active"><UserCheck size={15} /> Compte actif</span> : <button className={`account-state ${user.blocked ? "blocked" : "active"}`} type="button" onClick={() => toggleAccountBlock(user)}>{user.blocked ? <UserX size={15} /> : <UserCheck size={15} />}{user.blocked ? "Compte bloqué" : "Compte actif"}</button>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title="Modifier" onClick={() => setModal(user)}><Pencil size={17} /></button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
         </section>
-        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} assignments={sergeantAssignments} onSuccess={sergeantReportSuccess} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} />}
+        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} assignments={sergeantAssignments} onSuccess={sergeantReportSuccess} history={submissionHistory.filter((entry) => entry.type === "sergeant_report")} canResetHistory={canManage} onResetHistory={resetSubmissionHistory} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} history={submissionHistory.filter((entry) => entry.type === activeSection)} canResetHistory={canManage} onResetHistory={resetSubmissionHistory} />}
       </main>
       {notice && <div className="toast"><BadgeCheck size={19} />{notice}</div>}
       {modal && <UserModal actor={session} editing={modal.id ? modal : null} onClose={() => setModal(null)} onSave={saveUser} />}
