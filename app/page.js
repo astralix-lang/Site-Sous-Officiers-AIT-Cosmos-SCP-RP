@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BadgeCheck,
   ClipboardCheck,
@@ -105,6 +105,40 @@ const TRANSMISSION_TYPES = {
 
 function initials(user) {
   return `${user.firstName?.[0] || ""}${user.lastName?.[0] || ""}`.toUpperCase();
+}
+
+function sanitizeChatHtml(html) {
+  if (typeof document === "undefined") return "";
+  const template = document.createElement("template");
+  template.innerHTML = String(html || "");
+  const allowedTags = new Set(["B", "STRONG", "I", "EM", "U", "S", "STRIKE", "BR", "DIV", "P", "SPAN", "FONT"]);
+  [...template.content.querySelectorAll("*")].forEach((node) => {
+    if (!allowedTags.has(node.tagName)) {
+      node.replaceWith(...node.childNodes);
+      return;
+    }
+    const color = node.style.color || node.getAttribute("color") || "";
+    const backgroundColor = node.style.backgroundColor || "";
+    [...node.attributes].forEach((attribute) => node.removeAttribute(attribute.name));
+    if (color) node.style.color = color;
+    if (backgroundColor) node.style.backgroundColor = backgroundColor;
+  });
+  return template.innerHTML;
+}
+
+function chatMessageHtml(message) {
+  if (message.html) return sanitizeChatHtml(message.html);
+  if (typeof document === "undefined") return "";
+  const container = document.createElement("div");
+  container.textContent = message.text || "";
+  return container.innerHTML.replace(/\n/g, "<br>");
+}
+
+function chatMessageText(message) {
+  if (!message.html || typeof document === "undefined") return message.text || "";
+  const container = document.createElement("div");
+  container.innerHTML = sanitizeChatHtml(message.html);
+  return container.textContent || "";
 }
 
 function RoleBadge({ role }) {
@@ -310,48 +344,119 @@ function MissionInternalPanel({ session, missions, onSubmit, onValidate, onRejec
   );
 }
 
-function ChatPanel({ session, users, chats, onStart, onSend }) {
+function ChatPanel({ session, users, chats, onStart, onCreateGroup, onSend, onEditMessage, onDeleteMessage, onDeleteChat }) {
+  const isModerator = ["admin", "referent"].includes(session.role);
   const availableContacts = users.filter((user) => user.id !== session.id && !user.blocked);
-  const referents = availableContacts.filter((user) => user.role === "referent");
-  const myChats = useMemo(() => chats.filter((chat) => chat.participants.includes(session.id)), [chats, session.id]);
-  const [selectedChatId, setSelectedChatId] = useState(myChats[0]?.id || "");
+  const supportContacts = availableContacts.filter((user) => ["admin", "referent"].includes(user.role));
+  const visibleChats = useMemo(() => isModerator ? chats : chats.filter((chat) => chat.participants.includes(session.id)), [chats, isModerator, session.id]);
+  const [selectedChatId, setSelectedChatId] = useState(visibleChats[0]?.id || "");
   const [contactId, setContactId] = useState(availableContacts[0]?.id || "");
-  const [message, setMessage] = useState("");
-  const selectedChat = myChats.find((chat) => chat.id === selectedChatId);
+  const [groupOpen, setGroupOpen] = useState(false);
+  const [groupName, setGroupName] = useState("");
+  const [groupMembers, setGroupMembers] = useState([]);
+  const [groupError, setGroupError] = useState("");
+  const [editingMessageId, setEditingMessageId] = useState("");
+  const editorRef = useRef(null);
+  const savedRangeRef = useRef(null);
+  const selectedChat = visibleChats.find((chat) => chat.id === selectedChatId);
+  const canParticipate = selectedChat?.participants.includes(session.id);
 
   useEffect(() => {
-    if (!myChats.some((chat) => chat.id === selectedChatId)) setSelectedChatId(myChats[0]?.id || "");
-  }, [myChats, selectedChatId]);
+    if (!visibleChats.some((chat) => chat.id === selectedChatId)) setSelectedChatId(visibleChats[0]?.id || "");
+  }, [visibleChats, selectedChatId]);
 
   useEffect(() => {
     if (!availableContacts.some((user) => user.id === contactId)) setContactId(availableContacts[0]?.id || "");
   }, [availableContacts, contactId]);
+
+  function chatMeta(chat) {
+    if (chat.type === "group") {
+      const names = chat.participants.map((id) => users.find((user) => user.id === id)).filter(Boolean).map((user) => user.firstName).join(", ");
+      return { title: chat.name || "Groupe sans nom", subtitle: names || "Aucun membre disponible", group: true };
+    }
+    if (!chat.participants.includes(session.id)) {
+      const participants = chat.participants.map((id) => users.find((user) => user.id === id)).filter(Boolean);
+      return { title: participants.map((user) => `${user.firstName} ${user.lastName}`).join(" ↔ ") || "Discussion privée", subtitle: `Discussion privée · ${chat.messages.length} message${chat.messages.length > 1 ? "s" : ""}`, moderated: true, group: false };
+    }
+    const other = users.find((user) => user.id === chat.participants.find((id) => id !== session.id));
+    return { title: other ? `${other.firstName} ${other.lastName}` : "Compte indisponible", subtitle: other ? `${other.grade || GRADES[0]} · ${ROLES[other.role].label}` : "Discussion conservée", other, group: false };
+  }
 
   function openChat(userId) {
     if (!userId) return;
     setSelectedChatId(onStart(userId));
   }
 
-  function submit(event) {
-    event.preventDefault();
-    const text = message.trim();
-    if (!selectedChat || !text) return;
-    onSend(selectedChat.id, text);
-    setMessage("");
+  function toggleGroupMember(userId) {
+    setGroupMembers((current) => current.includes(userId) ? current.filter((id) => id !== userId) : [...current, userId]);
   }
 
-  const otherParticipant = selectedChat && users.find((user) => user.id === selectedChat.participants.find((id) => id !== session.id));
+  function createGroup(event) {
+    event.preventDefault();
+    if (!groupName.trim()) return setGroupError("Donnez un nom au groupe.");
+    if (!groupMembers.length) return setGroupError("Sélectionnez au moins un autre membre.");
+    const groupId = onCreateGroup(groupName.trim(), groupMembers);
+    if (!groupId) return setGroupError("Impossible de créer ce groupe.");
+    setSelectedChatId(groupId);
+    setGroupName("");
+    setGroupMembers([]);
+    setGroupError("");
+    setGroupOpen(false);
+  }
+
+  function rememberSelection() {
+    const selection = window.getSelection();
+    if (selection?.rangeCount && editorRef.current?.contains(selection.anchorNode)) savedRangeRef.current = selection.getRangeAt(0).cloneRange();
+  }
+
+  function format(command, value = null) {
+    editorRef.current?.focus();
+    const selection = window.getSelection();
+    if (savedRangeRef.current && selection) {
+      selection.removeAllRanges();
+      selection.addRange(savedRangeRef.current);
+    }
+    const applied = document.execCommand(command, false, value);
+    if (command === "hiliteColor" && !applied) document.execCommand("backColor", false, value);
+    rememberSelection();
+  }
+
+  function clearEditor() {
+    if (editorRef.current) editorRef.current.innerHTML = "";
+    setEditingMessageId("");
+    savedRangeRef.current = null;
+  }
+
+  function submit(event) {
+    event.preventDefault();
+    if (!selectedChat || !canParticipate || !editorRef.current) return;
+    const html = sanitizeChatHtml(editorRef.current.innerHTML);
+    const text = editorRef.current.textContent?.trim() || "";
+    if (!text) return;
+    if (editingMessageId) onEditMessage(selectedChat.id, editingMessageId, html, text);
+    else onSend(selectedChat.id, html, text);
+    clearEditor();
+  }
+
+  function editMessage(message) {
+    if (message.senderId !== session.id || !editorRef.current) return;
+    setEditingMessageId(message.id);
+    editorRef.current.innerHTML = chatMessageHtml(message);
+    editorRef.current.focus();
+  }
+
+  const selectedMeta = selectedChat && chatMeta(selectedChat);
 
   return (
     <section className="chat-layout">
       <aside className="chat-contacts-card">
-        <div className="chat-card-head"><p className="eyebrow dark">NOUVELLE DISCUSSION</p><h2>Messagerie</h2><p className="muted">Choisissez un membre inscrit sur le portail.</p></div>
-        <div className="chat-start"><label>Contacter un membre</label><div className="chat-start-row"><select value={contactId} onChange={(event) => setContactId(event.target.value)} disabled={!availableContacts.length}>{availableContacts.map((user) => <option value={user.id} key={user.id}>{user.firstName} {user.lastName} — {ROLES[user.role].label}</option>)}</select><button className="primary" type="button" disabled={!contactId} onClick={() => openChat(contactId)}><MessageSquareText size={16} /> Ouvrir</button></div></div>
-        <div className="referent-contact"><div><p className="eyebrow dark">CONTACT RAPIDE</p><strong>Contacter un Référent SO</strong></div>{referents.length ? referents.map((referent) => <button type="button" key={referent.id} onClick={() => openChat(referent.id)}><span className={`avatar small ${ROLES[referent.role].tone}`}>{initials(referent)}</span><span>{referent.firstName} {referent.lastName}<small>{referent.grade || GRADES[0]}</small></span><Send size={15} /></button>) : <p className="chat-empty-small">Aucun Référent SO disponible.</p>}</div>
-        <div className="conversation-list"><p className="eyebrow dark">MES DISCUSSIONS</p>{myChats.map((chat) => { const other = users.find((user) => user.id === chat.participants.find((id) => id !== session.id)); const lastMessage = chat.messages.at(-1); return <button className={chat.id === selectedChatId ? "active" : ""} type="button" key={chat.id} onClick={() => setSelectedChatId(chat.id)}><span className={`avatar small ${other ? ROLES[other.role].tone : "blue"}`}>{other ? initials(other) : "?"}</span><span><strong>{other ? `${other.firstName} ${other.lastName}` : "Compte indisponible"}</strong><small>{lastMessage?.text || "Nouvelle discussion"}</small></span></button>; })}{!myChats.length && <p className="chat-empty-small">Aucune discussion pour le moment.</p>}</div>
+        <div className="chat-card-head"><p className="eyebrow dark">NOUVELLE DISCUSSION</p><h2>Messagerie</h2><p className="muted">Choisissez un membre ou créez un groupe.</p></div>
+        <div className="chat-start"><label>Contacter un membre</label><div className="chat-start-row"><select value={contactId} onChange={(event) => setContactId(event.target.value)} disabled={!availableContacts.length}>{availableContacts.map((user) => <option value={user.id} key={user.id}>{user.firstName} {user.lastName} — {ROLES[user.role].label}</option>)}</select><button className="primary" type="button" disabled={!contactId} onClick={() => openChat(contactId)}><MessageSquareText size={16} /> Ouvrir</button></div><button className="create-group-toggle" type="button" onClick={() => setGroupOpen((open) => !open)}><UsersRound size={16} /> {groupOpen ? "Fermer la création" : "Créer un groupe"}</button>{groupOpen && <form className="group-form" onSubmit={createGroup}><label>Nom du groupe</label><input value={groupName} onChange={(event) => setGroupName(event.target.value)} maxLength={60} placeholder="Ex. Équipe Alpha" required /><label>Membres du groupe</label><div className="group-member-list">{availableContacts.map((user) => <label key={user.id}><input type="checkbox" checked={groupMembers.includes(user.id)} onChange={() => toggleGroupMember(user.id)} /><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><span>{user.firstName} {user.lastName}<small>{ROLES[user.role].label}</small></span></label>)}</div>{groupError && <p className="form-error">{groupError}</p>}<button className="primary wide" type="submit"><UsersRound size={16} /> Créer le groupe</button></form>}</div>
+        <div className="referent-contact"><div><p className="eyebrow dark">CONTACT RAPIDE</p><strong>Contacter un Référent SO ou un Admin</strong></div>{supportContacts.length ? supportContacts.map((contact) => <button type="button" key={contact.id} onClick={() => openChat(contact.id)}><span className={`avatar small ${ROLES[contact.role].tone}`}>{initials(contact)}</span><span>{contact.firstName} {contact.lastName}<small>{contact.role === "admin" ? "Admin · Contact Référent SO" : `${contact.grade || GRADES[0]} · Référent SO`}</small></span><Send size={15} /></button>) : <p className="chat-empty-small">{isModerator ? "Vous êtes actuellement le contact Référent SO principal." : "Aucun contact Référent SO disponible."}</p>}</div>
+        <div className="conversation-list"><div className="conversation-list-title"><p className="eyebrow dark">{isModerator ? "TOUTES LES DISCUSSIONS" : "MES DISCUSSIONS"}</p>{isModerator && <span>Modération</span>}</div>{visibleChats.map((chat) => { const meta = chatMeta(chat); const lastMessage = chat.messages.at(-1); return <button className={chat.id === selectedChatId ? "active" : ""} type="button" key={chat.id} onClick={() => { setSelectedChatId(chat.id); clearEditor(); }}>{meta.group ? <span className="group-avatar small"><UsersRound size={16} /></span> : meta.moderated ? <span className="group-avatar small"><ShieldCheck size={16} /></span> : <span className={`avatar small ${meta.other ? ROLES[meta.other.role].tone : "blue"}`}>{meta.other ? initials(meta.other) : "?"}</span>}<span><strong>{meta.title}</strong><small>{lastMessage ? chatMessageText(lastMessage) : meta.subtitle}</small></span></button>; })}{!visibleChats.length && <p className="chat-empty-small">Aucune discussion pour le moment.</p>}</div>
       </aside>
       <div className="chat-conversation-card">
-        {selectedChat ? <><div className="conversation-head"><span className={`avatar ${otherParticipant ? ROLES[otherParticipant.role].tone : "blue"}`}>{otherParticipant ? initials(otherParticipant) : "?"}</span><div><strong>{otherParticipant ? `${otherParticipant.firstName} ${otherParticipant.lastName}` : "Compte indisponible"}</strong><small>{otherParticipant ? `${otherParticipant.grade || GRADES[0]} · ${ROLES[otherParticipant.role].label}` : "Discussion conservée"}</small></div></div><div className="chat-messages">{selectedChat.messages.map((item) => <div className={`chat-message ${item.senderId === session.id ? "mine" : "theirs"}`} key={item.id}><p>{item.text}</p><small>{item.senderId === session.id ? "Vous" : item.senderName} · {item.sentAt}</small></div>)}{!selectedChat.messages.length && <div className="chat-welcome"><MessageSquareText size={28} /><strong>Nouvelle discussion</strong><p>Envoyez le premier message.</p></div>}</div><form className="chat-compose" onSubmit={submit}><input value={message} onChange={(event) => setMessage(event.target.value)} maxLength={1000} placeholder="Écrire un message…" required /><button className="primary" type="submit"><Send size={17} /> Envoyer</button></form></> : <div className="chat-no-selection"><MessageSquareText size={36} /><h2>Choisissez une discussion</h2><p>Sélectionnez un membre ou contactez directement un Référent SO.</p></div>}
+        {selectedChat ? <><div className="conversation-head">{selectedMeta.group ? <span className="group-avatar"><UsersRound size={19} /></span> : selectedMeta.moderated ? <span className="group-avatar"><ShieldCheck size={19} /></span> : <span className={`avatar ${selectedMeta.other ? ROLES[selectedMeta.other.role].tone : "blue"}`}>{selectedMeta.other ? initials(selectedMeta.other) : "?"}</span>}<div><strong>{selectedMeta.title}</strong><small>{selectedMeta.subtitle}</small></div><div className="conversation-head-actions">{isModerator && !canParticipate && <span className="moderation-chip"><ShieldCheck size={14} /> Consultation de modération</span>}<button className="delete-conversation" type="button" onClick={() => onDeleteChat(selectedChat.id)}><Trash2 size={16} /> Supprimer</button></div></div><div className="chat-messages">{selectedChat.messages.map((item) => { const own = item.senderId === session.id; return <div className={`chat-message ${own ? "mine" : "theirs"}`} key={item.id}><div className="chat-bubble" dangerouslySetInnerHTML={{ __html: chatMessageHtml(item) }} /><small>{own ? "Vous" : item.senderName} · {item.sentAt}{item.editedAt ? " · modifié" : ""}</small>{(own || isModerator) && <div className="chat-message-actions">{own && <button type="button" onClick={() => editMessage(item)}><Pencil size={13} /> Modifier</button>}<button type="button" onClick={() => onDeleteMessage(selectedChat.id, item.id)}><Trash2 size={13} /> Supprimer</button></div>}</div>; })}{!selectedChat.messages.length && <div className="chat-welcome"><MessageSquareText size={28} /><strong>Nouvelle discussion</strong><p>Envoyez le premier message.</p></div>}</div>{canParticipate ? <form className="chat-compose rich" onSubmit={submit}><div className="chat-toolbar"><button type="button" title="Gras" onMouseDown={(event) => { event.preventDefault(); format("bold"); }}><b>B</b></button><button type="button" title="Italique" onMouseDown={(event) => { event.preventDefault(); format("italic"); }}><i>I</i></button><button type="button" title="Souligné" onMouseDown={(event) => { event.preventDefault(); format("underline"); }}><u>U</u></button><button type="button" title="Barré" onMouseDown={(event) => { event.preventDefault(); format("strikeThrough"); }}><s>S</s></button><label title="Couleur du texte"><span>A</span><input type="color" defaultValue="#356ad2" onMouseDown={rememberSelection} onChange={(event) => format("foreColor", event.target.value)} /></label><label title="Surlignage"><span className="highlight-tool">A</span><input type="color" defaultValue="#fff1a8" onMouseDown={rememberSelection} onChange={(event) => format("hiliteColor", event.target.value)} /></label><button type="button" title="Effacer la mise en forme" onMouseDown={(event) => { event.preventDefault(); format("removeFormat"); }}>Tx</button>{editingMessageId && <button className="cancel-edit" type="button" onClick={clearEditor}>Annuler la modification</button>}</div><div className="chat-compose-row"><div className="chat-editor" ref={editorRef} contentEditable suppressContentEditableWarning data-placeholder={editingMessageId ? "Modifier le message…" : "Écrire un message…"} onKeyUp={rememberSelection} onMouseUp={rememberSelection} onInput={rememberSelection} /><button className="primary" type="submit"><Send size={17} /> {editingMessageId ? "Enregistrer" : "Envoyer"}</button></div></form> : <div className="moderation-readonly"><ShieldCheck size={16} /> Vous consultez cette discussion en tant que modérateur.</div>}</> : <div className="chat-no-selection"><MessageSquareText size={36} /><h2>Choisissez une discussion</h2><p>Sélectionnez un membre, créez un groupe ou contactez un Référent SO.</p></div>}
       </div>
     </section>
   );
@@ -673,17 +778,41 @@ function App() {
     const existingChat = chats.find((chat) => chat.participants.length === 2 && chat.participants.includes(session.id) && chat.participants.includes(otherUserId));
     if (existingChat) return existingChat.id;
     const chatId = crypto.randomUUID();
-    setChats((current) => [{ id: chatId, participants: [session.id, otherUserId], messages: [], updatedAt: new Date().toISOString() }, ...current]);
+    setChats((current) => [{ id: chatId, type: "direct", participants: [session.id, otherUserId], messages: [], updatedAt: new Date().toISOString() }, ...current]);
     return chatId;
   }
-  function sendChatMessage(chatId, text) {
+  function createChatGroup(name, memberIds) {
+    const validMemberIds = [...new Set(memberIds)].filter((id) => users.some((user) => user.id === id && user.id !== session.id && !user.blocked));
+    if (!name || !validMemberIds.length) return "";
+    const chatId = crypto.randomUUID();
+    setChats((current) => [{ id: chatId, type: "group", name, createdBy: session.id, participants: [session.id, ...validMemberIds], messages: [], updatedAt: new Date().toISOString() }, ...current]);
+    return chatId;
+  }
+  function sendChatMessage(chatId, html, text) {
     setChats((current) => {
       const chat = current.find((item) => item.id === chatId && item.participants.includes(session.id));
       if (!chat) return current;
-      const message = { id: crypto.randomUUID(), senderId: session.id, senderName: `${session.firstName} ${session.lastName}`, text, sentAt: new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date()) };
+      const message = { id: crypto.randomUUID(), senderId: session.id, senderName: `${session.firstName} ${session.lastName}`, html: sanitizeChatHtml(html), text, sentAt: new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date()) };
       const updatedChat = { ...chat, messages: [...chat.messages, message], updatedAt: new Date().toISOString() };
       return [updatedChat, ...current.filter((item) => item.id !== chatId)];
     });
+  }
+  function editChatMessage(chatId, messageId, html, text) {
+    setChats((current) => current.map((chat) => chat.id !== chatId ? chat : { ...chat, messages: chat.messages.map((message) => message.id === messageId && message.senderId === session.id ? { ...message, html: sanitizeChatHtml(html), text, editedAt: new Date().toISOString() } : message), updatedAt: new Date().toISOString() }));
+  }
+  function deleteChatMessage(chatId, messageId) {
+    const chat = chats.find((item) => item.id === chatId);
+    const message = chat?.messages.find((item) => item.id === messageId);
+    const canModerate = ["admin", "referent"].includes(session.role);
+    if (!message || (message.senderId !== session.id && !canModerate) || !confirm("Supprimer ce message ?")) return;
+    setChats((current) => current.map((item) => item.id === chatId ? { ...item, messages: item.messages.filter((entry) => entry.id !== messageId), updatedAt: new Date().toISOString() } : item));
+  }
+  function deleteChat(chatId) {
+    const chat = chats.find((item) => item.id === chatId);
+    const canModerate = ["admin", "referent"].includes(session.role);
+    if (!chat || (!chat.participants.includes(session.id) && !canModerate) || !confirm("Supprimer définitivement cette conversation et tous ses messages ?")) return;
+    setChats((current) => current.filter((item) => item.id !== chatId));
+    flash("La conversation a été supprimée.");
   }
   function toggleGroup(group) { setOpenGroups((current) => ({ ...current, [group]: !current[group] })); }
   function login(email, password) {
@@ -774,7 +903,7 @@ function App() {
           <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
           <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>État du compte</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.email}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td><RoleBadge role={user.role} /></td><td>{user.role === "admin" ? <span className="account-state active"><UserCheck size={15} /> Compte actif</span> : <button className={`account-state ${user.blocked ? "blocked" : "active"}`} type="button" onClick={() => toggleAccountBlock(user)}>{user.blocked ? <UserX size={15} /> : <UserCheck size={15} />}{user.blocked ? "Compte bloqué" : "Compte actif"}</button>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title="Modifier" onClick={() => setModal(user)}><Pencil size={17} /></button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
         </section>
-        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onSend={sendChatMessage} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} onSuccess={flash} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} />}
+        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} onSuccess={flash} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} />}
       </main>
       {notice && <div className="toast"><BadgeCheck size={19} />{notice}</div>}
       {modal && <UserModal actor={session} editing={modal.id ? modal : null} onClose={() => setModal(null)} onSave={saveUser} />}
