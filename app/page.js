@@ -32,11 +32,13 @@ const ROLES = {
   officer: { label: "Sous-Officier", short: "SO", tone: "green" },
 };
 
+const GRADES = ["Sergent", "Sergent-Chef", "Adjudant", "Adjudant-Chef", "Major"];
+
 const INITIAL_USERS = [
-  { id: "admin-1", firstName: "Camille", lastName: "Martin", email: "admin@portail-so.fr", role: "admin", password: "Admin2026!", createdAt: "16 juil. 2026" },
-  { id: "ref-1", firstName: "Thomas", lastName: "Bernard", email: "t.bernard@portail-so.fr", role: "referent", password: "Referent2026!", createdAt: "14 juil. 2026" },
-  { id: "senior-1", firstName: "Sophie", lastName: "Dubois", email: "s.dubois@portail-so.fr", role: "senior", password: "SousOff2026!", presence: "present", createdAt: "12 juil. 2026" },
-  { id: "officer-1", firstName: "Julien", lastName: "Moreau", email: "j.moreau@portail-so.fr", role: "officer", password: "SousOff2026!", presence: "present", createdAt: "9 juil. 2026" },
+  { id: "admin-1", firstName: "Camille", lastName: "Martin", email: "admin@portail-so.fr", grade: "Major", role: "admin", password: "Admin2026!", createdAt: "16 juil. 2026" },
+  { id: "ref-1", firstName: "Thomas", lastName: "Bernard", email: "t.bernard@portail-so.fr", grade: "Adjudant-Chef", role: "referent", password: "Referent2026!", createdAt: "14 juil. 2026" },
+  { id: "senior-1", firstName: "Sophie", lastName: "Dubois", email: "s.dubois@portail-so.fr", grade: "Adjudant", role: "senior", password: "SousOff2026!", presence: "present", createdAt: "12 juil. 2026" },
+  { id: "officer-1", firstName: "Julien", lastName: "Moreau", email: "j.moreau@portail-so.fr", grade: "Sergent-Chef", role: "officer", password: "SousOff2026!", presence: "present", createdAt: "9 juil. 2026" },
 ];
 
 const STORAGE_KEY = "portail-so-users-v1";
@@ -123,7 +125,7 @@ function Login({ onLogin, error }) {
 
 function UserModal({ actor, editing, onClose, onSave }) {
   const allowedRoles = actor.role === "admin" ? ["referent", "senior", "officer"] : ["senior", "officer"];
-  const [form, setForm] = useState(editing || { firstName: "", lastName: "", email: "", role: allowedRoles[0], password: "", presence: "present" });
+  const [form, setForm] = useState(editing || { firstName: "", lastName: "", email: "", grade: GRADES[0], role: allowedRoles[0], password: "", presence: "present" });
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
 
   return (
@@ -139,6 +141,7 @@ function UserModal({ actor, editing, onClose, onSave }) {
             <div><label>Nom</label><input value={form.lastName} onChange={(e) => set("lastName", e.target.value)} required /></div>
           </div>
           <label>Adresse e-mail</label><input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} required />
+          <label>Grade</label><select value={form.grade || GRADES[0]} onChange={(e) => set("grade", e.target.value)} required>{GRADES.map((grade) => <option key={grade} value={grade}>{grade}</option>)}</select>
           <label>Niveau d’accès</label>
           <select value={form.role} onChange={(e) => set("role", e.target.value)} disabled={editing && !allowedRoles.includes(editing.role)}>
             {(allowedRoles.includes(form.role) ? allowedRoles : [form.role]).map((role) => <option key={role} value={role}>{ROLES[role].label}</option>)}
@@ -164,6 +167,7 @@ function ProfileModal({ user, onClose, onSave }) {
         <form onSubmit={(event) => { event.preventDefault(); onSave(form); }}>
           <div className="form-grid"><div><label>Prénom</label><input value={form.firstName} onChange={(event) => set("firstName", event.target.value)} required /></div><div><label>Nom</label><input value={form.lastName} onChange={(event) => set("lastName", event.target.value)} required /></div></div>
           <label>Adresse e-mail</label><input type="email" value={form.email} onChange={(event) => set("email", event.target.value)} required />
+          <label>Grade</label><div className="readonly-grade"><span>{user.grade || GRADES[0]}</span><small>Le grade est géré par un responsable.</small></div>
           <label>Niveau d’accès</label><div className="readonly-role"><RoleBadge role={user.role} /><span>Ce niveau est géré par un responsable.</span></div>
           <label>Nouveau mot de passe <span className="optional">(facultatif)</span></label><input type="password" value={form.password} onChange={(event) => set("password", event.target.value)} minLength={8} placeholder="Laisser vide pour conserver le mot de passe actuel" />
           <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Annuler</button><button type="submit" className="primary">Enregistrer mon profil</button></div>
@@ -183,12 +187,12 @@ function PresencePanel({ users, onChange }) {
         <div><p className="eyebrow dark">SUIVI DE L’ÉQUIPE</p><h2>Tableau des présences</h2><p className="muted">Mettez à jour la situation des Sous-Officiers et Sous-Officiers Supérieurs.</p></div>
         <div className="presence-counts"><span className="present"><UserCheck size={17} /><strong>{presentCount}</strong> présent{presentCount > 1 ? "s" : ""}</span><span className="absent"><UserX size={17} /><strong>{team.length - presentCount}</strong> absent{team.length - presentCount > 1 ? "s" : ""}</span></div>
       </div>
-      <div className="table-wrap"><table className="presence-table"><thead><tr><th>Utilisateur</th><th>Grade</th><th>Situation</th><th>Mettre à jour</th></tr></thead><tbody>
+      <div className="table-wrap"><table className="presence-table"><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>Situation</th><th>Mettre à jour</th></tr></thead><tbody>
         {team.map((user) => {
           const isPresent = user.presence !== "absent";
-          return <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.email}</small></div></div></td><td><RoleBadge role={user.role} /></td><td><span className={`presence-status ${isPresent ? "present" : "absent"}`}><i />{isPresent ? "Présent" : "Absent"}</span></td><td><div className="presence-actions"><button className={isPresent ? "selected present" : ""} onClick={() => onChange(user.id, "present")}><UserCheck size={16} /> Présent</button><button className={!isPresent ? "selected absent" : ""} onClick={() => onChange(user.id, "absent")}><UserX size={16} /> Absent</button></div></td></tr>;
+          return <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.email}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td><RoleBadge role={user.role} /></td><td><span className={`presence-status ${isPresent ? "present" : "absent"}`}><i />{isPresent ? "Présent" : "Absent"}</span></td><td><div className="presence-actions"><button className={isPresent ? "selected present" : ""} onClick={() => onChange(user.id, "present")}><UserCheck size={16} /> Présent</button><button className={!isPresent ? "selected absent" : ""} onClick={() => onChange(user.id, "absent")}><UserX size={16} /> Absent</button></div></td></tr>;
         })}
-        {!team.length && <tr><td colSpan="4" className="empty-presence">Aucun Sous-Officier à afficher.</td></tr>}
+        {!team.length && <tr><td colSpan="5" className="empty-presence">Aucun Sous-Officier à afficher.</td></tr>}
       </tbody></table></div>
     </section>
   );
@@ -284,6 +288,7 @@ function App() {
     const loadedUsers = stored ? JSON.parse(stored) : INITIAL_USERS;
     setUsers(loadedUsers.map(({ discordId: _discardedDiscordId, status: _discardedStatus, ...user }) => ({
       ...user,
+      grade: user.grade || GRADES[0],
       ...(["senior", "officer"].includes(user.role) ? { presence: user.presence || "present" } : {}),
     })));
     const savedTheme = localStorage.getItem(THEME_KEY) === "dark";
@@ -355,7 +360,7 @@ function App() {
           <MenuGroup title="Globale" icon={Send} open={openGroups.global} onToggle={() => toggleGroup("global")}><button className={`menu-item ${activeSection === "recommendation" ? "active" : ""}`} onClick={() => setActiveSection("recommendation")}><Medal size={17} /> Recommandation</button><button className={`menu-item ${activeSection === "pcs_exp" ? "active" : ""}`} onClick={() => setActiveSection("pcs_exp")}><ClipboardCheck size={17} /> Recommandation PCS EXP</button><button className={`menu-item ${activeSection === "observation_hdr" ? "active" : ""}`} onClick={() => setActiveSection("observation_hdr")}><MessageSquareText size={17} /> Observation HDR</button></MenuGroup>
           {["admin", "referent", "senior"].includes(session.role) && <MenuGroup title="Sous-Officier Supérieur" icon={BadgeCheck} open={openGroups.senior} onToggle={() => toggleGroup("senior")}><button className={`menu-item ${activeSection === "observation_so" ? "active" : ""}`} onClick={() => setActiveSection("observation_so")}><MessageSquareText size={17} /> Observation SO</button></MenuGroup>}
         </nav>
-        <button className="profile-card" onClick={() => setProfileOpen(true)} title="Personnaliser mon compte"><div className={`avatar ${ROLES[session.role].tone}`}>{initials(session)}</div><div><strong>{session.firstName} {session.lastName}</strong><small>{ROLES[session.role].label}</small></div><ChevronDown size={16} /></button>
+        <button className="profile-card" onClick={() => setProfileOpen(true)} title="Personnaliser mon compte"><div className={`avatar ${ROLES[session.role].tone}`}>{initials(session)}</div><div><strong>{session.firstName} {session.lastName}</strong><small>{session.grade || GRADES[0]} · {ROLES[session.role].label}</small></div><ChevronDown size={16} /></button>
         <div className="sidebar-actions">
           <button className="logout" onClick={() => setSession(null)}><LogOut size={18} /><span>Se déconnecter</span></button>
           <label className="theme-toggle" title={darkMode ? "Passer en mode clair" : "Passer en mode sombre"}>
@@ -379,7 +384,7 @@ function App() {
 
         <section className="accounts-card">
           <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
-          <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Niveau d’accès</th><th>Présence</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.email}</small></div></div></td><td><RoleBadge role={user.role} /></td><td>{["senior", "officer"].includes(user.role) ? <span className={`presence-status ${user.presence === "absent" ? "absent" : "present"}`}><i />{user.presence === "absent" ? "Absent" : "Présent"}</span> : <span className="not-applicable">Non concerné</span>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title="Modifier" onClick={() => setModal(user)}><Pencil size={17} /></button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
+          <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>Présence</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.email}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td><RoleBadge role={user.role} /></td><td>{["senior", "officer"].includes(user.role) ? <span className={`presence-status ${user.presence === "absent" ? "absent" : "present"}`}><i />{user.presence === "absent" ? "Absent" : "Présent"}</span> : <span className="not-applicable">Non concerné</span>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title="Modifier" onClick={() => setModal(user)}><Pencil size={17} /></button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
         </section>
         </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={flash} type={activeSection} />}
       </main>
