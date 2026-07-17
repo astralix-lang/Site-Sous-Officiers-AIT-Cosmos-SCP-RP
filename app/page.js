@@ -190,7 +190,7 @@ function ProfileModal({ user, onClose, onSave }) {
         <div className="profile-modal-head"><div className={`avatar profile-avatar ${ROLES[user.role].tone}`}>{initials(user)}</div><div><p className="eyebrow dark">MON COMPTE</p><h2>Personnaliser mon profil</h2><p className="muted">Mettez à jour vos informations personnelles.</p></div></div>
         <form onSubmit={(event) => { event.preventDefault(); onSave(form); }}>
           <div className="form-grid"><div><label>Prénom</label><input value={form.firstName} onChange={(event) => set("firstName", event.target.value)} required /></div><div><label>Nom</label><input value={form.lastName} onChange={(event) => set("lastName", event.target.value)} required /></div></div>
-          <label>Adresse e-mail</label><input type="email" value={form.email} onChange={(event) => set("email", event.target.value)} required />
+          {["admin", "referent"].includes(user.role) && <><label>Adresse e-mail</label><input type="email" value={form.email} onChange={(event) => set("email", event.target.value)} required /></>}
           <label>Grade</label>{user.role === "admin" ? <select value={form.grade || GRADES[0]} onChange={(event) => set("grade", event.target.value)} required>{GRADES.map((grade) => <option key={grade} value={grade}>{grade}</option>)}</select> : <div className="readonly-grade"><span>{user.grade || GRADES[0]}</span><small>Le grade est géré par un Admin ou un Référent SO.</small></div>}
           <label>Niveau d’accès</label><div className="readonly-role"><RoleBadge role={user.role} /><span>Ce niveau est géré par un responsable.</span></div>
           <label>Nouveau mot de passe <span className="optional">(facultatif)</span></label><input type="password" value={form.password} onChange={(event) => set("password", event.target.value)} minLength={8} placeholder="Laisser vide pour conserver le mot de passe actuel" />
@@ -254,7 +254,7 @@ function SergeantReportPanel({ users, session, onSuccess }) {
             globalOpinion: form.globalOpinion,
             conclusion: form.conclusion,
           },
-          submittedBy: { name: `${session.firstName} ${session.lastName}`, email: session.email, role: ROLES[session.role].label },
+          submittedBy: { name: `${session.firstName} ${session.lastName}`, role: ROLES[session.role].label },
         }),
       });
       const result = await response.json();
@@ -318,7 +318,6 @@ function TransmissionPanel({ session, onSuccess, type }) {
           values: form,
           submittedBy: {
             name: `${session.firstName} ${session.lastName}`,
-            email: session.email,
             role: ROLES[session.role].label,
           },
         }),
