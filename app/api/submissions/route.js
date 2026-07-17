@@ -4,34 +4,29 @@ const TYPE_CONFIG = {
     color: 0x2d66d5,
     envKey: "DISCORD_WEBHOOK_RECOMMENDATION",
     aitLabel: "AIT recommandé",
-    description: "Recommandation transmise pour valoriser le parcours d’un AIT.",
   },
   pcs_exp: {
     title: "🎯 Nouvelle recommandation PCS EXP",
     color: 0xb97918,
     envKey: "DISCORD_WEBHOOK_PCS_EXP",
     aitLabel: "AIT recommandé",
-    description: "Recommandation transmise pour le parcours PCS EXP.",
   },
   observation_hdr: {
     title: "📝 Nouvelle observation HDR",
     color: 0x20896b,
     envKey: "DISCORD_WEBHOOK_OBSERVATION_HDR",
     aitLabel: "AIT observé",
-    description: "Compte rendu d’une observation HDR.",
   },
   observation_so: {
     title: "👁️ Nouvelle observation SO",
     color: 0x7957c8,
     envKey: "DISCORD_WEBHOOK_OBSERVATION_SO",
     aitLabel: "Nom de l’AIT",
-    description: "Compte rendu d’une observation concernant un Sous-Officier.",
   },
   sergeant_report: {
     title: "📋 Rapport nouveau Sous-Officier",
     color: 0xb97918,
     envKey: "DISCORD_WEBHOOK_SERGEANT_REPORT",
-    description: "Bilan de la semaine de test d’un nouveau Sergent.",
   },
 };
 
@@ -88,10 +83,14 @@ export async function POST(request) {
         { name: `👤 ${config.aitLabel}`, value: aitName, inline: false },
         { name: body.type === "observation_hdr" ? "🎖️ S-OFF/-SUP faisant l’observation" : body.type === "observation_so" ? "🎖️ S-OFF SUP faisant l’observation" : "🎖️ S-OFF/-SUP à l’origine", value: author, inline: false },
         ...(isObservation
-          ? [{ name: "📌 Nature de l’observation", value: observation === "Négative" ? "❌ **Négative**" : "✅ **Positive**", inline: false }, { name: "📝 Raison", value: reason, inline: false }]
+          ? [{ name: "📌 Nature de l’observation", value: observation === "Négative" ? "❌ Négative" : "✅ Positive", inline: false }, { name: "📝 Raison", value: reason, inline: false }]
           : [{ name: "📝 Raison", value: reason, inline: false }]),
       ];
     }
+
+    fields = fields.flatMap((field, index) => index === fields.length - 1
+      ? [field]
+      : [field, { name: "\u200b", value: "━━━━━━━━━━━━━━━━━━━━", inline: false }]);
 
     const senderName = clean(body.submittedBy?.name, 100) || "Utilisateur du portail";
     const senderRole = clean(body.submittedBy?.role, 100);
@@ -105,7 +104,7 @@ export async function POST(request) {
         embeds: [{
           author: { name: "🛡️ Portail Sous-Officiers • Transmission officielle" },
           title: config.title,
-          description: `${config.description}\n\n━━━━━━━━━━━━━━━━━━━━`,
+          description: "━━━━━━━━━━━━━━━━━━━━",
           color: embedColor,
           fields,
           footer: { text: `🔒 Transmis par ${senderName}${senderRole ? ` • ${senderRole}` : ""}${senderEmail ? ` • ${senderEmail}` : ""}` },
