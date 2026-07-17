@@ -13,6 +13,7 @@ import {
   Medal,
   MessageSquareText,
   Moon,
+  Paperclip,
   Pencil,
   Plus,
   RotateCcw,
@@ -21,6 +22,7 @@ import {
   ShieldCheck,
   Sun,
   Trash2,
+  Download,
   UserCheck,
   UserRound,
   UserX,
@@ -68,6 +70,14 @@ const ADMIN_RECOVERY_KEY = "portail-so-admin-recovery-v1";
 const QUOTA_KEY = "portail-so-quotas-v1";
 const MISSIONS_KEY = "portail-so-missions-v1";
 const CHAT_KEY = "portail-so-chats-v1";
+const CHAT_ATTACHMENT_MAX_SIZE = 1024 * 1024;
+const CHAT_ATTACHMENT_MAX_COUNT = 3;
+const CHAT_ATTACHMENT_TYPES = new Set([
+  "image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf", "text/plain",
+  "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+]);
 const DEFAULT_QUOTAS = { targets: { recommendation: 1, pcs_exp: 1, observations: 1, mission_internal: 0 }, counts: {}, exemptions: {} };
 const QUOTA_TYPES = ["recommendation", "pcs_exp", "observation_hdr", "observation_so"];
 const REPORT_CONCLUSIONS = [
@@ -139,6 +149,17 @@ function chatMessageText(message) {
   const container = document.createElement("div");
   container.innerHTML = sanitizeChatHtml(message.html);
   return container.textContent || "";
+}
+
+function formatFileSize(size) {
+  return size >= 1024 * 1024 ? `${(size / (1024 * 1024)).toFixed(1)} Mo` : `${Math.max(1, Math.round(size / 1024))} Ko`;
+}
+
+function safeAttachmentUrl(attachment) {
+  const match = /^data:([^;,]+);base64,/i.exec(String(attachment?.dataUrl || ""));
+  if (!match) return "";
+  const mimeType = match[1].toLowerCase();
+  return CHAT_ATTACHMENT_TYPES.has(mimeType) || mimeType === "application/octet-stream" ? attachment.dataUrl : "";
 }
 
 function RoleBadge({ role }) {
@@ -349,20 +370,23 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onSend, onEd
   const availableContacts = users.filter((user) => user.id !== session.id && !user.blocked);
   const supportContacts = availableContacts.filter((user) => ["admin", "referent"].includes(user.role));
   const visibleChats = useMemo(() => isModerator ? chats : chats.filter((chat) => chat.participants.includes(session.id)), [chats, isModerator, session.id]);
-  const [selectedChatId, setSelectedChatId] = useState(visibleChats[0]?.id || "");
+  const [selectedChatId, setSelectedChatId] = useState("");
   const [contactId, setContactId] = useState(availableContacts[0]?.id || "");
   const [groupOpen, setGroupOpen] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [groupMembers, setGroupMembers] = useState([]);
   const [groupError, setGroupError] = useState("");
   const [editingMessageId, setEditingMessageId] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState([]);
+  const [attachmentError, setAttachmentError] = useState("");
   const editorRef = useRef(null);
+  const attachmentInputRef = useRef(null);
   const savedRangeRef = useRef(null);
   const selectedChat = visibleChats.find((chat) => chat.id === selectedChatId);
   const canParticipate = selectedChat?.participants.includes(session.id);
 
   useEffect(() => {
-    if (!visibleChats.some((chat) => chat.id === selectedChatId)) setSelectedChatId(visibleChats[0]?.id || "");
+    if (selectedChatId && !visibleChats.some((chat) => chat.id === selectedChatId)) setSelectedChatId("");
   }, [visibleChats, selectedChatId]);
 
   useEffect(() => {
@@ -421,9 +445,54 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onSend, onEd
     rememberSelection();
   }
 
+  async function addAttachments(event) {
+    const files = [...(event.target.files || [])];
+    const remaining = CHAT_ATTACHMENT_MAX_COUNT - pendingAttachments.length;
+    if (!remaining) {
+      setAttachmentError(`Maximum ${CHAT_ATTACHMENT_MAX_COUNT} pièces jointes par message.`);
+      event.target.value = "";
+      return;
+    }
+    const accepted = [];
+    let error = files.length > remaining ? `Seules ${remaining} pièce${remaining > 1 ? "s" : ""} supplémentaire${remaining > 1 ? "s" : ""} ont été ajoutées.` : "";
+    for (const file of files.slice(0, remaining)) {
+      const allowedExtension = /\.(png|jpe?g|webp|gif|pdf|txt|docx?|xlsx?|pptx?)$/i.test(file.name);
+      if (!CHAT_ATTACHMENT_TYPES.has(file.type) && !allowedExtension) {
+        error = `${file.name} : type de fichier non autorisé.`;
+        continue;
+      }
+      if (file.size > CHAT_ATTACHMENT_MAX_SIZE) {
+        error = `${file.name} dépasse la limite de 1 Mo.`;
+        continue;
+      }
+      try {
+        let dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        if (String(dataUrl).startsWith("data:;base64,")) dataUrl = String(dataUrl).replace("data:;base64,", "data:application/octet-stream;base64,");
+        accepted.push({ id: crypto.randomUUID(), name: file.name, type: file.type || "application/octet-stream", size: file.size, dataUrl });
+      } catch {
+        error = `${file.name} n’a pas pu être ajouté.`;
+      }
+    }
+    if (accepted.length) setPendingAttachments((current) => [...current, ...accepted]);
+    setAttachmentError(error);
+    event.target.value = "";
+  }
+
+  function removePendingAttachment(attachmentId) {
+    setPendingAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
+    setAttachmentError("");
+  }
+
   function clearEditor() {
     if (editorRef.current) editorRef.current.innerHTML = "";
     setEditingMessageId("");
+    setPendingAttachments([]);
+    setAttachmentError("");
     savedRangeRef.current = null;
   }
 
@@ -432,14 +501,16 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onSend, onEd
     if (!selectedChat || !canParticipate || !editorRef.current) return;
     const html = sanitizeChatHtml(editorRef.current.innerHTML);
     const text = editorRef.current.textContent?.trim() || "";
-    if (!text) return;
+    if (!text && (!pendingAttachments.length || editingMessageId)) return;
     if (editingMessageId) onEditMessage(selectedChat.id, editingMessageId, html, text);
-    else onSend(selectedChat.id, html, text);
+    else onSend(selectedChat.id, html, text, pendingAttachments);
     clearEditor();
   }
 
   function editMessage(message) {
     if (message.senderId !== session.id || !editorRef.current) return;
+    setPendingAttachments([]);
+    setAttachmentError("");
     setEditingMessageId(message.id);
     editorRef.current.innerHTML = chatMessageHtml(message);
     editorRef.current.focus();
@@ -453,10 +524,30 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onSend, onEd
         <div className="chat-card-head"><p className="eyebrow dark">NOUVELLE DISCUSSION</p><h2>Messagerie</h2><p className="muted">Choisissez un membre ou créez un groupe.</p></div>
         <div className="chat-start"><label>Contacter un membre</label><div className="chat-start-row"><select value={contactId} onChange={(event) => setContactId(event.target.value)} disabled={!availableContacts.length}>{availableContacts.map((user) => <option value={user.id} key={user.id}>{user.firstName} {user.lastName} — {ROLES[user.role].label}</option>)}</select><button className="primary" type="button" disabled={!contactId} onClick={() => openChat(contactId)}><MessageSquareText size={16} /> Ouvrir</button></div><button className="create-group-toggle" type="button" onClick={() => setGroupOpen((open) => !open)}><UsersRound size={16} /> {groupOpen ? "Fermer la création" : "Créer un groupe"}</button>{groupOpen && <form className="group-form" onSubmit={createGroup}><label>Nom du groupe</label><input value={groupName} onChange={(event) => setGroupName(event.target.value)} maxLength={60} placeholder="Ex. Équipe Alpha" required /><label>Membres du groupe</label><div className="group-member-list">{availableContacts.map((user) => <label key={user.id}><input type="checkbox" checked={groupMembers.includes(user.id)} onChange={() => toggleGroupMember(user.id)} /><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><span>{user.firstName} {user.lastName}<small>{ROLES[user.role].label}</small></span></label>)}</div>{groupError && <p className="form-error">{groupError}</p>}<button className="primary wide" type="submit"><UsersRound size={16} /> Créer le groupe</button></form>}</div>
         <div className="referent-contact"><div><p className="eyebrow dark">CONTACT RAPIDE</p><strong>Contacter un Référent SO ou un Admin</strong></div>{supportContacts.length ? supportContacts.map((contact) => <button type="button" key={contact.id} onClick={() => openChat(contact.id)}><span className={`avatar small ${ROLES[contact.role].tone}`}>{initials(contact)}</span><span>{contact.firstName} {contact.lastName}<small>{contact.role === "admin" ? "Admin · Contact Référent SO" : `${contact.grade || GRADES[0]} · Référent SO`}</small></span><Send size={15} /></button>) : <p className="chat-empty-small">{isModerator ? "Vous êtes actuellement le contact Référent SO principal." : "Aucun contact Référent SO disponible."}</p>}</div>
-        <div className="conversation-list"><div className="conversation-list-title"><p className="eyebrow dark">{isModerator ? "TOUTES LES DISCUSSIONS" : "MES DISCUSSIONS"}</p>{isModerator && <span>Modération</span>}</div>{visibleChats.map((chat) => { const meta = chatMeta(chat); const lastMessage = chat.messages.at(-1); return <button className={chat.id === selectedChatId ? "active" : ""} type="button" key={chat.id} onClick={() => { setSelectedChatId(chat.id); clearEditor(); }}>{meta.group ? <span className="group-avatar small"><UsersRound size={16} /></span> : meta.moderated ? <span className="group-avatar small"><ShieldCheck size={16} /></span> : <span className={`avatar small ${meta.other ? ROLES[meta.other.role].tone : "blue"}`}>{meta.other ? initials(meta.other) : "?"}</span>}<span><strong>{meta.title}</strong><small>{lastMessage ? chatMessageText(lastMessage) : meta.subtitle}</small></span></button>; })}{!visibleChats.length && <p className="chat-empty-small">Aucune discussion pour le moment.</p>}</div>
+        <div className="conversation-picker"><div className="conversation-list-title"><p className="eyebrow dark">{isModerator ? "TOUTES LES DISCUSSIONS" : "MES DISCUSSIONS"}</p>{isModerator && <span>Modération</span>}</div><label>Accéder à une discussion</label><select value={selectedChatId} onChange={(event) => { clearEditor(); setSelectedChatId(event.target.value); }}><option value="">Choisir une discussion…</option>{visibleChats.map((chat) => <option value={chat.id} key={chat.id}>{chat.type === "group" ? "Groupe · " : "Discussion · "}{chatMeta(chat).title}</option>)}</select>{selectedChat ? <small>{selectedChat.messages.length} message{selectedChat.messages.length > 1 ? "s" : ""}{selectedChat.messages.at(-1)?.attachments?.length ? ` · ${selectedChat.messages.at(-1).attachments.length} pièce(s) jointe(s) dans le dernier message` : ""}</small> : <p className="chat-empty-small">Aucune discussion sélectionnée.</p>}</div>
       </aside>
       <div className="chat-conversation-card">
-        {selectedChat ? <><div className="conversation-head">{selectedMeta.group ? <span className="group-avatar"><UsersRound size={19} /></span> : selectedMeta.moderated ? <span className="group-avatar"><ShieldCheck size={19} /></span> : <span className={`avatar ${selectedMeta.other ? ROLES[selectedMeta.other.role].tone : "blue"}`}>{selectedMeta.other ? initials(selectedMeta.other) : "?"}</span>}<div><strong>{selectedMeta.title}</strong><small>{selectedMeta.subtitle}</small></div><div className="conversation-head-actions">{isModerator && !canParticipate && <span className="moderation-chip"><ShieldCheck size={14} /> Consultation de modération</span>}<button className="delete-conversation" type="button" onClick={() => onDeleteChat(selectedChat.id)}><Trash2 size={16} /> Supprimer</button></div></div><div className="chat-messages">{selectedChat.messages.map((item) => { const own = item.senderId === session.id; return <div className={`chat-message ${own ? "mine" : "theirs"}`} key={item.id}><div className="chat-bubble" dangerouslySetInnerHTML={{ __html: chatMessageHtml(item) }} /><small>{own ? "Vous" : item.senderName} · {item.sentAt}{item.editedAt ? " · modifié" : ""}</small>{(own || isModerator) && <div className="chat-message-actions">{own && <button type="button" onClick={() => editMessage(item)}><Pencil size={13} /> Modifier</button>}<button type="button" onClick={() => onDeleteMessage(selectedChat.id, item.id)}><Trash2 size={13} /> Supprimer</button></div>}</div>; })}{!selectedChat.messages.length && <div className="chat-welcome"><MessageSquareText size={28} /><strong>Nouvelle discussion</strong><p>Envoyez le premier message.</p></div>}</div>{canParticipate ? <form className="chat-compose rich" onSubmit={submit}><div className="chat-toolbar"><button type="button" title="Gras" onMouseDown={(event) => { event.preventDefault(); format("bold"); }}><b>B</b></button><button type="button" title="Italique" onMouseDown={(event) => { event.preventDefault(); format("italic"); }}><i>I</i></button><button type="button" title="Souligné" onMouseDown={(event) => { event.preventDefault(); format("underline"); }}><u>U</u></button><button type="button" title="Barré" onMouseDown={(event) => { event.preventDefault(); format("strikeThrough"); }}><s>S</s></button><label title="Couleur du texte"><span>A</span><input type="color" defaultValue="#356ad2" onMouseDown={rememberSelection} onChange={(event) => format("foreColor", event.target.value)} /></label><label title="Surlignage"><span className="highlight-tool">A</span><input type="color" defaultValue="#fff1a8" onMouseDown={rememberSelection} onChange={(event) => format("hiliteColor", event.target.value)} /></label><button type="button" title="Effacer la mise en forme" onMouseDown={(event) => { event.preventDefault(); format("removeFormat"); }}>Tx</button>{editingMessageId && <button className="cancel-edit" type="button" onClick={clearEditor}>Annuler la modification</button>}</div><div className="chat-compose-row"><div className="chat-editor" ref={editorRef} contentEditable suppressContentEditableWarning data-placeholder={editingMessageId ? "Modifier le message…" : "Écrire un message…"} onKeyUp={rememberSelection} onMouseUp={rememberSelection} onInput={rememberSelection} /><button className="primary" type="submit"><Send size={17} /> {editingMessageId ? "Enregistrer" : "Envoyer"}</button></div></form> : <div className="moderation-readonly"><ShieldCheck size={16} /> Vous consultez cette discussion en tant que modérateur.</div>}</> : <div className="chat-no-selection"><MessageSquareText size={36} /><h2>Choisissez une discussion</h2><p>Sélectionnez un membre, créez un groupe ou contactez un Référent SO.</p></div>}
+        {selectedChat ? <>
+          <div className="conversation-head">
+            {selectedMeta.group ? <span className="group-avatar"><UsersRound size={19} /></span> : selectedMeta.moderated ? <span className="group-avatar"><ShieldCheck size={19} /></span> : <span className={`avatar ${selectedMeta.other ? ROLES[selectedMeta.other.role].tone : "blue"}`}>{selectedMeta.other ? initials(selectedMeta.other) : "?"}</span>}
+            <div><strong>{selectedMeta.title}</strong><small>{selectedMeta.subtitle}</small></div>
+            <div className="conversation-head-actions">{isModerator && !canParticipate && <span className="moderation-chip"><ShieldCheck size={14} /> Consultation de modération</span>}<button className="delete-conversation" type="button" onClick={() => onDeleteChat(selectedChat.id)}><Trash2 size={16} /> Supprimer</button></div>
+          </div>
+          <div className="chat-messages">
+            {selectedChat.messages.map((item) => {
+              const own = item.senderId === session.id;
+              const hasText = Boolean(chatMessageText(item).trim());
+              return <div className={`chat-message ${own ? "mine" : "theirs"}`} key={item.id}>{hasText && <div className="chat-bubble" dangerouslySetInnerHTML={{ __html: chatMessageHtml(item) }} />}{item.attachments?.length > 0 && <div className="message-attachments">{item.attachments.map((attachment) => { const url = safeAttachmentUrl(attachment); return url && <a href={url} download={attachment.name} key={attachment.id} target="_blank" rel="noreferrer">{/^image\/(png|jpeg|webp|gif)$/i.test(attachment.type) ? <img src={url} alt={attachment.name} /> : <span className="attachment-file-icon"><FileText size={18} /></span>}<span><strong>{attachment.name}</strong><small>{formatFileSize(attachment.size)}</small></span><Download size={15} /></a>; })}</div>}<small>{own ? "Vous" : item.senderName} · {item.sentAt}{item.editedAt ? " · modifié" : ""}</small>{(own || isModerator) && <div className="chat-message-actions">{own && <button type="button" onClick={() => editMessage(item)}><Pencil size={13} /> Modifier</button>}<button type="button" onClick={() => onDeleteMessage(selectedChat.id, item.id)}><Trash2 size={13} /> Supprimer</button></div>}</div>;
+            })}
+            {!selectedChat.messages.length && <div className="chat-welcome"><MessageSquareText size={28} /><strong>Nouvelle discussion</strong><p>Envoyez le premier message.</p></div>}
+          </div>
+          {canParticipate ? <form className="chat-compose rich" onSubmit={submit}>
+            <div className="chat-toolbar"><button type="button" title="Gras" onMouseDown={(event) => { event.preventDefault(); format("bold"); }}><b>B</b></button><button type="button" title="Italique" onMouseDown={(event) => { event.preventDefault(); format("italic"); }}><i>I</i></button><button type="button" title="Souligné" onMouseDown={(event) => { event.preventDefault(); format("underline"); }}><u>U</u></button><button type="button" title="Barré" onMouseDown={(event) => { event.preventDefault(); format("strikeThrough"); }}><s>S</s></button><label title="Couleur du texte"><span>A</span><input type="color" defaultValue="#356ad2" onMouseDown={rememberSelection} onChange={(event) => format("foreColor", event.target.value)} /></label><label title="Surlignage"><span className="highlight-tool">A</span><input type="color" defaultValue="#fff1a8" onMouseDown={rememberSelection} onChange={(event) => format("hiliteColor", event.target.value)} /></label><button type="button" title="Effacer la mise en forme" onMouseDown={(event) => { event.preventDefault(); format("removeFormat"); }}>Tx</button>{!editingMessageId && <button type="button" title="Ajouter des pièces jointes" onClick={() => attachmentInputRef.current?.click()}><Paperclip size={15} /></button>}<input className="attachment-input" ref={attachmentInputRef} type="file" multiple accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.txt,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={addAttachments} />{editingMessageId && <button className="cancel-edit" type="button" onClick={clearEditor}>Annuler la modification</button>}</div>
+            {pendingAttachments.length > 0 && <div className="pending-attachments">{pendingAttachments.map((attachment) => <div key={attachment.id}><Paperclip size={14} /><span><strong>{attachment.name}</strong><small>{formatFileSize(attachment.size)}</small></span><button type="button" title="Retirer" onClick={() => removePendingAttachment(attachment.id)}><X size={14} /></button></div>)}</div>}
+            {attachmentError && <p className="attachment-error">{attachmentError}</p>}
+            <div className="chat-compose-row"><div className="chat-editor" ref={editorRef} contentEditable suppressContentEditableWarning data-placeholder={editingMessageId ? "Modifier le message…" : "Écrire un message…"} onKeyUp={rememberSelection} onMouseUp={rememberSelection} onInput={rememberSelection} /><button className="primary" type="submit"><Send size={17} /> {editingMessageId ? "Enregistrer" : "Envoyer"}</button></div>
+          </form> : <div className="moderation-readonly"><ShieldCheck size={16} /> Vous consultez cette discussion en tant que modérateur.</div>}
+        </> : <div className="chat-no-selection"><MessageSquareText size={36} /><h2>Choisissez une discussion</h2><p>Utilisez le menu déroulant pour ouvrir une conversation.</p></div>}
       </div>
     </section>
   );
@@ -660,7 +751,11 @@ function App() {
   useEffect(() => { if (ready) localStorage.setItem(STORAGE_KEY, JSON.stringify(users)); }, [users, ready]);
   useEffect(() => { if (ready) localStorage.setItem(QUOTA_KEY, JSON.stringify(quotas)); }, [quotas, ready]);
   useEffect(() => { if (ready) localStorage.setItem(MISSIONS_KEY, JSON.stringify(missions)); }, [missions, ready]);
-  useEffect(() => { if (ready) localStorage.setItem(CHAT_KEY, JSON.stringify(chats)); }, [chats, ready]);
+  useEffect(() => {
+    if (!ready) return;
+    try { localStorage.setItem(CHAT_KEY, JSON.stringify(chats)); }
+    catch { flash("Stockage du chat saturé : supprimez d’anciennes pièces jointes."); }
+  }, [chats, ready]);
   useEffect(() => {
     function syncAccounts(event) {
       if (event.key === SESSION_KEY && !event.newValue) {
@@ -788,11 +883,11 @@ function App() {
     setChats((current) => [{ id: chatId, type: "group", name, createdBy: session.id, participants: [session.id, ...validMemberIds], messages: [], updatedAt: new Date().toISOString() }, ...current]);
     return chatId;
   }
-  function sendChatMessage(chatId, html, text) {
+  function sendChatMessage(chatId, html, text, attachments = []) {
     setChats((current) => {
       const chat = current.find((item) => item.id === chatId && item.participants.includes(session.id));
       if (!chat) return current;
-      const message = { id: crypto.randomUUID(), senderId: session.id, senderName: `${session.firstName} ${session.lastName}`, html: sanitizeChatHtml(html), text, sentAt: new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date()) };
+      const message = { id: crypto.randomUUID(), senderId: session.id, senderName: `${session.firstName} ${session.lastName}`, html: sanitizeChatHtml(html), text, attachments, sentAt: new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date()) };
       const updatedChat = { ...chat, messages: [...chat.messages, message], updatedAt: new Date().toISOString() };
       return [updatedChat, ...current.filter((item) => item.id !== chatId)];
     });
