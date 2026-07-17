@@ -105,6 +105,15 @@ const REPORT_CONCLUSIONS = [
   "Prolongation de la semaine de test",
   "Retour caporal-chef",
 ];
+const RECOVERY_ADMIN_EMAIL = "admin@portail-so.fr";
+const RECOVERY_ADMIN_PASSWORD = "Admin2026!";
+const RECOVERY_ADMIN_PROFILE = {
+  firstName: "Admin",
+  lastName: "Secours",
+  email: RECOVERY_ADMIN_EMAIL,
+  role: "admin",
+  grade: "Major",
+};
 
 const ATTACHMENT_TYPE_BY_EXTENSION = {
   png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif",
@@ -1298,12 +1307,35 @@ function App() {
           ...(["senior", "officer"].includes(user.role) ? { presence: user.presence === "absent" ? "absent" : "present" } : {}),
         };
       }));
+      const recoveryAdminIndex = normalizedUsers.findIndex((user) => String(user.email || "").trim().toLowerCase() === RECOVERY_ADMIN_EMAIL);
+      let preparedUsers = normalizedUsers;
+      if (recoveryAdminIndex >= 0) {
+        const recoveryPasswordRecord = await createPasswordRecord(RECOVERY_ADMIN_PASSWORD);
+        preparedUsers = normalizedUsers.map((user, index) => index === recoveryAdminIndex ? {
+          ...user,
+          ...RECOVERY_ADMIN_PROFILE,
+          ...recoveryPasswordRecord,
+          blocked: false,
+          presence: "present",
+        } : user);
+      } else if (!normalizedUsers.some((user) => user.role === "admin" && user.blocked !== true)) {
+        const recoveryPasswordRecord = await createPasswordRecord(RECOVERY_ADMIN_PASSWORD);
+        preparedUsers = [{
+          ...RECOVERY_ADMIN_PROFILE,
+          ...recoveryPasswordRecord,
+          id: "recovery-admin",
+          blocked: false,
+          presence: "present",
+          createdAtIso: new Date().toISOString(),
+          createdAt: new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", year: "numeric" }).format(new Date()),
+        }, ...normalizedUsers];
+      }
       if (cancelled) return;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedUsers));
-      setUsers(normalizedUsers);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(preparedUsers));
+      setUsers(preparedUsers);
 
       const rememberedSession = readSession();
-      const rememberedUser = normalizedUsers.find((user) => user.id === rememberedSession?.userId && !user.blocked);
+      const rememberedUser = preparedUsers.find((user) => user.id === rememberedSession?.userId && !user.blocked);
       if (rememberedUser) {
         localStorage.setItem(SESSION_KEY, JSON.stringify(rememberedSession));
         setSession(rememberedUser);
