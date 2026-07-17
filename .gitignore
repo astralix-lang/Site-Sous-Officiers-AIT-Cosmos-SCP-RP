@@ -4,5 +4,7 @@ node_modules
 dist
 .open-next
 .wrangler
+.wrangler-config
+.vinext
 *.log
 next-env.d.ts

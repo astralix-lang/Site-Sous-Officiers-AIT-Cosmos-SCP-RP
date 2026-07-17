@@ -9,17 +9,17 @@
     "start": "vinext start"
   },
   "dependencies": {
-    "lucide-react": "^0.468.0",
-    "next": "^15.5.7",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "lucide-react": "0.468.0",
+    "next": "15.5.20",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "latest",
-    "@vitejs/plugin-react": "latest",
-    "@vitejs/plugin-rsc": "latest",
-    "react-server-dom-webpack": "latest",
-    "vinext": "latest",
-    "vite": "latest"
+    "@cloudflare/vite-plugin": "1.45.0",
+    "@vitejs/plugin-react": "6.0.3",
+    "@vitejs/plugin-rsc": "0.5.27",
+    "react-server-dom-webpack": "19.2.7",
+    "vinext": "1.0.0-beta.1",
+    "vite": "8.1.4"
   }
 }

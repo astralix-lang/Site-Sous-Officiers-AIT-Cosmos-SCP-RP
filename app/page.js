@@ -64,17 +64,10 @@ const GRADES = [
   "Maréchal",
 ];
 
-const INITIAL_USERS = [
-  { id: "admin-1", firstName: "Camille", lastName: "Martin", email: "admin@portail-so.fr", grade: "Major", role: "admin", password: "Admin2026!", createdAt: "16 juil. 2026" },
-  { id: "ref-1", firstName: "Thomas", lastName: "Bernard", email: "t.bernard@portail-so.fr", grade: "Adjudant-Chef", role: "referent", password: "Referent2026!", createdAt: "14 juil. 2026" },
-  { id: "senior-1", firstName: "Sophie", lastName: "Dubois", email: "s.dubois@portail-so.fr", grade: "Adjudant", role: "senior", password: "SousOff2026!", presence: "present", createdAt: "12 juil. 2026" },
-  { id: "officer-1", firstName: "Julien", lastName: "Moreau", email: "j.moreau@portail-so.fr", grade: "Sergent-Chef", role: "officer", password: "SousOff2026!", presence: "present", createdAt: "9 juil. 2026" },
-];
-
 const STORAGE_KEY = "portail-so-users-v1";
 const SESSION_KEY = "portail-so-session-v1";
 const THEME_KEY = "portail-so-theme";
-const ADMIN_RECOVERY_KEY = "portail-so-admin-recovery-v1";
+const LOGIN_GUARD_KEY = "portail-so-login-guard-v1";
 const QUOTA_KEY = "portail-so-quotas-v1";
 const MISSIONS_KEY = "portail-so-missions-v1";
 const CHAT_KEY = "portail-so-chats-v1";
@@ -86,6 +79,10 @@ const DRAFTS_KEY = "portail-so-form-drafts-v1";
 const SUBMISSION_HISTORY_KEY = "portail-so-submission-history-v1";
 const CHAT_ATTACHMENT_MAX_SIZE = 1024 * 1024;
 const CHAT_ATTACHMENT_MAX_COUNT = 3;
+const PASSWORD_ITERATIONS = 210000;
+const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCK_MS = 15 * 60 * 1000;
 const CHAT_ATTACHMENT_TYPES = new Set([
   "image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf", "text/plain",
   "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -100,6 +97,102 @@ const REPORT_CONCLUSIONS = [
   "Prolongation de la semaine de test",
   "Retour caporal-chef",
 ];
+
+const ATTACHMENT_TYPE_BY_EXTENSION = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif",
+  pdf: "application/pdf", txt: "text/plain", doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ppt: "application/vnd.ms-powerpoint", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+};
+
+function readStoredJson(key, fallback) {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const value = localStorage.getItem(key);
+    if (!value || value.length > 4_500_000) return fallback;
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary);
+}
+
+function base64ToBytes(value) {
+  const binary = atob(value);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+async function derivePasswordHash(password, salt, iterations = PASSWORD_ITERATIONS) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, 256);
+  return new Uint8Array(bits);
+}
+
+async function createPasswordRecord(password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const hash = await derivePasswordHash(password, salt);
+  return { passwordHash: bytesToBase64(hash), passwordSalt: bytesToBase64(salt), passwordIterations: PASSWORD_ITERATIONS };
+}
+
+async function verifyPassword(user, password) {
+  if (!user?.passwordHash || !user?.passwordSalt || !password) return false;
+  try {
+    const expected = base64ToBytes(user.passwordHash);
+    const actual = await derivePasswordHash(password, base64ToBytes(user.passwordSalt), Number(user.passwordIterations) || PASSWORD_ITERATIONS);
+    if (actual.length !== expected.length) return false;
+    let difference = 0;
+    for (let index = 0; index < actual.length; index += 1) difference |= actual[index] ^ expected[index];
+    return difference === 0;
+  } catch {
+    return false;
+  }
+}
+
+function passwordError(password) {
+  if (password.length < 12) return "Le mot de passe doit contenir au moins 12 caractères.";
+  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+    return "Ajoutez une minuscule, une majuscule, un chiffre et un caractère spécial.";
+  }
+  return "";
+}
+
+function createSession(userId) {
+  return { version: 2, userId, expiresAt: Date.now() + SESSION_DURATION_MS };
+}
+
+function readSession() {
+  const raw = localStorage.getItem(SESSION_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed?.version === 2 && typeof parsed.userId === "string" && parsed.expiresAt > Date.now() ? parsed : null;
+  } catch {
+    return typeof raw === "string" && raw ? createSession(raw) : null;
+  }
+}
+
+let csrfTokenPromise;
+let csrfTokenExpiresAt = 0;
+async function getCsrfToken() {
+  if (!csrfTokenPromise || Date.now() >= csrfTokenExpiresAt) {
+    csrfTokenExpiresAt = Date.now() + 50 * 60 * 1000;
+    csrfTokenPromise = fetch("/api/security/csrf", { cache: "no-store", credentials: "same-origin" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Sécurité de la transmission indisponible.");
+        const result = await response.json();
+        if (!result.token) throw new Error("Jeton de sécurité invalide.");
+        return result.token;
+      })
+      .catch((error) => { csrfTokenPromise = null; csrfTokenExpiresAt = 0; throw error; });
+  }
+  return csrfTokenPromise;
+}
 
 const TRANSMISSION_TYPES = {
   recommendation: {
@@ -130,17 +223,13 @@ const TRANSMISSION_TYPES = {
 
 function readFormDraft(userId, type) {
   if (typeof window === "undefined") return null;
-  try {
-    const drafts = JSON.parse(localStorage.getItem(DRAFTS_KEY) || "{}");
-    return drafts[`${userId}:${type}`] || null;
-  } catch {
-    return null;
-  }
+  const drafts = readStoredJson(DRAFTS_KEY, {});
+  return drafts && typeof drafts === "object" ? drafts[`${userId}:${type}`] || null : null;
 }
 
 function saveFormDraft(userId, type, values) {
   try {
-    const drafts = JSON.parse(localStorage.getItem(DRAFTS_KEY) || "{}");
+    const drafts = readStoredJson(DRAFTS_KEY, {});
     drafts[`${userId}:${type}`] = { values, savedAt: new Date().toISOString() };
     localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
   } catch {
@@ -150,7 +239,7 @@ function saveFormDraft(userId, type, values) {
 
 function clearFormDraft(userId, type) {
   try {
-    const drafts = JSON.parse(localStorage.getItem(DRAFTS_KEY) || "{}");
+    const drafts = readStoredJson(DRAFTS_KEY, {});
     delete drafts[`${userId}:${type}`];
     localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
   } catch {
@@ -248,10 +337,11 @@ function sanitizeChatHtml(html) {
     const color = node.style.color || node.getAttribute("color") || "";
     const backgroundColor = node.style.backgroundColor || "";
     [...node.attributes].forEach((attribute) => node.removeAttribute(attribute.name));
-    if (color) node.style.color = color;
-    if (backgroundColor) node.style.backgroundColor = backgroundColor;
+    const safeCssColor = (value) => /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\)|hsla?\([\d\s.,%]+\))$/i.test(value) ? value : "";
+    if (safeCssColor(color)) node.style.color = color;
+    if (safeCssColor(backgroundColor)) node.style.backgroundColor = backgroundColor;
   });
-  return template.innerHTML;
+  return template.innerHTML.slice(0, 10000);
 }
 
 function chatMessageHtml(message) {
@@ -277,7 +367,8 @@ function safeAttachmentUrl(attachment) {
   const match = /^data:([^;,]+);base64,/i.exec(String(attachment?.dataUrl || ""));
   if (!match) return "";
   const mimeType = match[1].toLowerCase();
-  return CHAT_ATTACHMENT_TYPES.has(mimeType) || mimeType === "application/octet-stream" ? attachment.dataUrl : "";
+  const extension = String(attachment?.name || "").split(".").pop()?.toLowerCase();
+  return ATTACHMENT_TYPE_BY_EXTENSION[extension] === mimeType && CHAT_ATTACHMENT_TYPES.has(mimeType) ? attachment.dataUrl : "";
 }
 
 function RoleBadge({ role }) {
@@ -297,6 +388,14 @@ function MenuGroup({ title, icon: Icon, open, onToggle, children }) {
 function Login({ onLogin, error }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submit(event) {
+    event.preventDefault();
+    setSubmitting(true);
+    try { await onLogin(email, password); }
+    finally { setSubmitting(false); }
+  }
 
   return (
     <main className="login-page">
@@ -314,13 +413,13 @@ function Login({ onLogin, error }) {
           <p className="eyebrow dark">CONNEXION</p>
           <h2>Bienvenue</h2>
           <p className="muted">Identifiez-vous pour accéder à votre espace.</p>
-          <form autoComplete="off" onSubmit={(event) => { event.preventDefault(); onLogin(email, password); }}>
+          <form autoComplete="off" onSubmit={submit}>
             <label>Adresse e-mail</label>
             <div className="input-wrap"><UserRound size={19} /><input type="email" name="portal-email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} required /></div>
             <label>Mot de passe</label>
             <div className="input-wrap"><KeyRound size={19} /><input type="password" name="portal-password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></div>
             {error && <p className="form-error">{error}</p>}
-            <button className="primary wide" type="submit">Se connecter <span>→</span></button>
+            <button className="primary wide" type="submit" disabled={submitting}>{submitting ? "Vérification…" : "Se connecter"} <span>→</span></button>
           </form>
         </div>
       </section>
@@ -346,8 +445,16 @@ function LoginTransition({ user }) {
 
 function UserModal({ actor, editing, onClose, onSave }) {
   const allowedRoles = actor.role === "admin" ? ["referent", "senior", "officer"] : ["senior", "officer"];
-  const [form, setForm] = useState(editing || { firstName: "", lastName: "", email: "", grade: GRADES[0], role: allowedRoles[0], password: "", presence: "present" });
+  const [form, setForm] = useState(editing ? { ...editing, password: "" } : { firstName: "", lastName: "", email: "", grade: GRADES[0], role: allowedRoles[0], password: "", presence: "present" });
+  const [saving, setSaving] = useState(false);
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+
+  async function submit(event) {
+    event.preventDefault();
+    setSaving(true);
+    try { await onSave(form); }
+    finally { setSaving(false); }
+  }
 
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -356,7 +463,7 @@ function UserModal({ actor, editing, onClose, onSave }) {
         <p className="eyebrow dark">GESTION DES ACCÈS</p>
         <h2>{editing ? "Modifier le compte" : "Créer un compte"}</h2>
         <p className="muted">Renseignez les informations et attribuez le niveau d’accès.</p>
-        <form onSubmit={(e) => { e.preventDefault(); onSave(form); }}>
+        <form onSubmit={submit}>
           <div className="form-grid">
             <div><label>Prénom</label><input value={form.firstName} onChange={(e) => set("firstName", e.target.value)} required /></div>
             <div><label>Nom</label><input value={form.lastName} onChange={(e) => set("lastName", e.target.value)} required /></div>
@@ -368,8 +475,9 @@ function UserModal({ actor, editing, onClose, onSave }) {
             {(allowedRoles.includes(form.role) ? allowedRoles : [form.role]).map((role) => <option key={role} value={role}>{ROLES[role].label}</option>)}
           </select>
           <label>{editing ? "Nouveau mot de passe (facultatif)" : "Mot de passe temporaire"}</label>
-          <input type="password" value={form.password} onChange={(e) => set("password", e.target.value)} required={!editing} minLength={8} placeholder="8 caractères minimum" />
-          <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Annuler</button><button type="submit" className="primary">{editing ? "Enregistrer" : "Créer le compte"}</button></div>
+          <input type="password" value={form.password} onChange={(e) => set("password", e.target.value)} required={!editing} minLength={editing ? undefined : 12} placeholder="12 caractères minimum" />
+          <small className="muted">Majuscule, minuscule, chiffre et caractère spécial requis.</small>
+          <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Annuler</button><button type="submit" className="primary" disabled={saving}>{saving ? "Sécurisation…" : editing ? "Enregistrer" : "Créer le compte"}</button></div>
         </form>
       </div>
     </div>
@@ -378,20 +486,29 @@ function UserModal({ actor, editing, onClose, onSave }) {
 
 function ProfileModal({ user, onClose, onSave }) {
   const [form, setForm] = useState({ ...user, password: "" });
+  const [saving, setSaving] = useState(false);
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+
+  async function submit(event) {
+    event.preventDefault();
+    setSaving(true);
+    try { await onSave(form); }
+    finally { setSaving(false); }
+  }
 
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div className="modal profile-modal">
         <button className="icon-button close" onClick={onClose}><X size={20} /></button>
         <div className="profile-modal-head"><div className={`avatar profile-avatar ${ROLES[user.role].tone}`}>{initials(user)}</div><div><p className="eyebrow dark">MON COMPTE</p><h2>Personnaliser mon profil</h2><p className="muted">Mettez à jour vos informations personnelles.</p></div></div>
-        <form onSubmit={(event) => { event.preventDefault(); onSave(form); }}>
+        <form onSubmit={submit}>
           <div className="form-grid"><div><label>Prénom</label><input value={form.firstName} onChange={(event) => set("firstName", event.target.value)} required /></div><div><label>Nom</label><input value={form.lastName} onChange={(event) => set("lastName", event.target.value)} required /></div></div>
           {["admin", "referent"].includes(user.role) && <><label>Adresse e-mail</label><input type="email" value={form.email} onChange={(event) => set("email", event.target.value)} required /></>}
           <label>Grade</label>{user.role === "admin" ? <select value={form.grade || GRADES[0]} onChange={(event) => set("grade", event.target.value)} required>{GRADES.map((grade) => <option key={grade} value={grade}>{grade}</option>)}</select> : <div className="readonly-grade"><span>{user.grade || GRADES[0]}</span><small>Le grade est géré par un Admin ou un Référent SO.</small></div>}
           <label>Niveau d’accès</label><div className="readonly-role"><RoleBadge role={user.role} /><span>Ce niveau est géré par un responsable.</span></div>
-          <label>Nouveau mot de passe <span className="optional">(facultatif)</span></label><input type="password" value={form.password} onChange={(event) => set("password", event.target.value)} minLength={8} placeholder="Laisser vide pour conserver le mot de passe actuel" />
-          <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Annuler</button><button type="submit" className="primary">Enregistrer mon profil</button></div>
+          <label>Nouveau mot de passe <span className="optional">(facultatif)</span></label><input type="password" value={form.password} onChange={(event) => set("password", event.target.value)} minLength={form.password ? 12 : undefined} placeholder="Laisser vide pour conserver le mot de passe actuel" />
+          <small className="muted">Majuscule, minuscule, chiffre et caractère spécial requis.</small>
+          <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Annuler</button><button type="submit" className="primary" disabled={saving}>{saving ? "Sécurisation…" : "Enregistrer mon profil"}</button></div>
         </form>
       </div>
     </div>
@@ -669,7 +786,7 @@ function MissionInternalPanel({ session, missions, onSubmit, onValidate, onRejec
     event.preventDefault();
     try {
       const parsedUrl = new URL(documentUrl);
-      if (parsedUrl.protocol !== "https:" || parsedUrl.hostname !== "docs.google.com" || !parsedUrl.pathname.startsWith("/document/")) throw new Error();
+      if (parsedUrl.protocol !== "https:" || parsedUrl.hostname !== "docs.google.com" || parsedUrl.username || parsedUrl.password || !parsedUrl.pathname.startsWith("/document/d/")) throw new Error();
     } catch {
       return setError("Ajoutez un lien Google Docs valide.");
     }
@@ -794,8 +911,9 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onSend, onEd
     const accepted = [];
     let error = files.length > remaining ? `Seules ${remaining} pièce${remaining > 1 ? "s" : ""} supplémentaire${remaining > 1 ? "s" : ""} ont été ajoutées.` : "";
     for (const file of files.slice(0, remaining)) {
-      const allowedExtension = /\.(png|jpe?g|webp|gif|pdf|txt|docx?|xlsx?|pptx?)$/i.test(file.name);
-      if (!CHAT_ATTACHMENT_TYPES.has(file.type) && !allowedExtension) {
+      const extension = file.name.split(".").pop()?.toLowerCase();
+      const expectedType = ATTACHMENT_TYPE_BY_EXTENSION[extension];
+      if (!expectedType || file.type !== expectedType || !CHAT_ATTACHMENT_TYPES.has(file.type)) {
         error = `${file.name} : type de fichier non autorisé.`;
         continue;
       }
@@ -810,8 +928,8 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onSend, onEd
           reader.onerror = reject;
           reader.readAsDataURL(file);
         });
-        if (String(dataUrl).startsWith("data:;base64,")) dataUrl = String(dataUrl).replace("data:;base64,", "data:application/octet-stream;base64,");
-        accepted.push({ id: crypto.randomUUID(), name: file.name, type: file.type || "application/octet-stream", size: file.size, dataUrl });
+        const safeName = file.name.replace(/[\u0000-\u001f<>:"/\\|?*]/g, "_").slice(0, 120);
+        accepted.push({ id: crypto.randomUUID(), name: safeName, type: file.type, size: file.size, dataUrl });
       } catch {
         error = `${file.name} n’a pas pu être ajouté.`;
       }
@@ -995,9 +1113,11 @@ function SergeantReportPanel({ users, session, assignments, onSuccess, history, 
         globalOpinion: form.globalOpinion,
         conclusion: form.conclusion,
       };
+      const csrfToken = await getCsrfToken();
       const response = await fetch("/api/submissions", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
         body: JSON.stringify({
           type: "sergeant_report",
           values: reportValues,
@@ -1074,9 +1194,11 @@ function TransmissionPanel({ session, onSuccess, type, history, canResetHistory,
     setError("");
     try {
       const submittedValues = { ...form };
+      const csrfToken = await getCsrfToken();
       const response = await fetch("/api/submissions", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
         body: JSON.stringify({
           type,
           values: form,
@@ -1153,52 +1275,64 @@ function App() {
   const [loginTransition, setLoginTransition] = useState(null);
 
   useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    let loadedUsers = stored ? JSON.parse(stored) : INITIAL_USERS;
-    if (localStorage.getItem(ADMIN_RECOVERY_KEY) !== "done") {
-      const defaultAdmin = INITIAL_USERS[0];
-      const hasAdmin = loadedUsers.some((user) => user.role === "admin");
-      loadedUsers = hasAdmin
-        ? loadedUsers.map((user) => user.role === "admin" ? { ...user, email: defaultAdmin.email, password: defaultAdmin.password } : user)
-        : [defaultAdmin, ...loadedUsers];
-      localStorage.setItem(ADMIN_RECOVERY_KEY, "done");
+    let cancelled = false;
+    async function initialize() {
+      const loaded = readStoredJson(STORAGE_KEY, []);
+      const loadedUsers = Array.isArray(loaded)
+        ? loaded.filter((user) => user && typeof user === "object" && typeof user.id === "string" && typeof user.email === "string" && ROLES[user.role])
+        : [];
+      const normalizedUsers = await Promise.all(loadedUsers.map(async ({ discordId: _discardedDiscordId, status: _discardedStatus, password, ...user }) => {
+        const passwordRecord = !user.passwordHash && typeof password === "string" && password
+          ? await createPasswordRecord(password)
+          : {};
+        return {
+          ...user,
+          ...passwordRecord,
+          blocked: user.blocked === true,
+          grade: GRADES.includes(user.grade) ? user.grade : GRADES[0],
+          ...(["senior", "officer"].includes(user.role) ? { presence: user.presence === "absent" ? "absent" : "present" } : {}),
+        };
+      }));
+      if (cancelled) return;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedUsers));
+      setUsers(normalizedUsers);
+
+      const rememberedSession = readSession();
+      const rememberedUser = normalizedUsers.find((user) => user.id === rememberedSession?.userId && !user.blocked);
+      if (rememberedUser) {
+        localStorage.setItem(SESSION_KEY, JSON.stringify(rememberedSession));
+        setSession(rememberedUser);
+        setActiveSection("home");
+      } else if (localStorage.getItem(SESSION_KEY)) {
+        localStorage.removeItem(SESSION_KEY);
+      }
+
+      const parsedQuotas = readStoredJson(QUOTA_KEY, DEFAULT_QUOTAS);
+      setQuotas({ targets: { ...DEFAULT_QUOTAS.targets, ...(parsedQuotas?.targets || {}) }, counts: parsedQuotas?.counts || {}, exemptions: parsedQuotas?.exemptions || {} });
+      const savedMissions = readStoredJson(MISSIONS_KEY, []);
+      const savedChats = readStoredJson(CHAT_KEY, []);
+      const savedLogs = readStoredJson(LOG_KEY, []);
+      const savedAssignments = readStoredJson(ASSIGNMENTS_KEY, []);
+      const savedSubmissionHistory = readStoredJson(SUBMISSION_HISTORY_KEY, []);
+      setMissions(Array.isArray(savedMissions) ? savedMissions : []);
+      setChats(Array.isArray(savedChats) ? savedChats : []);
+      setAuditLogs(Array.isArray(savedLogs) ? savedLogs : []);
+      setShortcutPreferences(readStoredJson(SHORTCUTS_KEY, {}));
+      setSummarySettings(readStoredJson(SUMMARY_KEY, { activityResetAt: null }));
+      setSergeantAssignments(Array.isArray(savedAssignments) ? savedAssignments : []);
+      setSubmissionHistory(Array.isArray(savedSubmissionHistory) ? savedSubmissionHistory : []);
+      const savedTheme = localStorage.getItem(THEME_KEY) === "dark";
+      setDarkMode(savedTheme);
+      document.documentElement.dataset.theme = savedTheme ? "dark" : "light";
+      setReady(true);
     }
-    const normalizedUsers = loadedUsers.map(({ discordId: _discardedDiscordId, status: _discardedStatus, ...user }) => ({
-      ...user,
-      blocked: user.blocked === true,
-      grade: user.grade || GRADES[0],
-      ...(["senior", "officer"].includes(user.role) ? { presence: user.presence || "present" } : {}),
-    }));
-    setUsers(normalizedUsers);
-    const rememberedSessionId = localStorage.getItem(SESSION_KEY);
-    const rememberedUser = normalizedUsers.find((user) => user.id === rememberedSessionId && !user.blocked);
-    if (rememberedUser) {
-      setSession(rememberedUser);
-      setActiveSection("home");
-    } else if (rememberedSessionId) {
-      localStorage.removeItem(SESSION_KEY);
-    }
-    const savedTheme = localStorage.getItem(THEME_KEY) === "dark";
-    const savedQuotas = localStorage.getItem(QUOTA_KEY);
-    const savedMissions = localStorage.getItem(MISSIONS_KEY);
-    const savedChats = localStorage.getItem(CHAT_KEY);
-    const savedLogs = localStorage.getItem(LOG_KEY);
-    const savedShortcuts = localStorage.getItem(SHORTCUTS_KEY);
-    const savedSummary = localStorage.getItem(SUMMARY_KEY);
-    const savedAssignments = localStorage.getItem(ASSIGNMENTS_KEY);
-    const savedSubmissionHistory = localStorage.getItem(SUBMISSION_HISTORY_KEY);
-    const parsedQuotas = savedQuotas ? JSON.parse(savedQuotas) : DEFAULT_QUOTAS;
-    setQuotas({ targets: { ...DEFAULT_QUOTAS.targets, ...parsedQuotas.targets }, counts: parsedQuotas.counts || {}, exemptions: parsedQuotas.exemptions || {} });
-    setMissions(savedMissions ? JSON.parse(savedMissions) : []);
-    setChats(savedChats ? JSON.parse(savedChats) : []);
-    setAuditLogs(savedLogs ? JSON.parse(savedLogs) : []);
-    setShortcutPreferences(savedShortcuts ? JSON.parse(savedShortcuts) : {});
-    setSummarySettings(savedSummary ? JSON.parse(savedSummary) : { activityResetAt: null });
-    setSergeantAssignments(savedAssignments ? JSON.parse(savedAssignments) : []);
-    setSubmissionHistory(savedSubmissionHistory ? JSON.parse(savedSubmissionHistory) : []);
-    setDarkMode(savedTheme);
-    document.documentElement.dataset.theme = savedTheme ? "dark" : "light";
-    setReady(true);
+    initialize().catch(() => {
+      if (!cancelled) {
+        setLoginError("Le stockage sécurisé n’a pas pu être initialisé. Rechargez la page.");
+        setReady(true);
+      }
+    });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => { if (ready) localStorage.setItem(STORAGE_KEY, JSON.stringify(users)); }, [users, ready]);
@@ -1219,10 +1353,12 @@ function App() {
   useEffect(() => { if (ready) localStorage.setItem(SUBMISSION_HISTORY_KEY, JSON.stringify(submissionHistory)); }, [submissionHistory, ready]);
   useEffect(() => {
     function syncAccounts(event) {
-      if (event.key === SESSION_KEY && !event.newValue) {
-        setSession(null);
-        setProfileOpen(false);
-        setLoginError("");
+      if (event.key === SESSION_KEY) {
+        if (!event.newValue) {
+          setSession(null);
+          setProfileOpen(false);
+          setLoginError("");
+        }
         return;
       }
       if (event.key === CHAT_KEY && event.newValue) {
@@ -1271,6 +1407,23 @@ function App() {
     window.addEventListener("storage", syncAccounts);
     return () => window.removeEventListener("storage", syncAccounts);
   }, []);
+  useEffect(() => {
+    if (!ready || !session) return;
+    function checkSessionExpiry() {
+      const rememberedSession = readSession();
+      if (rememberedSession?.userId === session.id) return;
+      localStorage.removeItem(SESSION_KEY);
+      setSession(null);
+      setProfileOpen(false);
+      setLoginError("Votre session a expiré. Reconnectez-vous.");
+    }
+    const timer = window.setInterval(checkSessionExpiry, 60_000);
+    document.addEventListener("visibilitychange", checkSessionExpiry);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", checkSessionExpiry);
+    };
+  }, [ready, session?.id]);
   useEffect(() => {
     if (!ready) return;
     document.documentElement.dataset.theme = darkMode ? "dark" : "light";
@@ -1496,11 +1649,28 @@ function App() {
     flash("La conversation a été supprimée.");
   }
   function toggleGroup(group) { setOpenGroups((current) => ({ ...current, [group]: !current[group] })); }
-  function login(email, password) {
-    const user = users.find((item) => item.email.toLowerCase() === email.toLowerCase() && item.password === password);
-    if (!user) return setLoginError("Identifiants incorrects.");
+  async function login(email, password) {
+    const guard = readStoredJson(LOGIN_GUARD_KEY, { attempts: 0, lockedUntil: 0 });
+    if (Number(guard.lockedUntil) > Date.now()) {
+      const minutes = Math.max(1, Math.ceil((guard.lockedUntil - Date.now()) / 60_000));
+      setLoginError(`Trop de tentatives. Réessayez dans ${minutes} minute${minutes > 1 ? "s" : ""}.`);
+      return;
+    }
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const user = users.find((item) => String(item.email || "").trim().toLowerCase() === normalizedEmail);
+    const validPassword = user
+      ? await verifyPassword(user, password)
+      : Boolean(await derivePasswordHash(password || "", new Uint8Array(16), 100000)) && false;
+    if (!user || !validPassword) {
+      const attempts = Number(guard.attempts || 0) + 1;
+      const lockedUntil = attempts >= LOGIN_MAX_ATTEMPTS ? Date.now() + LOGIN_LOCK_MS : 0;
+      localStorage.setItem(LOGIN_GUARD_KEY, JSON.stringify({ attempts: lockedUntil ? 0 : attempts, lockedUntil }));
+      setLoginError(lockedUntil ? "Trop de tentatives. La connexion est bloquée pendant 15 minutes." : "Identifiants incorrects.");
+      return;
+    }
     if (user.blocked) return setLoginError("Ce compte est bloqué. Contactez un administrateur.");
-    localStorage.setItem(SESSION_KEY, user.id);
+    localStorage.removeItem(LOGIN_GUARD_KEY);
+    localStorage.setItem(SESSION_KEY, JSON.stringify(createSession(user.id)));
     addLog("auth", "Connexion au portail", "Connexion réussie", user);
     setLoginError(""); setSession(user); setActiveSection("home"); setLoginTransition(user);
     window.setTimeout(() => setLoginTransition(null), 1850);
@@ -1513,13 +1683,39 @@ function App() {
     setLoginTransition(null);
     setSession(null);
   }
-  function saveUser(form) {
-    const savedForm = { ...form };
-    if (["senior", "officer"].includes(savedForm.role)) savedForm.presence ||= "present";
-    else delete savedForm.presence;
+  async function saveUser(form) {
+    const cleanEmail = String(form.email || "").trim().toLowerCase();
+    if (users.some((user) => user.id !== modal?.id && String(user.email || "").trim().toLowerCase() === cleanEmail)) {
+      flash("Cette adresse e-mail est déjà utilisée.");
+      return;
+    }
+    if (form.password) {
+      const error = passwordError(form.password);
+      if (error) { flash(error); return; }
+    }
+    const allowedRoles = session.role === "admin" ? ["referent", "senior", "officer"] : ["senior", "officer"];
+    const currentRole = modal?.id ? users.find((user) => user.id === modal.id)?.role : null;
+    const role = allowedRoles.includes(form.role) ? form.role : currentRole;
+    if (!role || !ROLES[role]) return;
+    const { password: _discardedPassword, passwordHash: _discardedHash, passwordSalt: _discardedSalt, passwordIterations: _discardedIterations, id: _discardedId, ...discardedFields } = form;
+    const savedForm = {
+      firstName: String(discardedFields.firstName || "").trim().slice(0, 60),
+      lastName: String(discardedFields.lastName || "").trim().slice(0, 60),
+      email: cleanEmail,
+      grade: GRADES.includes(discardedFields.grade) ? discardedFields.grade : GRADES[0],
+      role,
+      ...(form.password ? await createPasswordRecord(form.password) : {}),
+    };
+    if (!savedForm.firstName || !savedForm.lastName || !savedForm.email) { flash("Tous les champs d’identité sont obligatoires."); return; }
+    if (["senior", "officer"].includes(savedForm.role)) savedForm.presence = discardedFields.presence === "absent" ? "absent" : "present";
     if (modal?.id) {
       const editedUser = users.find((user) => user.id === modal.id);
-      setUsers((current) => current.map((user) => user.id === modal.id ? { ...user, ...savedForm, password: savedForm.password || user.password } : user));
+      setUsers((current) => current.map((user) => {
+        if (user.id !== modal.id) return user;
+        const updated = { ...user, ...savedForm };
+        if (!["senior", "officer"].includes(savedForm.role)) delete updated.presence;
+        return updated;
+      }));
       addLog("account", "Compte modifié", editedUser ? `${editedUser.firstName} ${editedUser.lastName}` : `${savedForm.firstName} ${savedForm.lastName}`);
       flash("Le compte a bien été modifié.");
     } else {
@@ -1549,8 +1745,28 @@ function App() {
     addLog("account", willBlock ? "Compte bloqué" : "Compte débloqué", `${user.firstName} ${user.lastName}`);
     flash(willBlock ? "Le compte a été bloqué et ses sessions seront fermées." : "Le compte a été débloqué.");
   }
-  function saveProfile(form) {
-    const updated = { ...session, ...form, password: form.password || session.password };
+  async function saveProfile(form) {
+    if (form.password) {
+      const error = passwordError(form.password);
+      if (error) { flash(error); return; }
+    }
+    const nextEmail = ["admin", "referent"].includes(session.role) ? String(form.email || "").trim().toLowerCase() : session.email;
+    if (!String(form.firstName || "").trim() || !String(form.lastName || "").trim() || !nextEmail) {
+      flash("Tous les champs d’identité sont obligatoires.");
+      return;
+    }
+    if (users.some((user) => user.id !== session.id && String(user.email || "").trim().toLowerCase() === nextEmail)) {
+      flash("Cette adresse e-mail est déjà utilisée.");
+      return;
+    }
+    const updated = {
+      ...session,
+      firstName: String(form.firstName || "").trim().slice(0, 60),
+      lastName: String(form.lastName || "").trim().slice(0, 60),
+      email: nextEmail,
+      grade: session.role === "admin" && GRADES.includes(form.grade) ? form.grade : session.grade,
+      ...(form.password ? await createPasswordRecord(form.password) : {}),
+    };
     setUsers((current) => current.map((user) => user.id === session.id ? updated : user));
     setSession(updated);
     setProfileOpen(false);
