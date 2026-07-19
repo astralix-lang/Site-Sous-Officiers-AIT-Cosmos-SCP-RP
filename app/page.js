@@ -82,6 +82,7 @@ const SUMMARY_KEY = "portail-so-summary-v1";
 const ASSIGNMENTS_KEY = "portail-so-sergeant-assignments-v1";
 const DRAFTS_KEY = "portail-so-form-drafts-v1";
 const SUBMISSION_HISTORY_KEY = "portail-so-submission-history-v1";
+const NOTIFICATION_KEY = "portail-so-notifications-v1";
 const CHAT_ATTACHMENT_MAX_SIZE = 1024 * 1024;
 const CHAT_ATTACHMENT_MAX_COUNT = 3;
 const CHAT_ATTACHMENT_TYPES = new Set([
@@ -388,7 +389,7 @@ function Login({ onLogin, onSetup, setupRequired, configurationError, error }) {
           <p className="muted">{setupRequired ? "Créez le premier compte Administrateur du portail." : "Identifiez-vous pour accéder à votre espace."}</p>
           <form autoComplete="off" onSubmit={submit}>
             {setupRequired && <>
-              <div className="form-grid"><div><label>Prénom</label><input value={firstName} onChange={(event) => setFirstName(event.target.value)} required /></div><div><label>Nom</label><input value={lastName} onChange={(event) => setLastName(event.target.value)} required /></div></div>
+              <div className="form-grid"><div><label>Prénom</label><input value={firstName} onChange={(event) => setFirstName(event.target.value)} required /></div><div><label>Nom <span className="optional">(facultatif)</span></label><input value={lastName} onChange={(event) => setLastName(event.target.value)} /></div></div>
               <label>Grade</label><select value={grade} onChange={(event) => setGrade(event.target.value)} required>{GRADES.map((item) => <option value={item} key={item}>{item}</option>)}</select>
             </>}
             <label>Adresse e-mail</label>
@@ -444,7 +445,7 @@ function UserModal({ actor, editing, onClose, onSave }) {
         <form onSubmit={submit}>
           <div className="form-grid">
             <div><label>Prénom</label><input value={form.firstName} onChange={(e) => set("firstName", e.target.value)} required /></div>
-            <div><label>Nom</label><input value={form.lastName} onChange={(e) => set("lastName", e.target.value)} required /></div>
+            <div><label>Nom <span className="optional">(facultatif)</span></label><input value={form.lastName} onChange={(e) => set("lastName", e.target.value)} /></div>
           </div>
           <label>Adresse e-mail</label><input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} required />
           <label>Grade</label><select value={form.grade || GRADES[0]} onChange={(e) => set("grade", e.target.value)} required>{GRADES.map((grade) => <option key={grade} value={grade}>{grade}</option>)}</select>
@@ -480,7 +481,7 @@ function ProfileModal({ user, onClose, onSave }) {
         <button className="icon-button close" onClick={onClose}><X size={20} /></button>
         <div className="profile-modal-head"><div className={`avatar profile-avatar ${ROLES[user.role].tone}`}>{initials(user)}</div><div><p className="eyebrow dark">MON COMPTE</p><h2>Personnaliser mon profil</h2><p className="muted">Mettez à jour vos informations personnelles.</p></div></div>
         <form onSubmit={submit}>
-          <div className="form-grid"><div><label>Prénom</label><input value={form.firstName} onChange={(event) => set("firstName", event.target.value)} required /></div><div><label>Nom</label><input value={form.lastName} onChange={(event) => set("lastName", event.target.value)} required /></div></div>
+          <div className="form-grid"><div><label>Prénom</label><input value={form.firstName} onChange={(event) => set("firstName", event.target.value)} required /></div><div><label>Nom <span className="optional">(facultatif)</span></label><input value={form.lastName} onChange={(event) => set("lastName", event.target.value)} /></div></div>
           {["admin", "referent"].includes(user.role) && <><label>Adresse e-mail</label><input type="email" value={form.email} onChange={(event) => set("email", event.target.value)} required /></>}
           <label>Grade</label>{user.role === "admin" ? <select value={form.grade || GRADES[0]} onChange={(event) => set("grade", event.target.value)} required>{GRADES.map((grade) => <option key={grade} value={grade}>{grade}</option>)}</select> : <div className="readonly-grade"><span>{user.grade || GRADES[0]}</span><small>Le grade est géré par un Admin ou un Référent SO.</small></div>}
           <label>Niveau d’accès</label><div className="readonly-role"><RoleBadge role={user.role} /><span>Ce niveau est géré par un responsable.</span></div>
@@ -541,7 +542,7 @@ function WorkforcePanel({ users, quotas }) {
   );
 }
 
-function HomePanel({ session, users, missions, chats, quotas, logs, assignments, shortcutIds, onSaveShortcuts, onNavigate }) {
+function HomePanel({ session, users, missions, chats, quotas, logs, assignments, portalNotifications, shortcutIds, onSaveShortcuts, onNavigate }) {
   const isManager = ["admin", "referent"].includes(session.role);
   const isQuotaMember = ["senior", "officer"].includes(session.role);
   const shortcutCatalog = [
@@ -585,7 +586,16 @@ function HomePanel({ session, users, missions, chats, quotas, logs, assignments,
   const remainingTotal = quotaItems.reduce((total, item) => total + Math.max((targets[item.key] || 0) - (categoryCounts[item.key] || 0), 0), 0);
   const isAbsent = session.presence === "absent";
   const isExempted = quotas.exemptions?.[session.id] === true;
-  const notifications = [];
+  const notifications = portalNotifications
+    .filter((notification) => !Array.isArray(notification.recipients) || notification.recipients.includes(session.id))
+    .slice(0, 8)
+    .map((notification) => ({
+      tone: notification.kind === "message" ? "info" : "success",
+      icon: notification.kind === "message" ? <MessageSquareText size={17} /> : <FileText size={17} />,
+      title: notification.title,
+      text: notification.text,
+      target: notification.target || "home",
+    }));
   if (isManager && pendingMissions.length) notifications.push({ tone: "warning", icon: <FileText size={17} />, title: `${pendingMissions.length} mission${pendingMissions.length > 1 ? "s" : ""} en attente`, text: "Des documents attendent une validation ou un refus.", target: "mission_internal" });
   if (session.presence === "absent") notifications.push({ tone: "danger", icon: <UserX size={17} />, title: "Vous êtes indiqué absent", text: "Vos quotas sont temporairement affichés comme absents.", target: "home" });
   if (quotas.exemptions?.[session.id]) notifications.push({ tone: "info", icon: <ShieldCheck size={17} />, title: "Vous êtes exempté de quota", text: "Les objectifs restent enregistrés mais ne sont pas exigés.", target: "home" });
@@ -633,12 +643,21 @@ function HomePanel({ session, users, missions, chats, quotas, logs, assignments,
 function SummaryPanel({ session, users, logs, activityResetAt, onResetActivity }) {
   const [period, setPeriod] = useState("week");
   const [scope, setScope] = useState("global");
+  const allSeries = [
+    { subtype: "recommendation", label: "Recommandation", shortLabel: "Reco", tone: "recommendation", kpiTone: "blue", icon: Medal },
+    { subtype: "pcs_exp", label: "Recommandation PCS EXP", shortLabel: "PCS EXP", tone: "pcs-exp", kpiTone: "gold", icon: ClipboardCheck },
+    { subtype: "observation_hdr", label: "Observation HDR", shortLabel: "Obs. HDR", tone: "observation-hdr", kpiTone: "green", icon: MessageSquareText },
+    { subtype: "observation_so", label: "Observation SO", shortLabel: "Obs. SO", tone: "observation-so", kpiTone: "violet", icon: MessageSquareText },
+  ];
+  // Les Sous-Officiers Supérieurs ne consultent pas le volume des observations SO dans le résumé.
+  const visibleSeries = session.role === "senior" ? allSeries.filter((series) => series.subtype !== "observation_so") : allSeries;
+  const visibleSubtypes = new Set(visibleSeries.map((series) => series.subtype));
   const periodData = getSummaryPeriod(period);
   const periodLabels = { day: "Aujourd’hui", week: "Cette semaine", month: "Ce mois", year: "Cette année" };
   const allActivity = logs.map((entry) => {
     const subtype = getActivitySubtype(entry);
     return { ...entry, subtype, type: getActivityType(subtype), date: new Date(entry.createdAt) };
-  }).filter((entry) => entry.type && !Number.isNaN(entry.date.getTime()));
+  }).filter((entry) => visibleSubtypes.has(entry.subtype) && !Number.isNaN(entry.date.getTime()));
   const resetDate = activityResetAt ? new Date(activityResetAt) : null;
   const activityAfterReset = resetDate && !Number.isNaN(resetDate.getTime()) ? allActivity.filter((entry) => entry.date >= resetDate) : allActivity;
   const scopedActivity = scope === "self" ? activityAfterReset.filter((entry) => entry.actorId === session.id) : activityAfterReset;
@@ -646,30 +665,22 @@ function SummaryPanel({ session, users, logs, activityResetAt, onResetActivity }
   const duration = Math.max(periodData.end.getTime() - periodData.start.getTime(), 1);
   const previousStart = new Date(periodData.start.getTime() - duration);
   const previousActivity = scopedActivity.filter((entry) => entry.date >= previousStart && entry.date < periodData.start);
-  const recommendationCount = currentActivity.filter((entry) => entry.type === "recommendation").length;
-  const observationCount = currentActivity.filter((entry) => entry.type === "observation").length;
-  const standardRecommendationCount = currentActivity.filter((entry) => entry.subtype === "recommendation").length;
-  const pcsExpCount = currentActivity.filter((entry) => entry.subtype === "pcs_exp").length;
-  const observationHdrCount = currentActivity.filter((entry) => entry.subtype === "observation_hdr").length;
-  const observationSoCount = currentActivity.filter((entry) => entry.subtype === "observation_so").length;
+  const counts = Object.fromEntries(visibleSeries.map((series) => [series.subtype, currentActivity.filter((entry) => entry.subtype === series.subtype).length]));
   const trend = previousActivity.length ? Math.round(((currentActivity.length - previousActivity.length) / previousActivity.length) * 100) : currentActivity.length ? 100 : 0;
   const activeMembers = new Set(currentActivity.map((entry) => entry.actorId)).size;
   const chartBins = periodData.bins.map((bin) => {
     const entries = currentActivity.filter((entry) => entry.date >= bin.start && entry.date <= bin.end);
-    const recommendation = entries.filter((entry) => entry.subtype === "recommendation").length;
-    const pcsExp = entries.filter((entry) => entry.subtype === "pcs_exp").length;
-    const observationHdr = entries.filter((entry) => entry.subtype === "observation_hdr").length;
-    const observationSo = entries.filter((entry) => entry.subtype === "observation_so").length;
-    return { ...bin, recommendation, pcsExp, observationHdr, observationSo, recommendationTotal: recommendation + pcsExp, observationTotal: observationHdr + observationSo };
+    return { ...bin, counts: Object.fromEntries(visibleSeries.map((series) => [series.subtype, entries.filter((entry) => entry.subtype === series.subtype).length])) };
   });
-  const chartMaximum = Math.max(1, ...chartBins.flatMap((bin) => [bin.recommendationTotal, bin.observationTotal]));
-  const busiestBin = chartBins.reduce((best, bin) => (bin.recommendationTotal + bin.observationTotal) > (best.recommendationTotal + best.observationTotal) ? bin : best, chartBins[0]);
+  const chartMaximum = Math.max(1, ...chartBins.flatMap((bin) => visibleSeries.map((series) => bin.counts[series.subtype])));
+  const totalForBin = (bin) => visibleSeries.reduce((total, series) => total + bin.counts[series.subtype], 0);
+  const busiestBin = chartBins.reduce((best, bin) => totalForBin(bin) > totalForBin(best) ? bin : best, chartBins[0]);
   const team = users.filter((user) => ["senior", "officer"].includes(user.role));
   const rankingFloor = resetDate && !Number.isNaN(resetDate.getTime()) ? new Date(Math.max(periodData.start.getTime(), resetDate.getTime())) : periodData.start;
   const rankingActivity = allActivity.filter((entry) => entry.date >= rankingFloor && entry.date <= periodData.end);
   const ranking = team.map((user) => {
     const entries = rankingActivity.filter((entry) => entry.actorId === user.id);
-    return { user, recommendations: entries.filter((entry) => entry.type === "recommendation").length, observations: entries.filter((entry) => entry.type === "observation").length, total: entries.length };
+    return { user, counts: Object.fromEntries(visibleSeries.map((series) => [series.subtype, entries.filter((entry) => entry.subtype === series.subtype).length])), total: entries.length };
   }).sort((a, b) => b.total - a.total || `${a.user.lastName}`.localeCompare(b.user.lastName)).slice(0, 6);
   const rankingMaximum = Math.max(1, ...ranking.map((item) => item.total));
   const arrivalStart = resetDate && !Number.isNaN(resetDate.getTime()) ? new Date(Math.max(periodData.start.getTime(), resetDate.getTime())) : periodData.start;
@@ -681,11 +692,11 @@ function SummaryPanel({ session, users, logs, activityResetAt, onResetActivity }
   return (
     <div className="summary-dashboard">
       <section className="summary-toolbar"><div><p className="eyebrow dark">PÉRIODE ANALYSÉE</p><h2>{periodLabels[period]}</h2><p>Les données sont calculées à partir des transmissions enregistrées sur le portail.</p></div><div className="summary-controls"><label>Affichage<select value={scope} onChange={(event) => setScope(event.target.value)}><option value="global">Vue globale</option><option value="self">Moi uniquement</option></select></label><label>Période<select value={period} onChange={(event) => setPeriod(event.target.value)}><option value="day">Jour</option><option value="week">Semaine</option><option value="month">Mois</option><option value="year">Année</option></select></label>{canReset && <button className="summary-reset-button" onClick={onResetActivity}><RotateCcw size={16} /> Reset graphiques</button>}</div></section>
-      <section className="summary-kpis"><article><span className="summary-kpi-icon blue"><BarChart3 size={20} /></span><div><strong>{currentActivity.length}</strong><small>Transmissions</small></div><em className={trend >= 0 ? "positive" : "negative"}><TrendingUp size={13} /> {trend >= 0 ? "+" : ""}{trend}%</em></article><article><span className="summary-kpi-icon gold"><Medal size={20} /></span><div><strong>{recommendationCount}</strong><small>Recommandations</small></div></article><article><span className="summary-kpi-icon violet"><MessageSquareText size={20} /></span><div><strong>{observationCount}</strong><small>Observations</small></div></article><article><span className="summary-kpi-icon green"><UsersRound size={20} /></span><div><strong>{activeMembers}</strong><small>Membres actifs</small></div></article></section>
+      <section className="summary-kpis"><article><span className="summary-kpi-icon blue"><BarChart3 size={20} /></span><div><strong>{currentActivity.length}</strong><small>Transmissions</small></div><em className={trend >= 0 ? "positive" : "negative"}><TrendingUp size={13} /> {trend >= 0 ? "+" : ""}{trend}%</em></article>{visibleSeries.map((series) => { const SeriesIcon = series.icon; return <article key={series.subtype}><span className={`summary-kpi-icon ${series.kpiTone}`}><SeriesIcon size={20} /></span><div><strong>{counts[series.subtype]}</strong><small>{series.label}</small></div></article>; })}<article><span className="summary-kpi-icon green"><UsersRound size={20} /></span><div><strong>{activeMembers}</strong><small>Membres actifs</small></div></article></section>
       <div className="summary-grid">
-        <section className="summary-card activity-chart-card"><div className="summary-card-head"><div><p className="eyebrow dark">ÉVOLUTION</p><h2>Recommandations et observations regroupées</h2></div><div className="chart-legend"><span><i className="recommendation" /> Reco</span><span><i className="pcs-exp" /> PCS EXP</span><span><i className="observation-hdr" /> HDR</span><span><i className="observation-so" /> Obs. SO</span></div></div><div className="activity-chart">{chartBins.map((bin, index) => <div className="activity-column" key={`${bin.label}-${index}`}><div className="activity-bars"><span className="series-stack recommendation-stack" title={`Recommandations : ${bin.recommendation} · PCS EXP : ${bin.pcsExp}`} style={{ height: `${bin.recommendationTotal ? Math.max((bin.recommendationTotal / chartMaximum) * 100, 7) : 2}%` }}>{bin.recommendation > 0 && <i className="recommendation" style={{ flexGrow: bin.recommendation }} />}{bin.pcsExp > 0 && <i className="pcs-exp" style={{ flexGrow: bin.pcsExp }} />}</span><span className="series-stack observation-stack" title={`Observations HDR : ${bin.observationHdr} · Observations SO : ${bin.observationSo}`} style={{ height: `${bin.observationTotal ? Math.max((bin.observationTotal / chartMaximum) * 100, 7) : 2}%` }}>{bin.observationHdr > 0 && <i className="observation-hdr" style={{ flexGrow: bin.observationHdr }} />}{bin.observationSo > 0 && <i className="observation-so" style={{ flexGrow: bin.observationSo }} />}</span></div><span>{bin.label}</span></div>)}</div><div className="chart-group-labels"><span><i className="recommendation" /> Recommandations : {recommendationCount}</span><span><i className="observation" /> Observations : {observationCount}</span></div><div className="chart-insight"><CalendarDays size={16} /><span>Période la plus active : <strong>{busiestBin?.label || "—"}</strong></span></div></section>
-        <section className="summary-card distribution-card"><div className="summary-card-head"><div><p className="eyebrow dark">RÉPARTITION</p><h2>Nature de l’activité</h2></div></div><div className="distribution-visual" style={{ "--recommendation-share": `${currentActivity.length ? (recommendationCount / currentActivity.length) * 100 : 50}%` }}><div><strong>{currentActivity.length}</strong><small>total</small></div></div><div className="distribution-details"><div><span><i className="recommendation" /><span>Recommandations<small>Reco : {standardRecommendationCount} · PCS EXP : {pcsExpCount}</small></span></span><strong>{currentActivity.length ? Math.round((recommendationCount / currentActivity.length) * 100) : 0}%</strong></div><div><span><i className="observation" /><span>Observations<small>HDR : {observationHdrCount} · SO : {observationSoCount}</small></span></span><strong>{currentActivity.length ? Math.round((observationCount / currentActivity.length) * 100) : 0}%</strong></div></div></section>
-        <section className="summary-card ranking-card"><div className="summary-card-head"><div><p className="eyebrow dark">CLASSEMENT</p><h2>Sous-Officiers les plus actifs</h2><p>Recommandations et observations depuis le dernier reset.</p></div></div><div className="ranking-list">{ranking.map((item, index) => <article key={item.user.id}><span className={`rank-position rank-${index + 1}`}>{index < 3 ? <Trophy size={15} /> : index + 1}</span><div className={`avatar small ${ROLES[item.user.role].tone}`}>{initials(item.user)}</div><div className="rank-member"><strong>{item.user.grade} {item.user.lastName}</strong><small>{item.recommendations} reco · {item.observations} observation{item.observations > 1 ? "s" : ""}</small><div><i style={{ width: `${(item.total / rankingMaximum) * 100}%` }} /></div></div><strong className="rank-score">{item.total}</strong></article>)}</div>{activityResetAt && <p className="ranking-reset-date">Compteurs réinitialisés le {new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(activityResetAt))}</p>}</section>
+        <section className="summary-card activity-chart-card"><div className="summary-card-head"><div><p className="eyebrow dark">ÉVOLUTION</p><h2>Activité détaillée par catégorie</h2></div><div className="chart-legend">{visibleSeries.map((series) => <span key={series.subtype}><i className={series.tone} /> {series.shortLabel}</span>)}</div></div><div className="activity-chart">{chartBins.map((bin, index) => <div className="activity-column" key={`${bin.label}-${index}`}><div className="activity-bars">{visibleSeries.map((series) => { const value = bin.counts[series.subtype]; return <span className={`series-bar ${series.tone}`} key={series.subtype} title={`${series.label} : ${value}`} style={{ height: `${value ? Math.max((value / chartMaximum) * 100, 7) : 2}%` }} />; })}</div><span>{bin.label}</span></div>)}</div><div className="chart-insight"><CalendarDays size={16} /><span>Période la plus active : <strong>{busiestBin?.label || "—"}</strong></span></div></section>
+        <section className="summary-card distribution-card"><div className="summary-card-head"><div><p className="eyebrow dark">RÉPARTITION</p><h2>Volumes détaillés</h2><p>Chaque catégorie est comptée séparément.</p></div></div><div className="distribution-details detailed">{visibleSeries.map((series) => <div key={series.subtype}><span><i className={series.tone} /><span>{series.label}<small>{counts[series.subtype]} transmission{counts[series.subtype] > 1 ? "s" : ""}</small></span></span><strong>{currentActivity.length ? Math.round((counts[series.subtype] / currentActivity.length) * 100) : 0}%</strong></div>)}</div></section>
+        <section className="summary-card ranking-card"><div className="summary-card-head"><div><p className="eyebrow dark">CLASSEMENT</p><h2>Sous-Officiers les plus actifs</h2><p>Activité détaillée depuis le dernier reset.</p></div></div><div className="ranking-list">{ranking.map((item, index) => <article key={item.user.id}><span className={`rank-position rank-${index + 1}`}>{index < 3 ? <Trophy size={15} /> : index + 1}</span><div className={`avatar small ${ROLES[item.user.role].tone}`}>{initials(item.user)}</div><div className="rank-member"><strong>{item.user.grade} {item.user.firstName} {item.user.lastName}</strong><small>{visibleSeries.map((series) => `${series.shortLabel} : ${item.counts[series.subtype]}`).join(" · ")}</small><div><i style={{ width: `${(item.total / rankingMaximum) * 100}%` }} /></div></div><strong className="rank-score">{item.total}</strong></article>)}</div>{activityResetAt && <p className="ranking-reset-date">Compteurs réinitialisés le {new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(activityResetAt))}</p>}</section>
         <section className="summary-card arrivals-card"><div className="summary-card-head"><div><p className="eyebrow dark">EFFECTIFS</p><h2>Arrivées de Sous-Officiers</h2><p>{arrivals.length} arrivée{arrivals.length > 1 ? "s" : ""} sur la période.</p></div><span><UsersRound size={17} /> {team.length} membres</span></div><div className="arrivals-chart">{arrivalBins.map((bin, index) => <div key={`${bin.label}-${index}`}><i title={`${bin.count} arrivée(s)`} style={{ height: `${bin.count ? Math.max((bin.count / arrivalMaximum) * 100, 9) : 3}%` }}><b>{bin.count || ""}</b></i><span>{bin.label}</span></div>)}</div></section>
       </div>
     </div>
@@ -795,7 +806,7 @@ function MissionInternalPanel({ session, missions, onSubmit, onValidate, onRejec
   );
 }
 
-function ChatPanel({ session, users, chats, onStart, onCreateGroup, onSend, onEditMessage, onDeleteMessage, onDeleteChat }) {
+function ChatPanel({ session, users, chats, onStart, onCreateGroup, onUpdateGroup, onSend, onEditMessage, onDeleteMessage, onDeleteChat }) {
   const isModerator = ["admin", "referent"].includes(session.role);
   const availableContacts = users.filter((user) => user.id !== session.id && !user.blocked).sort(compareUsersByGrade);
   const supportContacts = availableContacts.filter((user) => ["admin", "referent"].includes(user.role));
@@ -806,6 +817,9 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onSend, onEd
   const [groupName, setGroupName] = useState("");
   const [groupMembers, setGroupMembers] = useState([]);
   const [groupError, setGroupError] = useState("");
+  const [groupManagementOpen, setGroupManagementOpen] = useState(false);
+  const [managedGroupMembers, setManagedGroupMembers] = useState([]);
+  const [groupManagementError, setGroupManagementError] = useState("");
   const [editingMessageId, setEditingMessageId] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState([]);
   const [attachmentError, setAttachmentError] = useState("");
@@ -814,6 +828,7 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onSend, onEd
   const savedRangeRef = useRef(null);
   const selectedChat = visibleChats.find((chat) => chat.id === selectedChatId);
   const canParticipate = selectedChat?.participants.includes(session.id);
+  const canManageSelectedGroup = selectedChat?.type === "group" && selectedChat.createdBy === session.id;
 
   useEffect(() => {
     if (selectedChatId && !visibleChats.some((chat) => chat.id === selectedChatId)) setSelectedChatId("");
@@ -822,6 +837,17 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onSend, onEd
   useEffect(() => {
     if (!availableContacts.some((user) => user.id === contactId)) setContactId(availableContacts[0]?.id || "");
   }, [availableContacts, contactId]);
+
+  useEffect(() => {
+    if (!canManageSelectedGroup) {
+      setGroupManagementOpen(false);
+      setManagedGroupMembers([]);
+      setGroupManagementError("");
+      return;
+    }
+    setManagedGroupMembers(selectedChat.participants.filter((id) => id !== session.id));
+    setGroupManagementError("");
+  }, [selectedChat?.id, selectedChat?.updatedAt, canManageSelectedGroup, session.id]);
 
   function chatMeta(chat) {
     if (chat.type === "group") {
@@ -848,7 +874,7 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onSend, onEd
   function createGroup(event) {
     event.preventDefault();
     if (!groupName.trim()) return setGroupError("Donnez un nom au groupe.");
-    if (!groupMembers.length) return setGroupError("Sélectionnez au moins un autre membre.");
+    if (groupMembers.length < 2) return setGroupError("Sélectionnez au moins deux autres membres : un groupe compte trois membres minimum avec son créateur.");
     const groupId = onCreateGroup(groupName.trim(), groupMembers);
     if (!groupId) return setGroupError("Impossible de créer ce groupe.");
     setSelectedChatId(groupId);
@@ -856,6 +882,25 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onSend, onEd
     setGroupMembers([]);
     setGroupError("");
     setGroupOpen(false);
+  }
+
+  function toggleManagedGroupMember(userId) {
+    setGroupManagementError("");
+    setManagedGroupMembers((current) => current.includes(userId) ? current.filter((id) => id !== userId) : [...current, userId]);
+  }
+
+  function saveManagedGroup(event) {
+    event.preventDefault();
+    if (!selectedChat || !canManageSelectedGroup) return;
+    if (managedGroupMembers.length < 2) {
+      setGroupManagementError("Le groupe doit conserver au moins trois membres, créateur inclus.");
+      return;
+    }
+    if (!onUpdateGroup(selectedChat.id, managedGroupMembers)) {
+      setGroupManagementError("Les membres du groupe n’ont pas pu être enregistrés.");
+      return;
+    }
+    setGroupManagementOpen(false);
   }
 
   function rememberSelection() {
@@ -953,7 +998,7 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onSend, onEd
     <section className="chat-layout">
       <aside className="chat-contacts-card">
         <div className="chat-card-head"><p className="eyebrow dark">NOUVELLE DISCUSSION</p><h2>Messagerie</h2><p className="muted">Choisissez un membre ou créez un groupe.</p></div>
-        <div className="chat-start"><label>Contacter un membre</label><div className="chat-start-row"><select value={contactId} onChange={(event) => setContactId(event.target.value)} disabled={!availableContacts.length}>{availableContacts.map((user) => <option value={user.id} key={user.id}>{user.firstName} {user.lastName} — {ROLES[user.role].label}</option>)}</select><button className="primary" type="button" disabled={!contactId} onClick={() => openChat(contactId)}><MessageSquareText size={16} /> Ouvrir</button></div><button className="create-group-toggle" type="button" onClick={() => setGroupOpen((open) => !open)}><UsersRound size={16} /> {groupOpen ? "Fermer la création" : "Créer un groupe"}</button>{groupOpen && <form className="group-form" onSubmit={createGroup}><label>Nom du groupe</label><input value={groupName} onChange={(event) => setGroupName(event.target.value)} maxLength={60} placeholder="Ex. Équipe Alpha" required /><label>Membres du groupe</label><div className="group-member-list">{availableContacts.map((user) => <label key={user.id}><input type="checkbox" checked={groupMembers.includes(user.id)} onChange={() => toggleGroupMember(user.id)} /><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><span>{user.firstName} {user.lastName}<small>{ROLES[user.role].label}</small></span></label>)}</div>{groupError && <p className="form-error">{groupError}</p>}<button className="primary wide" type="submit"><UsersRound size={16} /> Créer le groupe</button></form>}</div>
+        <div className="chat-start"><label>Contacter un membre</label><div className="chat-start-row"><select value={contactId} onChange={(event) => setContactId(event.target.value)} disabled={!availableContacts.length}>{availableContacts.map((user) => <option value={user.id} key={user.id}>{user.firstName} {user.lastName} — {ROLES[user.role].label}</option>)}</select><button className="primary" type="button" disabled={!contactId} onClick={() => openChat(contactId)}><MessageSquareText size={16} /> Ouvrir</button></div><button className="create-group-toggle" type="button" onClick={() => setGroupOpen((open) => !open)}><UsersRound size={16} /> {groupOpen ? "Fermer la création" : "Créer un groupe"}</button>{groupOpen && <form className="group-form" onSubmit={createGroup}><label>Nom du groupe</label><input value={groupName} onChange={(event) => setGroupName(event.target.value)} maxLength={60} placeholder="Ex. Équipe Alpha" required /><label>Membres du groupe <small>(au moins 2 en plus de vous)</small></label><div className="group-member-list">{availableContacts.map((user) => <label key={user.id}><input type="checkbox" checked={groupMembers.includes(user.id)} onChange={() => toggleGroupMember(user.id)} /><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><span>{user.firstName} {user.lastName}<small>{ROLES[user.role].label}</small></span></label>)}</div>{groupError && <p className="form-error">{groupError}</p>}<button className="primary wide" type="submit"><UsersRound size={16} /> Créer le groupe</button></form>}</div>
         <div className="referent-contact"><div><p className="eyebrow dark">CONTACT RAPIDE</p><strong>Contacter un Référent SO ou un Admin</strong></div>{supportContacts.length ? supportContacts.map((contact) => <button type="button" key={contact.id} onClick={() => openChat(contact.id)}><span className={`avatar small ${ROLES[contact.role].tone}`}>{initials(contact)}</span><span>{contact.firstName} {contact.lastName}<small>{contact.role === "admin" ? "Admin · Contact Référent SO" : `${contact.grade || GRADES[0]} · Référent SO`}</small></span><Send size={15} /></button>) : <p className="chat-empty-small">{isModerator ? "Vous êtes actuellement le contact Référent SO principal." : "Aucun contact Référent SO disponible."}</p>}</div>
         <div className="conversation-picker"><div className="conversation-list-title"><p className="eyebrow dark">{isModerator ? "TOUTES LES DISCUSSIONS" : "MES DISCUSSIONS"}</p>{isModerator && <span>Modération</span>}</div><label>Accéder à une discussion</label><select value={selectedChatId} onChange={(event) => { clearEditor(); setSelectedChatId(event.target.value); }}><option value="">Choisir une discussion…</option>{visibleChats.map((chat) => <option value={chat.id} key={chat.id}>{chat.type === "group" ? "Groupe · " : "Discussion · "}{chatMeta(chat).title}</option>)}</select>{selectedChat ? <small>{selectedChat.messages.length} message{selectedChat.messages.length > 1 ? "s" : ""}{selectedChat.messages.at(-1)?.attachments?.length ? ` · ${selectedChat.messages.at(-1).attachments.length} pièce(s) jointe(s) dans le dernier message` : ""}</small> : <p className="chat-empty-small">Aucune discussion sélectionnée.</p>}</div>
       </aside>
@@ -962,8 +1007,9 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onSend, onEd
           <div className="conversation-head">
             {selectedMeta.group ? <span className="group-avatar"><UsersRound size={19} /></span> : selectedMeta.moderated ? <span className="group-avatar"><ShieldCheck size={19} /></span> : <span className={`avatar ${selectedMeta.other ? ROLES[selectedMeta.other.role].tone : "blue"}`}>{selectedMeta.other ? initials(selectedMeta.other) : "?"}</span>}
             <div><strong>{selectedMeta.title}</strong><small>{selectedMeta.subtitle}</small></div>
-            <div className="conversation-head-actions">{isModerator && !canParticipate && <span className="moderation-chip"><ShieldCheck size={14} /> Consultation de modération</span>}<button className="delete-conversation" type="button" onClick={() => onDeleteChat(selectedChat.id)}><Trash2 size={16} /> Supprimer</button></div>
+            <div className="conversation-head-actions">{isModerator && !canParticipate && <span className="moderation-chip"><ShieldCheck size={14} /> Consultation de modération</span>}{canManageSelectedGroup && <button className="manage-group" type="button" onClick={() => setGroupManagementOpen((open) => !open)}><UsersRound size={16} /> {groupManagementOpen ? "Fermer" : "Gérer le groupe"}</button>}<button className="delete-conversation" type="button" onClick={() => onDeleteChat(selectedChat.id)}><Trash2 size={16} /> Supprimer</button></div>
           </div>
+          {canManageSelectedGroup && groupManagementOpen && <form className="group-management" onSubmit={saveManagedGroup}><div className="group-management-head"><div><strong>Gérer les membres</strong><small>Le créateur reste membre. Conservez au moins deux autres membres.</small></div><span>{managedGroupMembers.length + 1} membres</span></div><div className="group-member-list">{availableContacts.map((user) => <label key={user.id}><input type="checkbox" checked={managedGroupMembers.includes(user.id)} onChange={() => toggleManagedGroupMember(user.id)} /><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><span>{user.firstName} {user.lastName}<small>{ROLES[user.role].label}</small></span></label>)}</div>{groupManagementError && <p className="form-error">{groupManagementError}</p>}<div className="group-management-actions"><button className="secondary" type="button" onClick={() => setGroupManagementOpen(false)}>Annuler</button><button className="primary" type="submit"><BadgeCheck size={16} /> Enregistrer</button></div></form>}
           <div className="chat-messages">
             {selectedChat.messages.map((item) => {
               const own = item.senderId === session.id;
@@ -1262,6 +1308,7 @@ function App() {
   const [summarySettings, setSummarySettings] = useState({ activityResetAt: null });
   const [sergeantAssignments, setSergeantAssignments] = useState([]);
   const [submissionHistory, setSubmissionHistory] = useState([]);
+  const [portalNotifications, setPortalNotifications] = useState([]);
   const [loginTransition, setLoginTransition] = useState(null);
 
   useEffect(() => {
@@ -1284,6 +1331,7 @@ function App() {
       const savedLogs = readStoredJson(LOG_KEY, []);
       const savedAssignments = readStoredJson(ASSIGNMENTS_KEY, []);
       const savedSubmissionHistory = readStoredJson(SUBMISSION_HISTORY_KEY, []);
+      const savedNotifications = readStoredJson(NOTIFICATION_KEY, []);
       setMissions(Array.isArray(savedMissions) ? savedMissions : []);
       setChats(Array.isArray(savedChats) ? savedChats : []);
       setAuditLogs(Array.isArray(savedLogs) ? savedLogs : []);
@@ -1291,6 +1339,7 @@ function App() {
       setSummarySettings(readStoredJson(SUMMARY_KEY, { activityResetAt: null }));
       setSergeantAssignments(Array.isArray(savedAssignments) ? savedAssignments : []);
       setSubmissionHistory(Array.isArray(savedSubmissionHistory) ? savedSubmissionHistory : []);
+      setPortalNotifications(Array.isArray(savedNotifications) ? savedNotifications : []);
       const savedTheme = localStorage.getItem(THEME_KEY) === "dark";
       setDarkMode(savedTheme);
       document.documentElement.dataset.theme = savedTheme ? "dark" : "light";
@@ -1320,6 +1369,7 @@ function App() {
   useEffect(() => { if (ready) localStorage.setItem(SUMMARY_KEY, JSON.stringify(summarySettings)); }, [summarySettings, ready]);
   useEffect(() => { if (ready) localStorage.setItem(ASSIGNMENTS_KEY, JSON.stringify(sergeantAssignments)); }, [sergeantAssignments, ready]);
   useEffect(() => { if (ready) localStorage.setItem(SUBMISSION_HISTORY_KEY, JSON.stringify(submissionHistory)); }, [submissionHistory, ready]);
+  useEffect(() => { if (ready) localStorage.setItem(NOTIFICATION_KEY, JSON.stringify(portalNotifications)); }, [portalNotifications, ready]);
   useEffect(() => {
     function syncAccounts(event) {
       if (event.key === CHAT_KEY && event.newValue) {
@@ -1344,6 +1394,10 @@ function App() {
       }
       if (event.key === SUBMISSION_HISTORY_KEY && event.newValue) {
         try { setSubmissionHistory(JSON.parse(event.newValue)); } catch { /* Ignore un historique invalide. */ }
+        return;
+      }
+      if (event.key === NOTIFICATION_KEY && event.newValue) {
+        try { setPortalNotifications(JSON.parse(event.newValue)); } catch { /* Ignore des notifications invalides. */ }
         return;
       }
     }
@@ -1394,6 +1448,11 @@ function App() {
     const now = new Date();
     const entry = { id: crypto.randomUUID(), createdAt: now.toISOString(), displayAt: new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "medium" }).format(now), actorId: actor?.id || "system", actorName: actor ? `${actor.firstName} ${actor.lastName}` : "Système", actorRole: actor?.role || "", category, action, details };
     setAuditLogs((current) => [entry, ...current].slice(0, 500));
+  }
+  function addPortalNotification({ recipients = "all", kind = "form", title, text, target = "home" }) {
+    const audience = Array.isArray(recipients) ? [...new Set(recipients.filter(Boolean))] : null;
+    const item = { id: crypto.randomUUID(), recipients: audience, kind, title, text, target, createdAt: new Date().toISOString() };
+    setPortalNotifications((current) => [item, ...current].slice(0, 300));
   }
   function clearAuditLogs() {
     if (session.role !== "admin" || !confirm("Réinitialiser définitivement le journal des logs ?")) return;
@@ -1477,6 +1536,11 @@ function App() {
     flash(message);
     recordSubmission(type, values);
     addLog("form", "Formulaire envoyé", TRANSMISSION_TYPES[type]?.title || type);
+    addPortalNotification({
+      title: `Formulaire envoyé — ${TRANSMISSION_TYPES[type]?.title || type}`,
+      text: `${session.grade || GRADES[0]} ${session.firstName} ${session.lastName} a transmis un formulaire.`,
+      target: type,
+    });
     if (!QUOTA_TYPES.includes(type) || !["senior", "officer"].includes(session.role)) return;
     setQuotas((current) => {
       const userCounts = current.counts?.[session.id] || {};
@@ -1489,6 +1553,11 @@ function App() {
     const sergeant = users.find((user) => user.id === sergeantId);
     setSergeantAssignments((current) => current.map((assignment) => assignment.sergeantId === sergeantId && assignment.observerId === session.id && assignment.status === "active" ? { ...assignment, status: "completed", completedAt: new Date().toISOString() } : assignment));
     addLog("form", "Rapport nouveau Sous-Officier envoyé", sergeant ? `${sergeant.grade} ${sergeant.firstName} ${sergeant.lastName}` : "Sergent assigné");
+    addPortalNotification({
+      title: "Rapport nouveau Sous-Officier envoyé",
+      text: `${session.grade || GRADES[0]} ${session.firstName} ${session.lastName} a envoyé un rapport.`,
+      target: "sergeant_report",
+    });
   }
   function assignSergeant({ sergeantId, observerId, dueDate }) {
     if (!["admin", "referent"].includes(session.role)) return;
@@ -1601,21 +1670,43 @@ function App() {
   }
   function createChatGroup(name, memberIds) {
     const validMemberIds = [...new Set(memberIds)].filter((id) => users.some((user) => user.id === id && user.id !== session.id && !user.blocked));
-    if (!name || !validMemberIds.length) return "";
+    if (!name || validMemberIds.length < 2) return "";
     const chatId = crypto.randomUUID();
     setChats((current) => [{ id: chatId, type: "group", name, createdBy: session.id, participants: [session.id, ...validMemberIds], messages: [], updatedAt: new Date().toISOString() }, ...current]);
     addLog("chat", "Groupe créé", `${name} · ${validMemberIds.length + 1} membres`);
     return chatId;
   }
+  function updateChatGroup(chatId, memberIds) {
+    const chat = chats.find((item) => item.id === chatId);
+    if (!chat || chat.type !== "group" || chat.createdBy !== session.id) return false;
+    const validMemberIds = [...new Set(memberIds)].filter((id) => users.some((user) => user.id === id && user.id !== session.id && !user.blocked));
+    if (validMemberIds.length < 2) {
+      flash("Un groupe doit conserver au moins trois membres, créateur inclus.");
+      return false;
+    }
+    setChats((current) => current.map((item) => item.id === chatId ? { ...item, participants: [session.id, ...validMemberIds], updatedAt: new Date().toISOString() } : item));
+    addLog("chat", "Membres du groupe modifiés", `${chat.name || "Groupe"} · ${validMemberIds.length + 1} membres`);
+    flash("Les membres du groupe ont bien été mis à jour.");
+    return true;
+  }
   function sendChatMessage(chatId, html, text, attachments = []) {
+    const chat = chats.find((item) => item.id === chatId && item.participants.includes(session.id));
+    if (!chat) return;
     setChats((current) => {
-      const chat = current.find((item) => item.id === chatId && item.participants.includes(session.id));
-      if (!chat) return current;
+      const currentChat = current.find((item) => item.id === chatId && item.participants.includes(session.id));
+      if (!currentChat) return current;
       const message = { id: crypto.randomUUID(), senderId: session.id, senderName: `${session.firstName} ${session.lastName}`, html: sanitizeChatHtml(html), text, attachments, sentAt: new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date()) };
-      const updatedChat = { ...chat, messages: [...chat.messages, message], updatedAt: new Date().toISOString() };
+      const updatedChat = { ...currentChat, messages: [...currentChat.messages, message], updatedAt: new Date().toISOString() };
       return [updatedChat, ...current.filter((item) => item.id !== chatId)];
     });
     addLog("chat", "Message envoyé", `${attachments.length ? `${attachments.length} pièce${attachments.length > 1 ? "s" : ""} jointe${attachments.length > 1 ? "s" : ""}` : "Sans pièce jointe"}`);
+    addPortalNotification({
+      recipients: chat.participants.filter((id) => id !== session.id),
+      kind: "message",
+      title: `Nouveau message de ${session.firstName} ${session.lastName}`,
+      text: chat.type === "group" ? `Dans le groupe « ${chat.name || "Sans nom"} »` : "Dans une discussion privée.",
+      target: "chat",
+    });
   }
   function editChatMessage(chatId, messageId, html, text) {
     setChats((current) => current.map((chat) => chat.id !== chatId ? chat : { ...chat, messages: chat.messages.map((message) => message.id === messageId && message.senderId === session.id ? { ...message, html: sanitizeChatHtml(html), text, editedAt: new Date().toISOString() } : message), updatedAt: new Date().toISOString() }));
@@ -1632,7 +1723,8 @@ function App() {
   function deleteChat(chatId) {
     const chat = chats.find((item) => item.id === chatId);
     const canModerate = ["admin", "referent"].includes(session.role);
-    if (!chat || (!chat.participants.includes(session.id) && !canModerate) || !confirm("Supprimer définitivement cette conversation et tous ses messages ?")) return;
+    const canDelete = chat?.type === "group" ? chat.createdBy === session.id || canModerate : chat?.participants.includes(session.id) || canModerate;
+    if (!chat || !canDelete || !confirm("Supprimer définitivement cette conversation et tous ses messages ?")) return;
     setChats((current) => current.filter((item) => item.id !== chatId));
     addLog("chat", "Conversation supprimée", `${chat.type === "group" ? chat.name || "Groupe" : "Discussion privée"} · ${chat.messages.length} messages`);
     flash("La conversation a été supprimée.");
@@ -1716,8 +1808,8 @@ function App() {
       if (error) { flash(error); return; }
     }
     const nextEmail = ["admin", "referent"].includes(session.role) ? String(form.email || "").trim().toLowerCase() : session.email;
-    if (!String(form.firstName || "").trim() || !String(form.lastName || "").trim() || !nextEmail) {
-      flash("Tous les champs d’identité sont obligatoires.");
+    if (!String(form.firstName || "").trim() || !nextEmail) {
+      flash("Le prénom et l’adresse e-mail sont obligatoires.");
       return;
     }
     try {
@@ -1767,7 +1859,7 @@ function App() {
         <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{session.role === "admin" && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{["admin", "referent"].includes(session.role) && <optgroup label="Référent SO"><option value="workforce">Effectif</option><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="summary">Résumé</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{["admin", "referent", "senior"].includes(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="sergeant_assignments">Référent</option><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{["admin", "referent"].includes(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
         {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "workforce" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Effectif</h1><p className="muted">Consultez l’organisation complète des membres par accès et par grade.</p></div><span className="referent-access"><UsersRound size={16} /> Vue des effectifs</span></header> : activeSection === "sergeant_assignments" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Référent</h1><p className="muted">Attribuez et suivez les référents des nouveaux Sergents.</p></div><span className="senior-access"><BadgeCheck size={16} /> Suivi des semaines de test</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
-        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={setActiveSection} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} logs={auditLogs} activityResetAt={summarySettings.activityResetAt || summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
+        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={setActiveSection} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} logs={auditLogs} activityResetAt={summarySettings.activityResetAt || summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
         <section className="stats">
           <article><span className="stat-icon blue"><UsersRound /></span><div><strong>{users.length}</strong><small>Comptes au total</small></div><span className="trend">Tous niveaux</span></article>
           <article><span className="stat-icon red"><UserX /></span><div><strong>{users.filter((user) => user.blocked).length}</strong><small>Comptes bloqués</small></div><span className="trend">Accès suspendu</span></article>
@@ -1778,7 +1870,7 @@ function App() {
           <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
           <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>État du compte</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.email}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td><RoleBadge role={user.role} /></td><td>{user.role === "admin" ? <span className="account-state active"><UserCheck size={15} /> Compte actif</span> : <button className={`account-state ${user.blocked ? "blocked" : "active"}`} type="button" onClick={() => toggleAccountBlock(user)}>{user.blocked ? <UserX size={15} /> : <UserCheck size={15} />}{user.blocked ? "Compte bloqué" : "Compte actif"}</button>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title="Modifier" onClick={() => setModal(user)}><Pencil size={17} /></button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
         </section>
-        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} assignments={sergeantAssignments} onSuccess={sergeantReportSuccess} history={submissionHistory.filter((entry) => entry.type === "sergeant_report")} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} history={submissionHistory.filter((entry) => entry.type === activeSection)} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} />}
+        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onUpdateGroup={updateChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} assignments={sergeantAssignments} onSuccess={sergeantReportSuccess} history={submissionHistory.filter((entry) => entry.type === "sergeant_report")} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} history={submissionHistory.filter((entry) => entry.type === activeSection)} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} />}
       </main>
       {notice && <div className="toast"><BadgeCheck size={19} />{notice}</div>}
       {modal && <UserModal actor={session} editing={modal.id ? modal : null} onClose={() => setModal(null)} onSave={saveUser} />}

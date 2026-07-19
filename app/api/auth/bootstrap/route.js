@@ -32,7 +32,7 @@ export async function POST(request) {
     const grade = cleanGrade(body?.grade);
     const password = String(body?.password || "");
     const passwordIssue = passwordError(password);
-    if (!email || !firstName || !lastName || !grade || passwordIssue) return json({ error: passwordIssue || "Tous les champs sont obligatoires." }, 400);
+    if (!email || !firstName || !grade || passwordIssue) return json({ error: passwordIssue || "Le prénom, l’adresse e-mail et le grade sont obligatoires." }, 400);
     const { database, publicUser, listUsers } = await import("../_shared");
     const record = await createPasswordRecord(password);
     const rows = await database("portal_users", { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify({ email, first_name: firstName, last_name: lastName, role: "admin", grade, presence: null, ...record }) });

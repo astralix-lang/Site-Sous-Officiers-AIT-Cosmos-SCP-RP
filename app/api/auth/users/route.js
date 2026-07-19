@@ -13,6 +13,10 @@ function errorResponse(error) {
   const message = error instanceof Error ? error.message : "";
   if (message === "INVALID_CONTENT_TYPE" || message === "INVALID_JSON") return json({ error: "Formulaire invalide." }, 400);
   if (message === "BODY_TOO_LARGE") return json({ error: "Formulaire trop volumineux." }, 413);
+  if (message === "DATABASE_REQUEST_FAILED" || message === "DATABASE_INVALID_RESPONSE") {
+    return json({ error: "La modification est temporairement indisponible. Réessayez dans quelques minutes." }, 503);
+  }
+  if (message === "USER_NOT_UPDATED") return json({ error: "Le compte n’a pas pu être enregistré. Réessayez dans un instant." }, 503);
   console.error("Portal user action failed", message || "Unknown error");
   return json({ error: "La modification du compte a échoué." }, 500);
 }
@@ -22,7 +26,7 @@ function identityPayload(body, role, existing = null) {
   const firstName = cleanName(body?.firstName);
   const lastName = cleanName(body?.lastName);
   const grade = cleanGrade(body?.grade);
-  if (!email || !firstName || !lastName || !grade || !role) return { error: "Tous les champs d’identité sont obligatoires." };
+  if (!email || !firstName || !grade || !role) return { error: "Le prénom, l’adresse e-mail, le grade et le niveau d’accès sont obligatoires." };
   return {
     value: {
       email,
