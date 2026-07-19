@@ -398,7 +398,7 @@ function Login({ onLogin, onSetup, setupRequired, configurationError, error }) {
   return (
     <main className="login-page">
       <section className="login-brand">
-        <div className="brand-mark large"><img className="portal-logo" src="/images/portal-logo.png" alt="Emblème du Portail Sous-Officiers" /></div>
+        <div className="brand-mark large"><ShieldCheck size={34} /></div>
         <p className="eyebrow">ESPACE SÉCURISÉ</p>
         <h1>Portail<br />Sous-Officiers</h1>
         <p className="brand-copy">Espace de gestion pour les sous-officiers AIT</p>
@@ -407,7 +407,7 @@ function Login({ onLogin, onSetup, setupRequired, configurationError, error }) {
 
       <section className="login-panel">
         <div className="login-card">
-          <div className="mobile-logo"><div className="brand-mark"><img className="portal-logo" src="/images/portal-logo.png" alt="Emblème du Portail Sous-Officiers" /></div><strong>Portail SO</strong></div>
+          <div className="mobile-logo"><div className="brand-mark"><ShieldCheck size={23} /></div><strong>Portail SO</strong></div>
           <p className="eyebrow dark">CONNEXION</p>
           <h2>{setupRequired ? "Configuration initiale" : "Bienvenue"}</h2>
           <p className="muted">{setupRequired ? "Créez le premier compte Administrateur du portail." : "Identifiez-vous pour accéder à votre espace."}</p>
@@ -1917,7 +1917,7 @@ function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand-row"><div className="brand-mark"><img className="portal-logo" src="/images/portal-logo.png" alt="Emblème du Portail Sous-Officiers" /></div><div><strong>Portail SO</strong><small>Espace sécurisé</small></div></div>
+        <div className="brand-row"><div className="brand-mark"><ShieldCheck size={23} /></div><div><strong>Portail SO</strong><small>Espace sécurisé</small></div></div>
         <nav>
           <button className={`menu-item standalone-nav ${activeSection === "home" ? "active" : ""}`} onClick={() => setActiveSection("home")}><Home size={18} /> Accueil</button>
           {session.role === "admin" && <MenuGroup title="Admin" icon={ShieldCheck} open={openGroups.admin} onToggle={() => toggleGroup("admin")}><button className={`menu-item ${activeSection === "dashboard" ? "active" : ""}`} onClick={() => setActiveSection("dashboard")}><LayoutDashboard size={17} /> Tableau de bord</button></MenuGroup>}
