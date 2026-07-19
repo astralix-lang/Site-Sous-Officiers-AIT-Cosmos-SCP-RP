@@ -146,7 +146,9 @@ export async function POST(request) {
     const senderRole = clean(body.submittedBy?.role, 100);
     const discordResponse = await fetch(webhookUrl, {
       method: "POST",
-      redirect: "error",
+      // Cloudflare Workers n'accepte que "follow" ou "manual".
+      // Le statut HTTP est déjà vérifié juste après l'appel.
+      redirect: "manual",
       signal: AbortSignal.timeout(8000),
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
