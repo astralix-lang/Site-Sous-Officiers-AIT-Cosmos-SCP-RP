@@ -1341,7 +1341,10 @@ function App() {
   useEffect(() => {
     if (!ready || !session) return;
     let cancelled = false;
+    let refreshing = false;
     async function refreshSharedPortal() {
+      if (refreshing || document.visibilityState === "hidden") return;
+      refreshing = true;
       try {
         const state = await portalRequest();
         if (cancelled) return;
@@ -1350,17 +1353,24 @@ function App() {
         setPortalRemote(true);
       } catch {
         if (!cancelled) setPortalRemote(false);
+      } finally {
+        refreshing = false;
       }
     }
     refreshSharedPortal();
-    const timer = window.setInterval(refreshSharedPortal, 20_000);
-    document.addEventListener("visibilitychange", refreshSharedPortal);
+    // Une conversation ouverte se synchronise presque instantanément ; le reste
+    // du portail reste plus léger lorsque la messagerie n’est pas affichée.
+    const timer = window.setInterval(refreshSharedPortal, activeSection === "chat" ? 1_200 : 8_000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshSharedPortal();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", refreshSharedPortal);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [ready, session?.id]);
+  }, [ready, session?.id, activeSection]);
   useEffect(() => {
     let cancelled = false;
     async function initialize() {
