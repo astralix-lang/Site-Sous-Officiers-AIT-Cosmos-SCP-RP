@@ -1045,9 +1045,24 @@ function SergeantAssignmentPanel({ users, session, assignments, onAssign, onRemi
   );
 }
 
-function SubmissionHistoryPanel({ type, entries = [], canReset, onReset }) {
+function SubmissionHistoryPanel({ type, entries = [], canManage, onReset, onEdit, onDelete }) {
   const historyTitles = { recommendation: "Recommandations effectuées", pcs_exp: "Recommandations PCS EXP effectuées", observation_hdr: "Observations HDR effectuées", observation_so: "Observations SO effectuées", sergeant_report: "Rapports envoyés" };
   const title = historyTitles[type] || "Transmissions effectuées";
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(null);
+
+  function startEditing(entry) {
+    setEditingId(entry.id);
+    setForm({ ...(entry.values || {}) });
+  }
+  function change(key, value) { setForm((current) => ({ ...current, [key]: value })); }
+  function cancelEditing() { setEditingId(null); setForm(null); }
+  function save(event) {
+    event.preventDefault();
+    if (!form || !editingId) return;
+    onEdit(type, editingId, form);
+    cancelEditing();
+  }
 
   return (
     <aside className="submission-history-card">
@@ -1055,19 +1070,17 @@ function SubmissionHistoryPanel({ type, entries = [], canReset, onReset }) {
         <div><p className="eyebrow dark">HISTORIQUE PUBLIC</p><h2>{title}</h2><p>Visible par les membres ayant accès à cette rubrique.</p></div>
         <span><ScrollText size={16} /> {entries.length}</span>
       </div>
-      {canReset && entries.length > 0 && <button className="submission-history-reset" type="button" onClick={() => onReset(type)}><RotateCcw size={15} /> Réinitialiser uniquement cet historique</button>}
+      {canManage && entries.length > 0 && <button className="submission-history-reset" type="button" onClick={() => onReset(type)}><RotateCcw size={15} /> Réinitialiser uniquement cet historique</button>}
       <div className="submission-history-list">
         {entries.map((entry) => {
           const values = entry.values || {};
           const subject = type === "sergeant_report" ? values.sergeantName : values.aitName;
           const observationLabel = values.observation === "negative" ? "Négative" : "Positive";
           const HistoryIcon = type === "sergeant_report" ? FileText : TRANSMISSION_TYPES[type]?.icon || FileText;
+          const editing = editingId === entry.id && form;
           return <article key={entry.id}>
-            <div className="submission-history-title"><span className={`category-icon ${type === "sergeant_report" ? "gold" : TRANSMISSION_TYPES[type]?.tone || "blue"}`}><HistoryIcon size={17} /></span><div><strong>{subject || "Transmission"}</strong><small>{entry.displayAt}</small></div></div>
-            <div className="submission-history-author"><span>Envoyé par</span><strong>{entry.authorGrade ? `${entry.authorGrade} ` : ""}{entry.authorName}</strong></div>
-            {["observation_hdr", "observation_so"].includes(type) && <span className={`history-observation ${values.observation === "negative" ? "negative" : "positive"}`}>{observationLabel}</span>}
-            {type === "sergeant_report" && <span className={`history-conclusion conclusion-${REPORT_CONCLUSIONS.indexOf(values.conclusion)}`}>{values.conclusion}</span>}
-            {type === "sergeant_report" ? <div className="history-report-details"><p><strong>Point positif</strong>{values.positivePoints}</p><p><strong>Point négatif</strong>{values.negativePoints}</p><p><strong>Avis global</strong>{values.globalOpinion}</p></div> : <p className="submission-history-reason"><strong>Raison</strong>{values.reason}</p>}
+            <div className="submission-history-entry-head"><div className="submission-history-title"><span className={`category-icon ${type === "sergeant_report" ? "gold" : TRANSMISSION_TYPES[type]?.tone || "blue"}`}><HistoryIcon size={17} /></span><div><strong>{subject || "Transmission"}</strong><small>{entry.displayAt}</small></div></div>{canManage && !editing && <div className="history-entry-actions"><button className="icon-button" type="button" title="Modifier cet historique" aria-label="Modifier cet historique" onClick={() => startEditing(entry)}><Pencil size={15} /></button><button className="icon-button danger" type="button" title="Supprimer cet historique" aria-label="Supprimer cet historique" onClick={() => onDelete(type, entry.id)}><Trash2 size={15} /></button></div>}</div>
+            {editing ? <form className="history-entry-editor" onSubmit={save}>{type === "sergeant_report" ? <><label>Nom du Sergent<input value={form.sergeantName || ""} onChange={(event) => change("sergeantName", event.target.value)} required /></label><label>Point positif<textarea value={form.positivePoints || ""} onChange={(event) => change("positivePoints", event.target.value)} required /></label><label>Point négatif<textarea value={form.negativePoints || ""} onChange={(event) => change("negativePoints", event.target.value)} required /></label><label>Avis global<textarea value={form.globalOpinion || ""} onChange={(event) => change("globalOpinion", event.target.value)} required /></label><label>Conclusion<select value={form.conclusion || REPORT_CONCLUSIONS[0]} onChange={(event) => change("conclusion", event.target.value)}>{REPORT_CONCLUSIONS.map((conclusion) => <option key={conclusion} value={conclusion}>{conclusion}</option>)}</select></label></> : <><label>Nom de l’AIT<input value={form.aitName || ""} onChange={(event) => change("aitName", event.target.value)} required /></label><label>S-OFF/-SUP à l’origine<input value={form.author || ""} onChange={(event) => change("author", event.target.value)} required /></label>{["observation_hdr", "observation_so"].includes(type) && <label>Nature de l’observation<select value={form.observation || "positive"} onChange={(event) => change("observation", event.target.value)}><option value="positive">Positive</option><option value="negative">Négative</option></select></label>}<label>Raison<textarea value={form.reason || ""} onChange={(event) => change("reason", event.target.value)} required /></label></>}<div className="history-entry-editor-actions"><button className="secondary" type="button" onClick={cancelEditing}>Annuler</button><button className="primary" type="submit"><BadgeCheck size={15} /> Enregistrer</button></div></form> : <><div className="submission-history-author"><span>Envoyé par</span><strong>{entry.authorGrade ? `${entry.authorGrade} ` : ""}{entry.authorName}</strong></div>{["observation_hdr", "observation_so"].includes(type) && <span className={`history-observation ${values.observation === "negative" ? "negative" : "positive"}`}>{observationLabel}</span>}{type === "sergeant_report" && <span className={`history-conclusion conclusion-${REPORT_CONCLUSIONS.indexOf(values.conclusion)}`}>{values.conclusion}</span>}{type === "sergeant_report" ? <div className="history-report-details"><p><strong>Point positif</strong>{values.positivePoints}</p><p><strong>Point négatif</strong>{values.negativePoints}</p><p><strong>Avis global</strong>{values.globalOpinion}</p></div> : <p className="submission-history-reason"><strong>Raison</strong>{values.reason}</p>}</>}
           </article>;
         })}
         {!entries.length && <div className="submission-history-empty"><ScrollText size={25} /><strong>Aucun envoi</strong><p>Les prochaines transmissions apparaîtront ici.</p></div>}
@@ -1076,7 +1089,7 @@ function SubmissionHistoryPanel({ type, entries = [], canReset, onReset }) {
   );
 }
 
-function SergeantReportPanel({ users, session, assignments, onSuccess, history, canResetHistory, onResetHistory }) {
+function SergeantReportPanel({ users, session, assignments, onSuccess, history, canManageHistory, onResetHistory, onEditHistory, onDeleteHistory }) {
   const activeAssignments = assignments.filter((assignment) => assignment.observerId === session.id && assignment.status === "active");
   const sergeants = activeAssignments.map((assignment) => users.find((user) => user.id === assignment.sergeantId)).filter((user) => user && user.role === "officer" && user.grade === "Sergent");
   const initialDraft = readFormDraft(session.id, "sergeant_report");
@@ -1163,12 +1176,12 @@ function SergeantReportPanel({ users, session, assignments, onSuccess, history, 
           <div className="transmission-actions"><span><ShieldCheck size={15} /> Envoi réservé au SO Sup assigné</span><button className="primary" type="submit" disabled={sending || !sergeants.length || session.role !== "senior"}><Send size={17} />{sending ? "Envoi en cours…" : "Envoyer le rapport"}</button></div>
         </form>
       </div>
-      <SubmissionHistoryPanel type="sergeant_report" entries={history} canReset={canResetHistory} onReset={onResetHistory} />
+      <SubmissionHistoryPanel type="sergeant_report" entries={history} canManage={canManageHistory} onReset={onResetHistory} onEdit={onEditHistory} onDelete={onDeleteHistory} />
     </section>
   );
 }
 
-function TransmissionPanel({ session, onSuccess, type, history, canResetHistory, onResetHistory }) {
+function TransmissionPanel({ session, onSuccess, type, history, canManageHistory, onResetHistory, onEditHistory, onDeleteHistory }) {
   const defaultAuthor = `${session.firstName} ${session.lastName}`;
   const initialDraft = readFormDraft(session.id, type);
   const [form, setForm] = useState(() => ({ aitName: "", author: defaultAuthor, reason: "", observation: "positive", ...(initialDraft?.values || {}) }));
@@ -1251,7 +1264,7 @@ function TransmissionPanel({ session, onSuccess, type, history, canResetHistory,
           <div className="transmission-actions"><span><ShieldCheck size={15} /> Envoi sécurisé via le serveur</span><button className="primary" type="submit" disabled={sending}><Send size={17} />{sending ? "Envoi en cours…" : "Envoyer sur Discord"}</button></div>
         </form>
       </div>
-      <SubmissionHistoryPanel type={type} entries={history} canReset={canResetHistory} onReset={onResetHistory} />
+      <SubmissionHistoryPanel type={type} entries={history} canManage={canManageHistory} onReset={onResetHistory} onEdit={onEditHistory} onDelete={onDeleteHistory} />
     </section>
   );
 }
@@ -1488,6 +1501,42 @@ function App() {
     setSubmissionHistory((current) => current.filter((entry) => entry.type !== type));
     addLog("form", "Historique de formulaire réinitialisé", label);
     flash(`L’historique « ${label} » a été réinitialisé.`);
+  }
+  function updateSubmissionHistory(type, entryId, values) {
+    if (!["admin", "referent"].includes(session.role)) return;
+    const text = (value, limit = 950) => typeof value === "string" ? value.trim().slice(0, limit) : "";
+    const isReport = type === "sergeant_report";
+    const updatedValues = isReport
+      ? {
+          sergeantName: text(values.sergeantName, 100),
+          positivePoints: text(values.positivePoints),
+          negativePoints: text(values.negativePoints),
+          globalOpinion: text(values.globalOpinion),
+          conclusion: REPORT_CONCLUSIONS.includes(values.conclusion) ? values.conclusion : REPORT_CONCLUSIONS[0],
+        }
+      : {
+          aitName: text(values.aitName, 100),
+          author: text(values.author, 100),
+          reason: text(values.reason),
+          ...( ["observation_hdr", "observation_so"].includes(type) ? { observation: values.observation === "negative" ? "negative" : "positive" } : {}),
+        };
+    const complete = isReport
+      ? updatedValues.sergeantName && updatedValues.positivePoints && updatedValues.negativePoints && updatedValues.globalOpinion
+      : updatedValues.aitName && updatedValues.author && updatedValues.reason;
+    if (!complete) { flash("Tous les champs de l’historique doivent être renseignés."); return; }
+    setSubmissionHistory((current) => current.map((entry) => entry.id === entryId && entry.type === type ? { ...entry, values: updatedValues, editedAt: new Date().toISOString(), editedBy: session.id } : entry));
+    const label = isReport ? "Rapport nouveau Sous-Officier" : TRANSMISSION_TYPES[type]?.title || type;
+    addLog("form", "Historique de formulaire modifié", label);
+    flash("L’historique a été modifié.");
+  }
+  function deleteSubmissionHistory(type, entryId) {
+    if (!["admin", "referent"].includes(session.role) || !confirm("Supprimer définitivement cet élément de l’historique public ?")) return;
+    const entry = submissionHistory.find((item) => item.id === entryId && item.type === type);
+    if (!entry) return;
+    setSubmissionHistory((current) => current.filter((item) => item.id !== entryId));
+    const label = type === "sergeant_report" ? "Rapport nouveau Sous-Officier" : TRANSMISSION_TYPES[type]?.title || type;
+    addLog("form", "Élément supprimé de l’historique", label);
+    flash("L’élément a été supprimé de l’historique.");
   }
   function transmissionSuccess(message, type, values) {
     flash(message);
@@ -1821,7 +1870,7 @@ function App() {
           <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
           <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>État du compte</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.email}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td><RoleBadge role={user.role} /></td><td>{user.role === "admin" ? <span className="account-state active"><UserCheck size={15} /> Compte actif</span> : <button className={`account-state ${user.blocked ? "blocked" : "active"}`} type="button" onClick={() => toggleAccountBlock(user)}>{user.blocked ? <UserX size={15} /> : <UserCheck size={15} />}{user.blocked ? "Compte bloqué" : "Compte actif"}</button>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title="Modifier" onClick={() => setModal(user)}><Pencil size={17} /></button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
         </section>
-        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} assignments={sergeantAssignments} onSuccess={sergeantReportSuccess} history={submissionHistory.filter((entry) => entry.type === "sergeant_report")} canResetHistory={canManage} onResetHistory={resetSubmissionHistory} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} history={submissionHistory.filter((entry) => entry.type === activeSection)} canResetHistory={canManage} onResetHistory={resetSubmissionHistory} />}
+        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} assignments={sergeantAssignments} onSuccess={sergeantReportSuccess} history={submissionHistory.filter((entry) => entry.type === "sergeant_report")} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} history={submissionHistory.filter((entry) => entry.type === activeSection)} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} />}
       </main>
       {notice && <div className="toast"><BadgeCheck size={19} />{notice}</div>}
       {modal && <UserModal actor={session} editing={modal.id ? modal : null} onClose={() => setModal(null)} onSave={saveUser} />}
