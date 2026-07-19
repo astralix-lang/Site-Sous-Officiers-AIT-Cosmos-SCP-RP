@@ -72,13 +72,17 @@ export async function database(path, init = {}) {
       ...(init.headers || {}),
     },
   });
+  const responseText = await response.text().catch(() => "");
   if (!response.ok) {
-    const detail = await response.text().catch(() => "");
+    const detail = responseText;
     console.error("Supabase portal request failed", response.status, detail.slice(0, 300));
     throw new Error("DATABASE_REQUEST_FAILED");
   }
-  if (response.status === 204) return null;
-  return response.json();
+  // PostgREST may return 201 with an empty body for commands using
+  // `return=minimal`. Treat any empty successful response as success.
+  if (!responseText.trim()) return null;
+  try { return JSON.parse(responseText); }
+  catch { throw new Error("DATABASE_INVALID_RESPONSE"); }
 }
 
 export function isConfigured() { return Boolean(config()); }
