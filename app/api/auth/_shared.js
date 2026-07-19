@@ -60,17 +60,24 @@ export async function readJson(request, maxBytes = MAX_JSON_BYTES) {
 export async function database(path, init = {}) {
   const settings = config();
   if (!settings) throw new Error("DATABASE_NOT_CONFIGURED");
-  const response = await fetch(`${settings.url}/rest/v1/${path}`, {
-    cache: "no-store",
-    ...init,
-    headers: {
-      apikey: settings.key,
-      Authorization: `Bearer ${settings.key}`,
-      Accept: "application/json",
-      ...(init.body ? { "Content-Type": "application/json" } : {}),
-      ...(init.headers || {}),
-    },
-  });
+  let response;
+  try {
+    response = await fetch(`${settings.url}/rest/v1/${path}`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(12_000),
+      ...init,
+      headers: {
+        apikey: settings.key,
+        Authorization: `Bearer ${settings.key}`,
+        Accept: "application/json",
+        ...(init.body ? { "Content-Type": "application/json" } : {}),
+        ...(init.headers || {}),
+      },
+    });
+  } catch (error) {
+    console.error("Supabase portal request timed out or failed", error instanceof Error ? error.name : "Unknown error");
+    throw new Error("DATABASE_REQUEST_FAILED");
+  }
   const responseText = await response.text().catch(() => "");
   if (!response.ok) {
     const detail = responseText;
