@@ -148,7 +148,31 @@ async function accountRequest(path, method = "GET", body) {
   const headers = {};
   if (method !== "GET") headers["x-csrf-token"] = await getCsrfToken();
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  const response = await fetch(path, {
+  let response;
+  try {
+    response = await fetch(path, {
+      method,
+      credentials: "same-origin",
+      cache: "no-store",
+      headers,
+      signal: AbortSignal.timeout(20_000),
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+  } catch (error) {
+    if (error?.name === "TimeoutError" || error?.name === "AbortError") throw new Error("La sauvegarde prend trop de temps. Réessayez dans quelques instants.");
+    throw error;
+  }
+  let result = {};
+  try { result = await response.json(); } catch { /* La réponse d'erreur est traitée ci-dessous. */ }
+  if (!response.ok) throw new Error(result?.error || "Le serveur des comptes est indisponible.");
+  return result;
+}
+
+async function portalRequest(method = "GET", body) {
+  const headers = {};
+  if (method !== "GET") headers["x-csrf-token"] = await getCsrfToken();
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const response = await fetch("/api/portal/state", {
     method,
     credentials: "same-origin",
     cache: "no-store",
@@ -156,8 +180,8 @@ async function accountRequest(path, method = "GET", body) {
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
   let result = {};
-  try { result = await response.json(); } catch { /* La réponse d'erreur est traitée ci-dessous. */ }
-  if (!response.ok) throw new Error(result?.error || "Le serveur des comptes est indisponible.");
+  try { result = await response.json(); } catch { /* L’erreur est traitée ci-dessous. */ }
+  if (!response.ok) throw new Error(result?.error || "La synchronisation du portail est indisponible.");
   return result;
 }
 
@@ -455,7 +479,7 @@ function UserModal({ actor, editing, onClose, onSave }) {
           </select>
           <label>{editing ? "Nouveau mot de passe (facultatif)" : "Mot de passe temporaire"}</label>
           <input type="password" value={form.password} onChange={(e) => set("password", e.target.value)} required={!editing} minLength={editing ? undefined : 12} placeholder="12 caractères minimum" />
-          <small className="muted">Majuscule, minuscule, chiffre et caractère spécial requis.</small>
+          <small className="muted">Majuscule, minuscule, chiffre et caractère spécial requis. La sauvegarde sécurisée dure habituellement quelques secondes.</small>
           <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Annuler</button><button type="submit" className="primary" disabled={saving}>{saving ? "Sécurisation…" : editing ? "Enregistrer" : "Créer le compte"}</button></div>
         </form>
       </div>
@@ -542,7 +566,7 @@ function WorkforcePanel({ users, quotas }) {
   );
 }
 
-function HomePanel({ session, users, missions, chats, quotas, logs, assignments, portalNotifications, shortcutIds, onSaveShortcuts, onNavigate }) {
+function HomePanel({ session, users, missions, chats, quotas, logs, assignments, portalNotifications, shortcutIds, onSaveShortcuts, onNavigate, onDismissNotification }) {
   const isManager = ["admin", "referent"].includes(session.role);
   const isQuotaMember = ["senior", "officer"].includes(session.role);
   const shortcutCatalog = [
@@ -592,6 +616,8 @@ function HomePanel({ session, users, missions, chats, quotas, logs, assignments,
     .map((notification) => ({
       tone: notification.kind === "message" ? "info" : "success",
       icon: notification.kind === "message" ? <MessageSquareText size={17} /> : <FileText size={17} />,
+      id: notification.id,
+      dismissible: true,
       title: notification.title,
       text: notification.text,
       target: notification.target || "home",
@@ -631,7 +657,7 @@ function HomePanel({ session, users, missions, chats, quotas, logs, assignments,
         return <article key={item.key} className={remaining === 0 ? "completed" : ""}><div className="home-quota-title"><span>{item.icon}</span><strong>{item.label}</strong></div><div className="home-quota-numbers"><strong>{count}<small> / {target}</small></strong><em>{status}</em></div><div className="home-quota-progress"><i style={{ width: `${progress}%` }} /></div></article>;
       })}</div></section>}
       <div className="home-grid">
-        <section className="home-card notifications-card"><div className="home-card-head"><div><p className="eyebrow dark">CENTRE D’INFORMATIONS</p><h2>Notifications importantes</h2></div><span><Bell size={17} /> {notifications.length}</span></div><div className="notification-list">{notifications.map((notification, index) => <button type="button" className={notification.tone} key={`${notification.title}-${index}`} onClick={() => onNavigate(notification.target)}><span>{notification.icon}</span><span><strong>{notification.title}</strong><small>{notification.text}</small></span></button>)}{!notifications.length && <div className="no-notification"><BadgeCheck size={25} /><strong>Tout est à jour</strong><p>Aucune notification importante pour le moment.</p></div>}</div></section>
+        <section className="home-card notifications-card"><div className="home-card-head"><div><p className="eyebrow dark">CENTRE D’INFORMATIONS</p><h2>Notifications importantes</h2></div><span><Bell size={17} /> {notifications.length}</span></div><div className="notification-list">{notifications.map((notification, index) => <div className={`notification-entry ${notification.tone}`} key={notification.id || `${notification.title}-${index}`}><button type="button" onClick={() => onNavigate(notification.target)}><span>{notification.icon}</span><span><strong>{notification.title}</strong><small>{notification.text}</small></span></button>{notification.dismissible && <button className="dismiss-notification" type="button" title="Supprimer cette notification" aria-label="Supprimer cette notification" onClick={() => onDismissNotification(notification.id)}><X size={15} /></button>}</div>)}{!notifications.length && <div className="no-notification"><BadgeCheck size={25} /><strong>Tout est à jour</strong><p>Aucune notification importante pour le moment.</p></div>}</div></section>
         <section className="home-card quick-card"><div className="home-card-head"><div><p className="eyebrow dark">ACCÈS RAPIDE</p><h2>Mes raccourcis</h2></div><button className="shortcut-edit-button" onClick={() => { setShortcutDraft(selectedShortcutIds); setEditingShortcuts((current) => !current); }}><Settings2 size={15} /> {editingShortcuts ? "Fermer" : "Personnaliser"}</button></div>{editingShortcuts ? <div className="shortcut-editor"><p>Choisissez les rubriques affichées sur votre accueil.</p><div className="shortcut-options">{shortcutCatalog.map((item) => <label className={shortcutDraft.includes(item.id) ? "selected" : ""} key={item.id}><input type="checkbox" checked={shortcutDraft.includes(item.id)} onChange={() => setShortcutDraft((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])} /><span>{item.icon}</span>{item.label}</label>)}</div><div className="shortcut-editor-actions"><button className="secondary" onClick={() => setShortcutDraft(defaultShortcutIds)}>Par défaut</button><button className="primary" disabled={!shortcutDraft.length} onClick={() => { onSaveShortcuts(shortcutDraft); setEditingShortcuts(false); }}>Enregistrer</button></div></div> : <div className="quick-actions">{shortcutCatalog.filter((item) => selectedShortcutIds.includes(item.id)).map((item) => <button key={item.id} onClick={() => onNavigate(item.id)}>{item.icon}<span><strong>{item.label}</strong><small>{item.description}</small></span></button>)}</div>}</section>
         <section className="home-card activity-card"><div className="home-card-head"><div><p className="eyebrow dark">ACTIVITÉ RÉCENTE</p><h2>{isManager ? "Dernières actions du portail" : "Mes dernières actions"}</h2></div>{isManager && <button onClick={() => onNavigate("logs")}>Voir tous les logs</button>}</div><div className="home-activity-list">{visibleActivity.map((entry) => <article key={entry.id}><span className={`log-dot ${entry.category}`} /><div><strong>{entry.action}</strong><small>{entry.actorName} · {entry.displayAt}</small>{entry.details && <p>{entry.details}</p>}</div></article>)}{!visibleActivity.length && <p className="chat-empty-small">Aucune activité enregistrée pour le moment.</p>}</div></section>
         <section className="home-card identity-card"><p className="eyebrow dark">MON ESPACE</p><h2>{session.grade || GRADES[0]}</h2><RoleBadge role={session.role} /><div><span>État du compte</span><strong className="identity-active"><BadgeCheck size={15} /> Actif</strong></div><div><span>Présence</span><strong>{session.presence === "absent" ? "Absent" : ["senior", "officer"].includes(session.role) ? "Présent" : "Non concerné"}</strong></div>{mySergeantAssignment && <div className="identity-referent"><span>Référent de suivi</span><strong>{mySergeantReferent ? `${mySergeantReferent.grade || GRADES[0]} ${mySergeantReferent.firstName} ${mySergeantReferent.lastName}` : "À confirmer"}</strong></div>}</section>
@@ -1309,8 +1335,32 @@ function App() {
   const [sergeantAssignments, setSergeantAssignments] = useState([]);
   const [submissionHistory, setSubmissionHistory] = useState([]);
   const [portalNotifications, setPortalNotifications] = useState([]);
+  const [portalRemote, setPortalRemote] = useState(false);
   const [loginTransition, setLoginTransition] = useState(null);
 
+  useEffect(() => {
+    if (!ready || !session) return;
+    let cancelled = false;
+    async function refreshSharedPortal() {
+      try {
+        const state = await portalRequest();
+        if (cancelled) return;
+        setChats(Array.isArray(state.chats) ? state.chats : []);
+        setPortalNotifications(Array.isArray(state.notifications) ? state.notifications : []);
+        setPortalRemote(true);
+      } catch {
+        if (!cancelled) setPortalRemote(false);
+      }
+    }
+    refreshSharedPortal();
+    const timer = window.setInterval(refreshSharedPortal, 20_000);
+    document.addEventListener("visibilitychange", refreshSharedPortal);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshSharedPortal);
+    };
+  }, [ready, session?.id]);
   useEffect(() => {
     let cancelled = false;
     async function initialize() {
@@ -1357,10 +1407,10 @@ function App() {
   useEffect(() => { if (ready) localStorage.setItem(QUOTA_KEY, JSON.stringify(quotas)); }, [quotas, ready]);
   useEffect(() => { if (ready) localStorage.setItem(MISSIONS_KEY, JSON.stringify(missions)); }, [missions, ready]);
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || portalRemote) return;
     try { localStorage.setItem(CHAT_KEY, JSON.stringify(chats)); }
     catch { flash("Stockage du chat saturé : supprimez d’anciennes pièces jointes."); }
-  }, [chats, ready]);
+  }, [chats, ready, portalRemote]);
   useEffect(() => {
     if (!ready) return;
     try { localStorage.setItem(LOG_KEY, JSON.stringify(auditLogs)); } catch { /* Conserve l’application fonctionnelle si le stockage est plein. */ }
@@ -1369,10 +1419,11 @@ function App() {
   useEffect(() => { if (ready) localStorage.setItem(SUMMARY_KEY, JSON.stringify(summarySettings)); }, [summarySettings, ready]);
   useEffect(() => { if (ready) localStorage.setItem(ASSIGNMENTS_KEY, JSON.stringify(sergeantAssignments)); }, [sergeantAssignments, ready]);
   useEffect(() => { if (ready) localStorage.setItem(SUBMISSION_HISTORY_KEY, JSON.stringify(submissionHistory)); }, [submissionHistory, ready]);
-  useEffect(() => { if (ready) localStorage.setItem(NOTIFICATION_KEY, JSON.stringify(portalNotifications)); }, [portalNotifications, ready]);
+  useEffect(() => { if (ready && !portalRemote) localStorage.setItem(NOTIFICATION_KEY, JSON.stringify(portalNotifications)); }, [portalNotifications, ready, portalRemote]);
   useEffect(() => {
     function syncAccounts(event) {
       if (event.key === CHAT_KEY && event.newValue) {
+        if (portalRemote) return;
         try { setChats(JSON.parse(event.newValue)); } catch { /* Ignore une discussion invalide. */ }
         return;
       }
@@ -1397,13 +1448,14 @@ function App() {
         return;
       }
       if (event.key === NOTIFICATION_KEY && event.newValue) {
+        if (portalRemote) return;
         try { setPortalNotifications(JSON.parse(event.newValue)); } catch { /* Ignore des notifications invalides. */ }
         return;
       }
     }
     window.addEventListener("storage", syncAccounts);
     return () => window.removeEventListener("storage", syncAccounts);
-  }, []);
+  }, [portalRemote]);
   useEffect(() => {
     if (!ready || !session) return;
     let checking = false;
@@ -1449,10 +1501,30 @@ function App() {
     const entry = { id: crypto.randomUUID(), createdAt: now.toISOString(), displayAt: new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "medium" }).format(now), actorId: actor?.id || "system", actorName: actor ? `${actor.firstName} ${actor.lastName}` : "Système", actorRole: actor?.role || "", category, action, details };
     setAuditLogs((current) => [entry, ...current].slice(0, 500));
   }
+  function applySharedPortalState(state) {
+    if (Array.isArray(state?.chats)) setChats(state.chats);
+    if (Array.isArray(state?.notifications)) setPortalNotifications(state.notifications);
+    setPortalRemote(true);
+  }
+  function syncSharedPortal(action, payload = {}) {
+    if (!portalRemote) return Promise.resolve(null);
+    return portalRequest("POST", { action, ...payload })
+      .then((state) => { applySharedPortalState(state); return state; })
+      .catch((error) => {
+        flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible.");
+        return null;
+      });
+  }
   function addPortalNotification({ recipients = "all", kind = "form", title, text, target = "home" }) {
     const audience = Array.isArray(recipients) ? [...new Set(recipients.filter(Boolean))] : null;
     const item = { id: crypto.randomUUID(), recipients: audience, kind, title, text, target, createdAt: new Date().toISOString() };
     setPortalNotifications((current) => [item, ...current].slice(0, 300));
+    if (portalRemote) syncSharedPortal("notify", { recipients, kind, title, text, target });
+  }
+  function dismissPortalNotification(notificationId) {
+    if (!notificationId) return;
+    setPortalNotifications((current) => current.filter((notification) => notification.id !== notificationId));
+    if (portalRemote) syncSharedPortal("dismiss_notification", { notificationId });
   }
   function clearAuditLogs() {
     if (session.role !== "admin" || !confirm("Réinitialiser définitivement le journal des logs ?")) return;
@@ -1665,6 +1737,7 @@ function App() {
     if (existingChat) return existingChat.id;
     const chatId = crypto.randomUUID();
     setChats((current) => [{ id: chatId, type: "direct", participants: [session.id, otherUserId], messages: [], updatedAt: new Date().toISOString() }, ...current]);
+    if (portalRemote) syncSharedPortal("start_direct", { chatId, otherUserId });
     addLog("chat", "Discussion privée créée", `Avec ${contact.firstName} ${contact.lastName}`);
     return chatId;
   }
@@ -1673,6 +1746,7 @@ function App() {
     if (!name || validMemberIds.length < 2) return "";
     const chatId = crypto.randomUUID();
     setChats((current) => [{ id: chatId, type: "group", name, createdBy: session.id, participants: [session.id, ...validMemberIds], messages: [], updatedAt: new Date().toISOString() }, ...current]);
+    if (portalRemote) syncSharedPortal("create_group", { chatId, name, memberIds: validMemberIds });
     addLog("chat", "Groupe créé", `${name} · ${validMemberIds.length + 1} membres`);
     return chatId;
   }
@@ -1685,6 +1759,7 @@ function App() {
       return false;
     }
     setChats((current) => current.map((item) => item.id === chatId ? { ...item, participants: [session.id, ...validMemberIds], updatedAt: new Date().toISOString() } : item));
+    if (portalRemote) syncSharedPortal("update_group", { chatId, memberIds: validMemberIds });
     addLog("chat", "Membres du groupe modifiés", `${chat.name || "Groupe"} · ${validMemberIds.length + 1} membres`);
     flash("Les membres du groupe ont bien été mis à jour.");
     return true;
@@ -1700,16 +1775,12 @@ function App() {
       return [updatedChat, ...current.filter((item) => item.id !== chatId)];
     });
     addLog("chat", "Message envoyé", `${attachments.length ? `${attachments.length} pièce${attachments.length > 1 ? "s" : ""} jointe${attachments.length > 1 ? "s" : ""}` : "Sans pièce jointe"}`);
-    addPortalNotification({
-      recipients: chat.participants.filter((id) => id !== session.id),
-      kind: "message",
-      title: `Nouveau message de ${session.firstName} ${session.lastName}`,
-      text: chat.type === "group" ? `Dans le groupe « ${chat.name || "Sans nom"} »` : "Dans une discussion privée.",
-      target: "chat",
-    });
+    if (portalRemote) syncSharedPortal("send_message", { chatId, html, text, attachments });
+    else addPortalNotification({ recipients: chat.participants.filter((id) => id !== session.id), kind: "message", title: `Nouveau message de ${session.firstName} ${session.lastName}`, text: chat.type === "group" ? `Dans le groupe « ${chat.name || "Sans nom"} »` : "Dans une discussion privée.", target: "chat" });
   }
   function editChatMessage(chatId, messageId, html, text) {
     setChats((current) => current.map((chat) => chat.id !== chatId ? chat : { ...chat, messages: chat.messages.map((message) => message.id === messageId && message.senderId === session.id ? { ...message, html: sanitizeChatHtml(html), text, editedAt: new Date().toISOString() } : message), updatedAt: new Date().toISOString() }));
+    if (portalRemote) syncSharedPortal("edit_message", { chatId, messageId, html, text });
     addLog("chat", "Message modifié");
   }
   function deleteChatMessage(chatId, messageId) {
@@ -1718,6 +1789,7 @@ function App() {
     const canModerate = ["admin", "referent"].includes(session.role);
     if (!message || (message.senderId !== session.id && !canModerate) || !confirm("Supprimer ce message ?")) return;
     setChats((current) => current.map((item) => item.id === chatId ? { ...item, messages: item.messages.filter((entry) => entry.id !== messageId), updatedAt: new Date().toISOString() } : item));
+    if (portalRemote) syncSharedPortal("delete_message", { chatId, messageId });
     addLog("chat", canModerate && message.senderId !== session.id ? "Message supprimé par modération" : "Message supprimé", `Auteur : ${message.senderName}`);
   }
   function deleteChat(chatId) {
@@ -1726,6 +1798,7 @@ function App() {
     const canDelete = chat?.type === "group" ? chat.createdBy === session.id || canModerate : chat?.participants.includes(session.id) || canModerate;
     if (!chat || !canDelete || !confirm("Supprimer définitivement cette conversation et tous ses messages ?")) return;
     setChats((current) => current.filter((item) => item.id !== chatId));
+    if (portalRemote) syncSharedPortal("delete_chat", { chatId });
     addLog("chat", "Conversation supprimée", `${chat.type === "group" ? chat.name || "Groupe" : "Discussion privée"} · ${chat.messages.length} messages`);
     flash("La conversation a été supprimée.");
   }
@@ -1859,7 +1932,7 @@ function App() {
         <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{session.role === "admin" && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{["admin", "referent"].includes(session.role) && <optgroup label="Référent SO"><option value="workforce">Effectif</option><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="summary">Résumé</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{["admin", "referent", "senior"].includes(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="sergeant_assignments">Référent</option><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{["admin", "referent"].includes(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
         {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "workforce" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Effectif</h1><p className="muted">Consultez l’organisation complète des membres par accès et par grade.</p></div><span className="referent-access"><UsersRound size={16} /> Vue des effectifs</span></header> : activeSection === "sergeant_assignments" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Référent</h1><p className="muted">Attribuez et suivez les référents des nouveaux Sergents.</p></div><span className="senior-access"><BadgeCheck size={16} /> Suivi des semaines de test</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
-        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={setActiveSection} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} logs={auditLogs} activityResetAt={summarySettings.activityResetAt || summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
+        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={setActiveSection} onDismissNotification={dismissPortalNotification} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} logs={auditLogs} activityResetAt={summarySettings.activityResetAt || summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
         <section className="stats">
           <article><span className="stat-icon blue"><UsersRound /></span><div><strong>{users.length}</strong><small>Comptes au total</small></div><span className="trend">Tous niveaux</span></article>
           <article><span className="stat-icon red"><UserX /></span><div><strong>{users.filter((user) => user.blocked).length}</strong><small>Comptes bloqués</small></div><span className="trend">Accès suspendu</span></article>

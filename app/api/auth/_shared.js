@@ -47,12 +47,12 @@ export function validCsrfRequest(request) {
   return validRequestSource(request) && sameValue(cookieValue(request, "portal-so-csrf"), request.headers.get("x-csrf-token") || "");
 }
 
-export async function readJson(request) {
+export async function readJson(request, maxBytes = MAX_JSON_BYTES) {
   if ((request.headers.get("content-type") || "").split(";")[0].trim().toLowerCase() !== "application/json") throw new Error("INVALID_CONTENT_TYPE");
   const declaredLength = Number(request.headers.get("content-length") || 0);
-  if (declaredLength > MAX_JSON_BYTES) throw new Error("BODY_TOO_LARGE");
+  if (declaredLength > maxBytes) throw new Error("BODY_TOO_LARGE");
   const rawBody = await request.text();
-  if (new TextEncoder().encode(rawBody).length > MAX_JSON_BYTES) throw new Error("BODY_TOO_LARGE");
+  if (new TextEncoder().encode(rawBody).length > maxBytes) throw new Error("BODY_TOO_LARGE");
   try { return JSON.parse(rawBody); }
   catch { throw new Error("INVALID_JSON"); }
 }
