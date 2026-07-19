@@ -72,10 +72,7 @@ function compareUsersByGrade(left, right) {
   return `${left.lastName || ""} ${left.firstName || ""}`.localeCompare(`${right.lastName || ""} ${right.firstName || ""}`, "fr", { sensitivity: "base" });
 }
 
-const STORAGE_KEY = "portail-so-users-v1";
-const SESSION_KEY = "portail-so-session-v1";
 const THEME_KEY = "portail-so-theme";
-const LOGIN_GUARD_KEY = "portail-so-login-guard-v1";
 const QUOTA_KEY = "portail-so-quotas-v1";
 const MISSIONS_KEY = "portail-so-missions-v1";
 const CHAT_KEY = "portail-so-chats-v1";
@@ -87,10 +84,6 @@ const DRAFTS_KEY = "portail-so-form-drafts-v1";
 const SUBMISSION_HISTORY_KEY = "portail-so-submission-history-v1";
 const CHAT_ATTACHMENT_MAX_SIZE = 1024 * 1024;
 const CHAT_ATTACHMENT_MAX_COUNT = 3;
-const PASSWORD_ITERATIONS = 210000;
-const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
-const LOGIN_MAX_ATTEMPTS = 5;
-const LOGIN_LOCK_MS = 15 * 60 * 1000;
 const CHAT_ATTACHMENT_TYPES = new Set([
   "image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf", "text/plain",
   "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -125,64 +118,12 @@ function readStoredJson(key, fallback) {
   }
 }
 
-function bytesToBase64(bytes) {
-  let binary = "";
-  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
-  return btoa(binary);
-}
-
-function base64ToBytes(value) {
-  const binary = atob(value);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-}
-
-async function derivePasswordHash(password, salt, iterations = PASSWORD_ITERATIONS) {
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
-  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, 256);
-  return new Uint8Array(bits);
-}
-
-async function createPasswordRecord(password) {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const hash = await derivePasswordHash(password, salt);
-  return { passwordHash: bytesToBase64(hash), passwordSalt: bytesToBase64(salt), passwordIterations: PASSWORD_ITERATIONS };
-}
-
-async function verifyPassword(user, password) {
-  if (!user?.passwordHash || !user?.passwordSalt || !password) return false;
-  try {
-    const expected = base64ToBytes(user.passwordHash);
-    const actual = await derivePasswordHash(password, base64ToBytes(user.passwordSalt), Number(user.passwordIterations) || PASSWORD_ITERATIONS);
-    if (actual.length !== expected.length) return false;
-    let difference = 0;
-    for (let index = 0; index < actual.length; index += 1) difference |= actual[index] ^ expected[index];
-    return difference === 0;
-  } catch {
-    return false;
-  }
-}
-
 function passwordError(password) {
   if (password.length < 12) return "Le mot de passe doit contenir au moins 12 caractères.";
   if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
     return "Ajoutez une minuscule, une majuscule, un chiffre et un caractère spécial.";
   }
   return "";
-}
-
-function createSession(userId) {
-  return { version: 2, userId, expiresAt: Date.now() + SESSION_DURATION_MS };
-}
-
-function readSession() {
-  const raw = localStorage.getItem(SESSION_KEY);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed?.version === 2 && typeof parsed.userId === "string" && parsed.expiresAt > Date.now() ? parsed : null;
-  } catch {
-    return typeof raw === "string" && raw ? createSession(raw) : null;
-  }
 }
 
 let csrfTokenPromise;
@@ -200,6 +141,23 @@ async function getCsrfToken() {
       .catch((error) => { csrfTokenPromise = null; csrfTokenExpiresAt = 0; throw error; });
   }
   return csrfTokenPromise;
+}
+
+async function accountRequest(path, method = "GET", body) {
+  const headers = {};
+  if (method !== "GET") headers["x-csrf-token"] = await getCsrfToken();
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const response = await fetch(path, {
+    method,
+    credentials: "same-origin",
+    cache: "no-store",
+    headers,
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  let result = {};
+  try { result = await response.json(); } catch { /* La réponse d'erreur est traitée ci-dessous. */ }
+  if (!response.ok) throw new Error(result?.error || "Le serveur des comptes est indisponible.");
+  return result;
 }
 
 const TRANSMISSION_TYPES = {
@@ -393,15 +351,22 @@ function MenuGroup({ title, icon: Icon, open, onToggle, children }) {
   );
 }
 
-function Login({ onLogin, error }) {
+function Login({ onLogin, onSetup, setupRequired, configurationError, error }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [grade, setGrade] = useState(GRADES[0]);
+  const [setupCode, setSetupCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   async function submit(event) {
     event.preventDefault();
     setSubmitting(true);
-    try { await onLogin(email, password); }
+    try {
+      if (setupRequired) await onSetup({ firstName, lastName, email, password, grade, setupCode });
+      else await onLogin(email, password);
+    }
     finally { setSubmitting(false); }
   }
 
@@ -419,15 +384,20 @@ function Login({ onLogin, error }) {
         <div className="login-card">
           <div className="mobile-logo"><div className="brand-mark"><ShieldCheck size={25} /></div><strong>Portail SO</strong></div>
           <p className="eyebrow dark">CONNEXION</p>
-          <h2>Bienvenue</h2>
-          <p className="muted">Identifiez-vous pour accéder à votre espace.</p>
+          <h2>{setupRequired ? "Configuration initiale" : "Bienvenue"}</h2>
+          <p className="muted">{setupRequired ? "Créez le premier compte Administrateur du portail." : "Identifiez-vous pour accéder à votre espace."}</p>
           <form autoComplete="off" onSubmit={submit}>
+            {setupRequired && <>
+              <div className="form-grid"><div><label>Prénom</label><input value={firstName} onChange={(event) => setFirstName(event.target.value)} required /></div><div><label>Nom</label><input value={lastName} onChange={(event) => setLastName(event.target.value)} required /></div></div>
+              <label>Grade</label><select value={grade} onChange={(event) => setGrade(event.target.value)} required>{GRADES.map((item) => <option value={item} key={item}>{item}</option>)}</select>
+            </>}
             <label>Adresse e-mail</label>
             <div className="input-wrap"><UserRound size={19} /><input type="email" name="portal-email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} required /></div>
             <label>Mot de passe</label>
-            <div className="input-wrap"><KeyRound size={19} /><input type="password" name="portal-password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></div>
-            {error && <p className="form-error">{error}</p>}
-            <button className="primary wide" type="submit" disabled={submitting}>{submitting ? "Vérification…" : "Se connecter"} <span>→</span></button>
+            <div className="input-wrap"><KeyRound size={19} /><input type="password" name="portal-password" autoComplete={setupRequired ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} required minLength={setupRequired ? 12 : undefined} /></div>
+            {setupRequired && <><small className="muted">Au moins 12 caractères : majuscule, minuscule, chiffre et caractère spécial.</small><label>Code de configuration</label><div className="input-wrap"><ShieldCheck size={19} /><input type="password" value={setupCode} onChange={(event) => setSetupCode(event.target.value)} required /></div></>}
+            {(configurationError || error) && <p className="form-error">{configurationError || error}</p>}
+            <button className="primary wide" type="submit" disabled={submitting || Boolean(configurationError)}>{submitting ? "Vérification…" : setupRequired ? "Créer l’Administrateur" : "Se connecter"} <span>→</span></button>
           </form>
         </div>
       </section>
@@ -1273,6 +1243,8 @@ function App() {
   const [users, setUsers] = useState([]);
   const [session, setSession] = useState(null);
   const [ready, setReady] = useState(false);
+  const [setupRequired, setSetupRequired] = useState(false);
+  const [configurationError, setConfigurationError] = useState("");
   const [loginError, setLoginError] = useState("");
   const [query, setQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
@@ -1295,34 +1267,14 @@ function App() {
   useEffect(() => {
     let cancelled = false;
     async function initialize() {
-      const loaded = readStoredJson(STORAGE_KEY, []);
-      const loadedUsers = Array.isArray(loaded)
-        ? loaded.filter((user) => user && typeof user === "object" && typeof user.id === "string" && typeof user.email === "string" && ROLES[user.role])
-        : [];
-      const normalizedUsers = await Promise.all(loadedUsers.map(async ({ discordId: _discardedDiscordId, status: _discardedStatus, password, ...user }) => {
-        const passwordRecord = !user.passwordHash && typeof password === "string" && password
-          ? await createPasswordRecord(password)
-          : {};
-        return {
-          ...user,
-          ...passwordRecord,
-          blocked: user.blocked === true,
-          grade: GRADES.includes(user.grade) ? user.grade : GRADES[0],
-          ...(["senior", "officer"].includes(user.role) ? { presence: user.presence === "absent" ? "absent" : "present" } : {}),
-        };
-      }));
+      const accountState = await accountRequest("/api/auth/bootstrap");
       if (cancelled) return;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedUsers));
-      setUsers(normalizedUsers);
-
-      const rememberedSession = readSession();
-      const rememberedUser = normalizedUsers.find((user) => user.id === rememberedSession?.userId && !user.blocked);
-      if (rememberedUser) {
-        localStorage.setItem(SESSION_KEY, JSON.stringify(rememberedSession));
-        setSession(rememberedUser);
+      setConfigurationError(accountState.configured ? "" : "La base des comptes n’est pas configurée. Contactez l’administrateur du portail.");
+      setSetupRequired(accountState.configured && !accountState.hasUsers);
+      setUsers(Array.isArray(accountState.users) ? accountState.users : []);
+      if (accountState.session) {
+        setSession(accountState.session);
         setActiveSection("home");
-      } else if (localStorage.getItem(SESSION_KEY)) {
-        localStorage.removeItem(SESSION_KEY);
       }
 
       const parsedQuotas = readStoredJson(QUOTA_KEY, DEFAULT_QUOTAS);
@@ -1344,16 +1296,15 @@ function App() {
       document.documentElement.dataset.theme = savedTheme ? "dark" : "light";
       setReady(true);
     }
-    initialize().catch(() => {
+    initialize().catch((error) => {
       if (!cancelled) {
-        setLoginError("Le stockage sécurisé n’a pas pu être initialisé. Rechargez la page.");
+        setConfigurationError(error instanceof Error ? error.message : "La connexion à la base des comptes est indisponible.");
         setReady(true);
       }
     });
     return () => { cancelled = true; };
   }, []);
 
-  useEffect(() => { if (ready) localStorage.setItem(STORAGE_KEY, JSON.stringify(users)); }, [users, ready]);
   useEffect(() => { if (ready) localStorage.setItem(QUOTA_KEY, JSON.stringify(quotas)); }, [quotas, ready]);
   useEffect(() => { if (ready) localStorage.setItem(MISSIONS_KEY, JSON.stringify(missions)); }, [missions, ready]);
   useEffect(() => {
@@ -1371,14 +1322,6 @@ function App() {
   useEffect(() => { if (ready) localStorage.setItem(SUBMISSION_HISTORY_KEY, JSON.stringify(submissionHistory)); }, [submissionHistory, ready]);
   useEffect(() => {
     function syncAccounts(event) {
-      if (event.key === SESSION_KEY) {
-        if (!event.newValue) {
-          setSession(null);
-          setProfileOpen(false);
-          setLoginError("");
-        }
-        return;
-      }
       if (event.key === CHAT_KEY && event.newValue) {
         try { setChats(JSON.parse(event.newValue)); } catch { /* Ignore une discussion invalide. */ }
         return;
@@ -1403,43 +1346,35 @@ function App() {
         try { setSubmissionHistory(JSON.parse(event.newValue)); } catch { /* Ignore un historique invalide. */ }
         return;
       }
-      if (event.key !== STORAGE_KEY || !event.newValue) return;
-      try {
-        const syncedUsers = JSON.parse(event.newValue);
-        setUsers(syncedUsers);
-        setSession((currentSession) => {
-          if (!currentSession) return currentSession;
-          const syncedSession = syncedUsers.find((user) => user.id === currentSession.id);
-          if (!syncedSession || syncedSession.blocked) {
-            localStorage.removeItem(SESSION_KEY);
-            setProfileOpen(false);
-            setLoginError(syncedSession?.blocked ? "Votre compte a été bloqué par un administrateur." : "Votre compte n’est plus disponible.");
-            return null;
-          }
-          return syncedSession;
-        });
-      } catch {
-        // Ignore une mise à jour de stockage invalide.
-      }
     }
     window.addEventListener("storage", syncAccounts);
     return () => window.removeEventListener("storage", syncAccounts);
   }, []);
   useEffect(() => {
     if (!ready || !session) return;
-    function checkSessionExpiry() {
-      const rememberedSession = readSession();
-      if (rememberedSession?.userId === session.id) return;
-      localStorage.removeItem(SESSION_KEY);
-      setSession(null);
-      setProfileOpen(false);
-      setLoginError("Votre session a expiré. Reconnectez-vous.");
+    let checking = false;
+    async function checkSession() {
+      if (checking) return;
+      checking = true;
+      try {
+        const accountState = await accountRequest("/api/auth/bootstrap");
+        if (!accountState.session) {
+          setSession(null);
+          setProfileOpen(false);
+          setLoginError("Votre session a expiré ou votre compte a été bloqué.");
+          return;
+        }
+        setUsers(Array.isArray(accountState.users) ? accountState.users : []);
+        setSession(accountState.session);
+      } catch {
+        // Une indisponibilité temporaire de la base ne doit pas déconnecter la personne.
+      } finally { checking = false; }
     }
-    const timer = window.setInterval(checkSessionExpiry, 60_000);
-    document.addEventListener("visibilitychange", checkSessionExpiry);
+    const timer = window.setInterval(checkSession, 60_000);
+    document.addEventListener("visibilitychange", checkSession);
     return () => {
       window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", checkSessionExpiry);
+      document.removeEventListener("visibilitychange", checkSession);
     };
   }, [ready, session?.id]);
   useEffect(() => {
@@ -1704,100 +1639,76 @@ function App() {
   }
   function toggleGroup(group) { setOpenGroups((current) => ({ ...current, [group]: !current[group] })); }
   async function login(email, password) {
-    const guard = readStoredJson(LOGIN_GUARD_KEY, { attempts: 0, lockedUntil: 0 });
-    if (Number(guard.lockedUntil) > Date.now()) {
-      const minutes = Math.max(1, Math.ceil((guard.lockedUntil - Date.now()) / 60_000));
-      setLoginError(`Trop de tentatives. Réessayez dans ${minutes} minute${minutes > 1 ? "s" : ""}.`);
-      return;
-    }
-    const normalizedEmail = String(email || "").trim().toLowerCase();
-    const user = users.find((item) => String(item.email || "").trim().toLowerCase() === normalizedEmail);
-    const validPassword = user
-      ? await verifyPassword(user, password)
-      : Boolean(await derivePasswordHash(password || "", new Uint8Array(16), 100000)) && false;
-    if (!user || !validPassword) {
-      const attempts = Number(guard.attempts || 0) + 1;
-      const lockedUntil = attempts >= LOGIN_MAX_ATTEMPTS ? Date.now() + LOGIN_LOCK_MS : 0;
-      localStorage.setItem(LOGIN_GUARD_KEY, JSON.stringify({ attempts: lockedUntil ? 0 : attempts, lockedUntil }));
-      setLoginError(lockedUntil ? "Trop de tentatives. La connexion est bloquée pendant 15 minutes." : "Identifiants incorrects.");
-      return;
-    }
-    if (user.blocked) return setLoginError("Ce compte est bloqué. Contactez un administrateur.");
-    localStorage.removeItem(LOGIN_GUARD_KEY);
-    localStorage.setItem(SESSION_KEY, JSON.stringify(createSession(user.id)));
-    addLog("auth", "Connexion au portail", "Connexion réussie", user);
-    setLoginError(""); setSession(user); setActiveSection("home"); setLoginTransition(user);
-    window.setTimeout(() => setLoginTransition(null), 1850);
+    try {
+      const result = await accountRequest("/api/auth/login", "POST", { email, password });
+      const user = result.session;
+      setUsers(Array.isArray(result.users) ? result.users : []);
+      setLoginError(""); setSession(user); setActiveSection("home"); setLoginTransition(user);
+      window.setTimeout(() => setLoginTransition(null), 1850);
+    } catch (error) { setLoginError(error instanceof Error ? error.message : "Connexion impossible."); }
   }
-  function logout() {
+  async function setupInitialAdmin(form) {
+    const error = passwordError(form.password || "");
+    if (error) { setLoginError(error); return; }
+    try {
+      const result = await accountRequest("/api/auth/bootstrap", "POST", form);
+      setUsers(Array.isArray(result.users) ? result.users : []);
+      setSetupRequired(false);
+      setLoginError(""); setSession(result.session); setActiveSection("home"); setLoginTransition(result.session);
+      window.setTimeout(() => setLoginTransition(null), 1850);
+    } catch (error) { setLoginError(error instanceof Error ? error.message : "Création impossible."); }
+  }
+  async function logout() {
     addLog("auth", "Déconnexion du portail");
-    localStorage.removeItem(SESSION_KEY);
+    try { await accountRequest("/api/auth/logout", "POST", {}); } catch { /* La fermeture locale reste possible. */ }
     setProfileOpen(false);
     setLoginError("");
     setLoginTransition(null);
     setSession(null);
   }
   async function saveUser(form) {
-    const cleanEmail = String(form.email || "").trim().toLowerCase();
-    if (users.some((user) => user.id !== modal?.id && String(user.email || "").trim().toLowerCase() === cleanEmail)) {
-      flash("Cette adresse e-mail est déjà utilisée.");
-      return;
-    }
     if (form.password) {
       const error = passwordError(form.password);
       if (error) { flash(error); return; }
     }
-    const allowedRoles = session.role === "admin" ? ["referent", "senior", "officer"] : ["senior", "officer"];
-    const currentRole = modal?.id ? users.find((user) => user.id === modal.id)?.role : null;
-    const role = allowedRoles.includes(form.role) ? form.role : currentRole;
-    if (!role || !ROLES[role]) return;
-    const { password: _discardedPassword, passwordHash: _discardedHash, passwordSalt: _discardedSalt, passwordIterations: _discardedIterations, id: _discardedId, ...discardedFields } = form;
-    const savedForm = {
-      firstName: String(discardedFields.firstName || "").trim().slice(0, 60),
-      lastName: String(discardedFields.lastName || "").trim().slice(0, 60),
-      email: cleanEmail,
-      grade: GRADES.includes(discardedFields.grade) ? discardedFields.grade : GRADES[0],
-      role,
-      ...(form.password ? await createPasswordRecord(form.password) : {}),
-    };
-    if (!savedForm.firstName || !savedForm.lastName || !savedForm.email) { flash("Tous les champs d’identité sont obligatoires."); return; }
-    if (["senior", "officer"].includes(savedForm.role)) savedForm.presence = discardedFields.presence === "absent" ? "absent" : "present";
-    if (modal?.id) {
-      const editedUser = users.find((user) => user.id === modal.id);
-      setUsers((current) => current.map((user) => {
-        if (user.id !== modal.id) return user;
-        const updated = { ...user, ...savedForm };
-        if (!["senior", "officer"].includes(savedForm.role)) delete updated.presence;
-        return updated;
-      }));
-      addLog("account", "Compte modifié", editedUser ? `${editedUser.firstName} ${editedUser.lastName}` : `${savedForm.firstName} ${savedForm.lastName}`);
-      flash("Le compte a bien été modifié.");
-    } else {
-      const createdAt = new Date();
-      setUsers((current) => [...current, { ...savedForm, blocked: false, id: crypto.randomUUID(), createdAtIso: createdAt.toISOString(), createdAt: new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", year: "numeric" }).format(createdAt) }]);
-      addLog("account", "Compte créé", `${savedForm.firstName} ${savedForm.lastName} · ${ROLES[savedForm.role].label}`);
-      flash("Le compte a bien été créé.");
-    }
-    setModal(null);
+    try {
+      const payload = modal?.id ? { ...form, id: modal.id } : form;
+      const result = await accountRequest("/api/auth/users", modal?.id ? "PATCH" : "POST", payload);
+      setUsers(Array.isArray(result.users) ? result.users : []);
+      if (result.session) setSession(result.session);
+      addLog("account", modal?.id ? "Compte modifié" : "Compte créé", `${form.firstName} ${form.lastName}`);
+      flash(modal?.id ? "Le compte a bien été modifié." : "Le compte a bien été créé.");
+      setModal(null);
+    } catch (error) { flash(error instanceof Error ? error.message : "La modification du compte a échoué."); }
   }
-  function removeUser(user) {
+  async function removeUser(user) {
     if (!manageable(user) || !confirm(`Supprimer le compte de ${user.firstName} ${user.lastName} ?`)) return;
-    setUsers((current) => current.filter((item) => item.id !== user.id));
-    setSergeantAssignments((current) => current.filter((assignment) => assignment.sergeantId !== user.id && assignment.observerId !== user.id));
-    addLog("account", "Compte supprimé", `${user.firstName} ${user.lastName}`); flash("Le compte a été supprimé.");
+    try {
+      const result = await accountRequest("/api/auth/users", "DELETE", { id: user.id });
+      setUsers(Array.isArray(result.users) ? result.users : []);
+      setSergeantAssignments((current) => current.filter((assignment) => assignment.sergeantId !== user.id && assignment.observerId !== user.id));
+      addLog("account", "Compte supprimé", `${user.firstName} ${user.lastName}`); flash("Le compte a été supprimé.");
+    } catch (error) { flash(error instanceof Error ? error.message : "La suppression du compte a échoué."); }
   }
-  function changePresence(userId, presence) {
+  async function changePresence(userId, presence) {
     const targetUser = users.find((user) => user.id === userId);
-    setUsers((current) => current.map((user) => user.id === userId ? { ...user, presence } : user));
-    addLog("presence", "Présence modifiée", `${targetUser ? `${targetUser.firstName} ${targetUser.lastName}` : "Compte inconnu"} · ${presence === "present" ? "Présent" : "Absent"}`);
-    flash(presence === "present" ? "La personne est indiquée présente." : "La personne est indiquée absente.");
+    if (!targetUser) return;
+    try {
+      const result = await accountRequest("/api/auth/users", "PATCH", { ...targetUser, id: userId, presence });
+      setUsers(Array.isArray(result.users) ? result.users : []);
+      addLog("presence", "Présence modifiée", `${targetUser.firstName} ${targetUser.lastName} · ${presence === "present" ? "Présent" : "Absent"}`);
+      flash(presence === "present" ? "La personne est indiquée présente." : "La personne est indiquée absente.");
+    } catch (error) { flash(error instanceof Error ? error.message : "La présence n’a pas pu être modifiée."); }
   }
-  function toggleAccountBlock(user) {
+  async function toggleAccountBlock(user) {
     if (session.role !== "admin" || user.id === session.id || user.role === "admin") return;
     const willBlock = !user.blocked;
-    setUsers((current) => current.map((item) => item.id === user.id ? { ...item, blocked: willBlock } : item));
-    addLog("account", willBlock ? "Compte bloqué" : "Compte débloqué", `${user.firstName} ${user.lastName}`);
-    flash(willBlock ? "Le compte a été bloqué et ses sessions seront fermées." : "Le compte a été débloqué.");
+    try {
+      const result = await accountRequest("/api/auth/users", "PATCH", { ...user, id: user.id, blocked: willBlock });
+      setUsers(Array.isArray(result.users) ? result.users : []);
+      addLog("account", willBlock ? "Compte bloqué" : "Compte débloqué", `${user.firstName} ${user.lastName}`);
+      flash(willBlock ? "Le compte a été bloqué et ses sessions sont fermées." : "Le compte a été débloqué.");
+    } catch (error) { flash(error instanceof Error ? error.message : "Le blocage du compte a échoué."); }
   }
   async function saveProfile(form) {
     if (form.password) {
@@ -1809,27 +1720,24 @@ function App() {
       flash("Tous les champs d’identité sont obligatoires.");
       return;
     }
-    if (users.some((user) => user.id !== session.id && String(user.email || "").trim().toLowerCase() === nextEmail)) {
-      flash("Cette adresse e-mail est déjà utilisée.");
-      return;
-    }
-    const updated = {
-      ...session,
-      firstName: String(form.firstName || "").trim().slice(0, 60),
-      lastName: String(form.lastName || "").trim().slice(0, 60),
-      email: nextEmail,
-      grade: session.role === "admin" && GRADES.includes(form.grade) ? form.grade : session.grade,
-      ...(form.password ? await createPasswordRecord(form.password) : {}),
-    };
-    setUsers((current) => current.map((user) => user.id === session.id ? updated : user));
-    setSession(updated);
-    setProfileOpen(false);
-    addLog("profile", "Profil personnel modifié", `${updated.firstName} ${updated.lastName}`);
-    flash("Votre profil a bien été mis à jour.");
+    try {
+      const result = await accountRequest("/api/auth/users", "PATCH", {
+        ...session,
+        ...form,
+        id: session.id,
+        email: nextEmail,
+        grade: session.role === "admin" && GRADES.includes(form.grade) ? form.grade : session.grade,
+      });
+      setUsers(Array.isArray(result.users) ? result.users : []);
+      setSession(result.session || session);
+      setProfileOpen(false);
+      addLog("profile", "Profil personnel modifié", `${form.firstName} ${form.lastName}`);
+      flash("Votre profil a bien été mis à jour.");
+    } catch (error) { flash(error instanceof Error ? error.message : "Votre profil n’a pas pu être modifié."); }
   }
 
   if (!ready) return null;
-  if (!session) return <Login onLogin={login} error={loginError} />;
+  if (!session) return <Login onLogin={login} onSetup={setupInitialAdmin} setupRequired={setupRequired} configurationError={configurationError} error={loginError} />;
 
   return (
     <div className="app-shell">
