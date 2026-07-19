@@ -1,6 +1,8 @@
 export const runtime = "edge";
 
-const PASSWORD_ITERATIONS = 210000;
+// Cloudflare Workers limits PBKDF2 to 100 000 iterations. Keep this at the
+// supported maximum so password creation and verification work in production.
+const PASSWORD_ITERATIONS = 100000;
 const SESSION_MAX_AGE_SECONDS = 24 * 60 * 60;
 const MAX_JSON_BYTES = 16 * 1024;
 const ROLES = new Set(["admin", "referent", "senior", "officer"]);
