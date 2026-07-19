@@ -8,6 +8,19 @@ const TYPE_CONFIG = {
   sergeant_report: { title: "📋 Rapport nouveau Sous-Officier", color: 0xb97918, envKey: "DISCORD_WEBHOOK_SERGEANT_REPORT" },
 };
 
+// Keep variable names explicit: Next.js then makes the secrets available to
+// Vercel Edge Functions without exposing them to the browser.
+function webhookFor(type) {
+  switch (type) {
+    case "recommendation": return process.env.DISCORD_WEBHOOK_RECOMMENDATION;
+    case "pcs_exp": return process.env.DISCORD_WEBHOOK_PCS_EXP;
+    case "observation_hdr": return process.env.DISCORD_WEBHOOK_OBSERVATION_HDR;
+    case "observation_so": return process.env.DISCORD_WEBHOOK_OBSERVATION_SO;
+    case "sergeant_report": return process.env.DISCORD_WEBHOOK_SERGEANT_REPORT;
+    default: return "";
+  }
+}
+
 const REPORT_CONCLUSIONS = [
   "Passage confirmé en sergent",
   "Prolongation de la semaine de test",
@@ -97,7 +110,7 @@ export async function POST(request) {
 
     const config = TYPE_CONFIG[body?.type];
     if (!config) return json({ error: "Catégorie inconnue." }, 400);
-    const webhookUrl = process.env[config.envKey];
+    const webhookUrl = webhookFor(body.type);
     if (!webhookUrl || !validWebhookUrl(webhookUrl)) return json({ error: "Le salon Discord de cette catégorie n’est pas configuré." }, 503);
 
     let fields;

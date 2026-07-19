@@ -1,7 +1,6 @@
 export const runtime = "edge";
 
-// Cloudflare Workers limits PBKDF2 to 100 000 iterations. Keep this at the
-// supported maximum so password creation and verification work in production.
+// Keep password hashing compatible with the Edge Function runtime used in production.
 const PASSWORD_ITERATIONS = 100000;
 const SESSION_MAX_AGE_SECONDS = 24 * 60 * 60;
 const MAX_JSON_BYTES = 16 * 1024;
