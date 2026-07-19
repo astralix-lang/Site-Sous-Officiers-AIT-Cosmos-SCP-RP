@@ -52,3 +52,7 @@ alter table public.portal_notification_dismissals enable row level security;
 
 -- Les appels viennent uniquement des routes serveur protégées du portail
 -- (clé serveur Supabase). Aucune règle anonyme n’est ajoutée.
+
+-- Le nom est facultatif sur le portail : une chaîne vide reste donc valide.
+alter table public.portal_users drop constraint if exists portal_users_last_name_check;
+alter table public.portal_users add constraint portal_users_last_name_check check (char_length(last_name) <= 60);
