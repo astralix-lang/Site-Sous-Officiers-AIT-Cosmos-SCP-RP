@@ -391,12 +391,12 @@ function Login({ configurationError, error }) {
       <section className="login-panel">
         <div className="login-card">
           <div className="mobile-logo"><div className="brand-mark"><ShieldCheck size={23} /></div><strong>Portail SO</strong></div>
-          <p className="eyebrow dark">CONNEXION</p>
-          <h2>Connexion Discord</h2>
-          <p className="muted">Connectez votre compte Discord pour accéder au portail.</p>
+          <p className="eyebrow dark">CRÉATION DE COMPTE</p>
+          <h2>Création de compte</h2>
+          <p className="muted">Créez votre compte en le reliant à Discord.</p>
           <div className="discord-login-panel">
-            <a className={`primary wide discord-login ${configurationError ? "disabled" : ""}`} href={configurationError ? undefined : "/api/auth/discord"} aria-disabled={Boolean(configurationError)}><MessageSquareText size={20} /> Continuer avec Discord <span>→</span></a>
-            <p className="discord-login-note">Lors de votre première connexion, une demande est créée et reste en attente de validation par un administrateur.</p>
+            <a className={`primary wide discord-login ${configurationError ? "disabled" : ""}`} href={configurationError ? undefined : "/api/auth/discord"} aria-disabled={Boolean(configurationError)}><MessageSquareText size={20} /> Créer avec Discord <span>→</span></a>
+            <p className="discord-login-note">Votre demande est créée puis reste en attente de validation par un administrateur.</p>
           </div>
           {(configurationError || error || messages[status]) && <p className="form-error">{configurationError || error || messages[status]}</p>}
         </div>

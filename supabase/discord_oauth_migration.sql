@@ -5,6 +5,11 @@ alter table public.portal_users add column if not exists discord_id text;
 alter table public.portal_users add column if not exists discord_username text;
 alter table public.portal_users add column if not exists approval_status text not null default 'approved';
 
+-- Les anciens comptes gardaient un mot de passe obligatoire. Avec Discord,
+-- ces colonnes deviennent facultatives pour les nouveaux comptes.
+alter table public.portal_users alter column password_hash drop not null;
+alter table public.portal_users alter column password_salt drop not null;
+
 update public.portal_users set approval_status = 'approved' where approval_status is null;
 
 alter table public.portal_users drop constraint if exists portal_users_approval_status_check;
