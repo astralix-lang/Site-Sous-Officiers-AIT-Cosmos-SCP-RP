@@ -1,4 +1,4 @@
-import { database, json, readJson, requireSession, validCsrfRequest } from "../../auth/_shared";
+import { database, json, readJson, recordAuditLog, requireSession, validCsrfRequest } from "../../auth/_shared";
 
 export const runtime = "edge";
 
@@ -93,9 +93,34 @@ async function notificationsFor(user) {
   }));
 }
 
+function auditLogFromRow(row) {
+  return {
+    id: row.id,
+    actorId: row.actor_id || "system",
+    actorName: row.actor_name || "Syst\u00e8me",
+    actorRole: row.actor_role || "",
+    category: row.category || "system",
+    action: row.action || "Action du portail",
+    details: row.details || "",
+    createdAt: row.created_at,
+    displayAt: label(row.created_at),
+  };
+}
+
+async function auditLogsFor(user) {
+  try {
+    const rows = parseArray(await database("portal_audit_logs?select=*&order=created_at.desc&limit=500"));
+    const logs = rows.map(auditLogFromRow);
+    return isManager(user) ? logs : logs.filter((entry) => entry.actorId === user.id);
+  } catch (error) {
+    console.error("Portal audit log read failed", error instanceof Error ? error.message : "Unknown error");
+    return [];
+  }
+}
+
 async function stateFor(user) {
-  const [chats, notifications] = await Promise.all([allChats(user), notificationsFor(user)]);
-  return { chats, notifications };
+  const [chats, notifications, auditLogs] = await Promise.all([allChats(user), notificationsFor(user), auditLogsFor(user)]);
+  return { chats, notifications, auditLogs };
 }
 
 async function chatById(id) {
@@ -219,6 +244,10 @@ export async function POST(request) {
       const notification = parseArray(rows)[0];
       if (!notification || !canReceive(notification, actor.id)) return json({ error: "Notification introuvable." }, 404);
       await database("portal_notification_dismissals?on_conflict=notification_id,user_id", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=minimal" }, body: JSON.stringify({ notification_id: notificationId, user_id: actor.id }) });
+    } else if (action === "clear_audit_logs") {
+      if (actor.role !== "admin") return json({ error: "Seul un administrateur peut r\u00e9initialiser les logs." }, 403);
+      await database("portal_audit_logs?created_at=not.is.null", { method: "DELETE", headers: { Prefer: "return=minimal" } });
+      await recordAuditLog({ actor, category: "system", action: "Journal des logs r\u00e9initialis\u00e9", details: "L\u2019historique pr\u00e9c\u00e9dent a \u00e9t\u00e9 supprim\u00e9." });
     } else {
       return json({ error: "Action inconnue." }, 400);
     }

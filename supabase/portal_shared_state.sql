@@ -45,10 +45,24 @@ create table if not exists public.portal_notification_dismissals (
   primary key (notification_id, user_id)
 );
 
+create table if not exists public.portal_audit_logs (
+  id uuid primary key,
+  actor_id uuid references public.portal_users(id) on delete set null,
+  actor_name text not null default 'Systeme',
+  actor_role text,
+  category text not null default 'account',
+  action text not null,
+  details text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists portal_audit_logs_created_at_idx on public.portal_audit_logs (created_at desc);
+
 alter table public.portal_chats enable row level security;
 alter table public.portal_chat_messages enable row level security;
 alter table public.portal_notifications enable row level security;
 alter table public.portal_notification_dismissals enable row level security;
+alter table public.portal_audit_logs enable row level security;
 
 -- Les appels viennent uniquement des routes serveur protégées du portail
 -- (clé serveur Supabase). Aucune règle anonyme n’est ajoutée.

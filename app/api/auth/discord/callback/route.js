@@ -1,4 +1,4 @@
-import { createSession, database, cleanGrade } from "../../_shared";
+import { createSession, database, cleanGrade, recordAuditLog } from "../../_shared";
 import { discordConfig, discordDisplayName, discordUser, expiredOauthStateCookie, hasValidState, portalRedirect, redirect } from "../oauth";
 
 export const runtime = "edge";
@@ -46,6 +46,7 @@ export async function GET(request) {
       const admins = await database("portal_users?role=eq.admin&discord_id=is.null&select=*&order=created_at.asc&limit=1");
       user = Array.isArray(admins) ? admins[0] : null;
     }
+    const existingUser = Boolean(user);
     if (user) {
       const rows = await database(`portal_users?id=eq.${encodeURIComponent(user.id)}`, {
         method: "PATCH",
@@ -73,9 +74,14 @@ export async function GET(request) {
       });
       user = Array.isArray(rows) ? rows[0] : null;
     }
+    if (!existingUser && user) {
+      const details = user.role === "admin" ? "Premier administrateur cr\u00e9\u00e9 et li\u00e9 \u00e0 Discord." : "Demande d\u2019acc\u00e8s cr\u00e9\u00e9e et en attente de validation.";
+      await recordAuditLog({ actor: user, category: "account", action: "Compte cr\u00e9\u00e9 avec Discord", details }).catch(() => {});
+    }
     if (!user || user.blocked) return redirect(portalRedirect(config, "blocked"), clearState);
     if (user.approval_status !== "approved") return redirect(portalRedirect(config, user.approval_status === "rejected" ? "rejected" : "pending"), clearState);
     const cookie = await createSession(user.id, request);
+    await recordAuditLog({ actor: user, category: "auth", action: "Connexion Discord", details: "Connexion au portail r\u00e9ussie." }).catch(() => {});
     return redirectWithSession(portalRedirect(config, "connected"), request, cookie);
   } catch (error) {
     console.error("Discord authentication failed", error instanceof Error ? error.message : "Unknown error");

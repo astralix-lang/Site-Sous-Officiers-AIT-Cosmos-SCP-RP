@@ -1320,9 +1320,7 @@ function App() {
       try {
         const state = await portalRequest();
         if (cancelled) return;
-        setChats(Array.isArray(state.chats) ? state.chats : []);
-        setPortalNotifications(Array.isArray(state.notifications) ? state.notifications : []);
-        setPortalRemote(true);
+        applySharedPortalState(state);
       } catch {
         if (!cancelled) setPortalRemote(false);
       } finally {
@@ -1485,9 +1483,18 @@ function App() {
     const entry = { id: crypto.randomUUID(), createdAt: now.toISOString(), displayAt: new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "medium" }).format(now), actorId: actor?.id || "system", actorName: actor ? `${actor.firstName} ${actor.lastName}` : "Système", actorRole: actor?.role || "", category, action, details };
     setAuditLogs((current) => [entry, ...current].slice(0, 500));
   }
+  function mergeAuditLogs(current, remoteLogs) {
+    const remote = Array.isArray(remoteLogs) ? remoteLogs : [];
+    if (!remote.length) return current;
+    const known = new Set(remote.map((entry) => entry.id));
+    return [...remote, ...current.filter((entry) => !known.has(entry.id))]
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+      .slice(0, 500);
+  }
   function applySharedPortalState(state) {
     if (Array.isArray(state?.chats)) setChats(state.chats);
     if (Array.isArray(state?.notifications)) setPortalNotifications(state.notifications);
+    if (Array.isArray(state?.auditLogs)) setAuditLogs((current) => mergeAuditLogs(current, state.auditLogs));
     setPortalRemote(true);
   }
   function syncSharedPortal(action, payload = {}) {
@@ -1512,6 +1519,18 @@ function App() {
   }
   function clearAuditLogs() {
     if (session.role !== "admin" || !confirm("Réinitialiser définitivement le journal des logs ?")) return;
+    if (portalRemote) {
+      portalRequest("POST", { action: "clear_audit_logs" })
+        .then((state) => {
+          setAuditLogs(Array.isArray(state?.auditLogs) ? state.auditLogs : []);
+          if (Array.isArray(state?.chats)) setChats(state.chats);
+          if (Array.isArray(state?.notifications)) setPortalNotifications(state.notifications);
+          setPortalRemote(true);
+          flash("Le journal des logs a été réinitialisé.");
+        })
+        .catch((error) => flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible."));
+      return;
+    }
     setAuditLogs([]);
     addLog("system", "Journal des logs réinitialisé", "L’historique précédent a été supprimé.");
     flash("Le journal des logs a été réinitialisé.");

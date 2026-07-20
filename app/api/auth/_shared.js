@@ -252,6 +252,25 @@ export async function listUsers() {
   return Array.isArray(rows) ? rows.map(publicUser) : [];
 }
 
+export async function recordAuditLog({ actor = null, category = "system", action = "", details = "" }) {
+  const actionText = String(action || "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 140);
+  if (!actionText) return;
+  const actorName = actor ? `${actor.first_name || ""} ${actor.last_name || ""}`.trim() || "Membre Discord" : "Syst\u00e8me";
+  await database("portal_audit_logs", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      id: crypto.randomUUID(),
+      actor_id: actor?.id || null,
+      actor_name: actorName.slice(0, 120),
+      actor_role: cleanRole(actor?.role) || null,
+      category: String(category || "system").replace(/[^a-z_]/gi, "").slice(0, 40) || "system",
+      action: actionText,
+      details: String(details || "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 360) || null,
+    }),
+  });
+}
+
 export async function hasUsers() {
   const rows = await database("portal_users?select=id&limit=1");
   return Array.isArray(rows) && rows.length > 0;
