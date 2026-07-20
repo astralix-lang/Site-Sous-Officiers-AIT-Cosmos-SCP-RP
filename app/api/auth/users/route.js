@@ -40,7 +40,7 @@ function identityPayload(body, role, existing, canChangeGrade) {
 export async function GET(request) {
   const current = await requireSession(request);
   if (current.error) return current.error;
-  try { return json({ session: publicUser(current.user, current.user), users: await listUsers(current.user) }); }
+  try { return json({ session: publicUser(current.user), users: await listUsers() }); }
   catch (error) { return errorResponse(error); }
 }
 
@@ -87,7 +87,7 @@ export async function PATCH(request) {
     const updated = updatedRows?.[0];
     if (!updated) throw new Error("USER_NOT_UPDATED");
     if ((!self && (changedBlock || approvalStatus !== targetStatus)) || approvalStatus !== "approved") await deleteSessionsForUser(target.id);
-    return json({ ok: true, session: publicUser(current.user, current.user), users: await listUsers(current.user) });
+    return json({ ok: true, session: publicUser(current.user), users: await listUsers() });
   } catch (error) { return errorResponse(error); }
 }
 
@@ -104,6 +104,6 @@ export async function DELETE(request) {
     if (!target) return json({ error: "Compte introuvable." }, 404);
     if (!canManage(current.user, target)) return json({ error: "Vous n'etes pas autorise a supprimer ce compte." }, 403);
     await database(`portal_users?id=eq.${encodeURIComponent(id)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
-    return json({ ok: true, session: publicUser(current.user, current.user), users: await listUsers(current.user) });
+    return json({ ok: true, session: publicUser(current.user), users: await listUsers() });
   } catch (error) { return errorResponse(error); }
 }

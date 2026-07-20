@@ -231,13 +231,11 @@ function dateLabel(value) {
   catch { return ""; }
 }
 
-export function publicUser(row, viewer = null) {
-  const canSeeEmail = Boolean(viewer && (viewer.id === row.id || manager(viewer)));
+export function publicUser(row) {
   return {
     id: row.id,
     firstName: row.first_name,
     lastName: row.last_name,
-    email: canSeeEmail ? row.email : "",
     role: row.role,
     grade: row.grade,
     presence: ["senior", "officer"].includes(row.role) ? (row.presence === "absent" ? "absent" : "present") : undefined,
@@ -249,9 +247,9 @@ export function publicUser(row, viewer = null) {
   };
 }
 
-export async function listUsers(viewer = null) {
-  const rows = await database("portal_users?select=id,email,first_name,last_name,role,grade,presence,blocked,approval_status,discord_username,created_at,updated_at&order=created_at.asc");
-  return Array.isArray(rows) ? rows.map((row) => publicUser(row, viewer)) : [];
+export async function listUsers() {
+  const rows = await database("portal_users?select=id,first_name,last_name,role,grade,presence,blocked,approval_status,discord_username,created_at,updated_at&order=created_at.asc");
+  return Array.isArray(rows) ? rows.map(publicUser) : [];
 }
 
 export async function hasUsers() {
