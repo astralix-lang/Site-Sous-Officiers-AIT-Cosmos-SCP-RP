@@ -33,6 +33,8 @@ import {
   UserRound,
   UserX,
   UsersRound,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
 
@@ -71,6 +73,7 @@ function compareUsersByGrade(left, right) {
 }
 
 const THEME_KEY = "portail-so-theme";
+const SOUND_KEY = "portail-so-sounds";
 const QUOTA_KEY = "portail-so-quotas-v1";
 const MISSIONS_KEY = "portail-so-missions-v1";
 const CHAT_KEY = "portail-so-chats-v1";
@@ -461,7 +464,7 @@ function UserModal({ actor, editing, onClose, onSave }) {
   );
 }
 
-function ProfileModal({ user, onClose, onSave }) {
+function ProfileModal({ user, onClose, onSave, soundEnabled, onSoundEnabledChange }) {
   const [form, setForm] = useState({ ...user, password: "" });
   const [saving, setSaving] = useState(false);
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
@@ -483,6 +486,7 @@ function ProfileModal({ user, onClose, onSave }) {
           <label>Compte Discord</label><div className="readonly-grade"><span>{user.discordUsername || "Compte Discord lié"}</span><small>La connexion est gérée par Discord.</small></div>
           <label>Grade</label>{user.role === "admin" ? <select value={form.grade || GRADES[0]} onChange={(event) => set("grade", event.target.value)} required>{GRADES.map((grade) => <option key={grade} value={grade}>{grade}</option>)}</select> : <div className="readonly-grade"><span>{user.grade || GRADES[0]}</span><small>Le grade est géré par un Admin ou un Référent SO.</small></div>}
           <label>Niveau d’accès</label><div className="readonly-role"><RoleBadge role={user.role} /><span>Ce niveau est géré par un responsable.</span></div>
+          <section className="profile-preferences"><p className="eyebrow dark">PARAMÈTRES</p><label className="preference-toggle"><span className="preference-icon">{soundEnabled ? <Volume2 size={19} /> : <VolumeX size={19} />}</span><span><strong>Sons de l’interface</strong><small>{soundEnabled ? "Des sons discrets sont joués lors des clics." : "Les sons sont désactivés sur cet appareil."}</small></span><input type="checkbox" checked={soundEnabled} onChange={(event) => onSoundEnabledChange(event.target.checked)} aria-label="Activer les sons de l’interface" /><i aria-hidden="true"><span /></i></label></section>
           <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Annuler</button><button type="submit" className="primary" disabled={saving}>{saving ? "Sécurisation…" : "Enregistrer mon profil"}</button></div>
         </form>
       </div>
@@ -1298,6 +1302,7 @@ function App() {
   const [openGroups, setOpenGroups] = useState({ admin: true, referent: false, global: true, senior: false, chat: true });
   const [profileOpen, setProfileOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [quotas, setQuotas] = useState(DEFAULT_QUOTAS);
   const [missions, setMissions] = useState([]);
   const [chats, setChats] = useState([]);
@@ -1309,6 +1314,7 @@ function App() {
   const [portalNotifications, setPortalNotifications] = useState([]);
   const [portalRemote, setPortalRemote] = useState(false);
   const [loginTransition, setLoginTransition] = useState(null);
+  const audioContextRef = useRef(null);
 
   useEffect(() => {
     if (!ready || !session) return;
@@ -1370,7 +1376,9 @@ function App() {
       setSubmissionHistory(Array.isArray(savedSubmissionHistory) ? savedSubmissionHistory : []);
       setPortalNotifications(Array.isArray(savedNotifications) ? savedNotifications : []);
       const savedTheme = localStorage.getItem(THEME_KEY) === "dark";
+      const savedSounds = localStorage.getItem(SOUND_KEY) !== "off";
       setDarkMode(savedTheme);
+      setSoundEnabled(savedSounds);
       document.documentElement.dataset.theme = savedTheme ? "dark" : "light";
       setReady(true);
     }
@@ -1467,6 +1475,40 @@ function App() {
     document.documentElement.dataset.theme = darkMode ? "dark" : "light";
     localStorage.setItem(THEME_KEY, darkMode ? "dark" : "light");
   }, [darkMode, ready]);
+  useEffect(() => { if (ready) localStorage.setItem(SOUND_KEY, soundEnabled ? "on" : "off"); }, [soundEnabled, ready]);
+  useEffect(() => {
+    if (!ready || !soundEnabled) return undefined;
+    const onInterfaceClick = (event) => {
+      if (!(event.target instanceof Element)) return;
+      const control = event.target.closest("button, a.primary, label.theme-toggle, label.preference-toggle");
+      if (!control || control.disabled || control.getAttribute("aria-disabled") === "true") return;
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
+        const context = audioContextRef.current || new AudioContextClass();
+        audioContextRef.current = context;
+        if (context.state === "suspended") context.resume().catch(() => {});
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        const now = context.currentTime;
+        oscillator.type = "sine";
+        oscillator.frequency.setValueAtTime(480, now);
+        oscillator.frequency.exponentialRampToValueAtTime(630, now + 0.06);
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.035, now + 0.008);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+        oscillator.connect(gain).connect(context.destination);
+        oscillator.start(now);
+        oscillator.stop(now + 0.09);
+      } catch { /* Le portail reste utilisable si le navigateur ne prend pas en charge l’audio. */ }
+    };
+    document.addEventListener("click", onInterfaceClick, true);
+    return () => document.removeEventListener("click", onInterfaceClick, true);
+  }, [ready, soundEnabled]);
+  useEffect(() => () => {
+    const context = audioContextRef.current;
+    if (context?.close) context.close().catch(() => {});
+  }, []);
 
   const canManage = session && ["admin", "referent"].includes(session.role);
   const manageable = (user) => {
@@ -1889,7 +1931,7 @@ function App() {
           <MenuGroup title="Chat" icon={MessageSquareText} open={openGroups.chat} onToggle={() => toggleGroup("chat")}><button className={`menu-item ${activeSection === "chat" ? "active" : ""}`} onClick={() => setActiveSection("chat")}><Send size={17} /> Messagerie</button></MenuGroup>
           {["admin", "referent"].includes(session.role) && <button className={`menu-item standalone-nav logs-nav ${activeSection === "logs" ? "active" : ""}`} onClick={() => setActiveSection("logs")}><ScrollText size={18} /> Logs</button>}
         </nav>
-        <button className="profile-card" onClick={() => setProfileOpen(true)} title="Personnaliser mon compte"><div className={`avatar ${ROLES[session.role].tone}`}>{initials(session)}</div><div><strong>{session.firstName} {session.lastName}</strong><small>{session.grade || GRADES[0]} · {ROLES[session.role].label}</small></div><ChevronDown size={16} /></button>
+        <button className="profile-card" onClick={() => setProfileOpen(true)} title="Profil et paramètres"><div className={`avatar ${ROLES[session.role].tone}`}>{initials(session)}</div><div><strong>{session.firstName} {session.lastName}</strong><small>{session.grade || GRADES[0]} · {ROLES[session.role].label}</small></div><ChevronDown size={16} /></button>
         <div className="sidebar-actions">
           <button className="logout" onClick={logout}><LogOut size={18} /><span>Se déconnecter</span></button>
           <label className="theme-toggle" title={darkMode ? "Passer en mode clair" : "Passer en mode sombre"}>
@@ -1919,7 +1961,7 @@ function App() {
       </main>
       {notice && <div className="toast"><BadgeCheck size={19} />{notice}</div>}
       {modal && <UserModal actor={session} editing={modal.id ? modal : null} onClose={() => setModal(null)} onSave={saveUser} />}
-      {profileOpen && <ProfileModal user={session} onClose={() => setProfileOpen(false)} onSave={saveProfile} />}
+      {profileOpen && <ProfileModal user={session} onClose={() => setProfileOpen(false)} onSave={saveProfile} soundEnabled={soundEnabled} onSoundEnabledChange={setSoundEnabled} />}
       {loginTransition && <LoginTransition user={loginTransition} />}
     </div>
   );
