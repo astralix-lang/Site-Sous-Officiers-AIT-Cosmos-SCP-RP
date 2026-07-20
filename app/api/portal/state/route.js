@@ -107,8 +107,8 @@ async function chatById(id) {
 async function validMembers(ids, actorId) {
   const allowed = uniqueIds(ids).filter((id) => id !== actorId);
   if (!allowed.length) return [];
-  const rows = await database("portal_users?select=id,blocked");
-  const active = new Set(parseArray(rows).filter((row) => !row.blocked).map((row) => row.id));
+  const rows = await database("portal_users?select=id,blocked,approval_status");
+  const active = new Set(parseArray(rows).filter((row) => !row.blocked && (!row.approval_status || row.approval_status === "approved")).map((row) => row.id));
   return allowed.filter((id) => active.has(id));
 }
 

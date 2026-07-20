@@ -1,0 +1,84 @@
+import { createSession, database, cleanGrade } from "../../_shared";
+import { discordConfig, discordDisplayName, discordUser, expiredOauthStateCookie, hasValidState, portalRedirect, redirect } from "../oauth";
+
+export const runtime = "edge";
+
+function discordEmail(user) {
+  const email = String(user?.email || "").trim().toLowerCase();
+  return user?.verified === true && /^.{1,254}@[^\s@]+\.[^\s@]+$/.test(email) ? email : "";
+}
+
+async function firstAdminMissing() {
+  const rows = await database("portal_users?role=eq.admin&select=id&limit=1");
+  return !Array.isArray(rows) || rows.length === 0;
+}
+
+function redirectWithSession(location, request, sessionCookie) {
+  const headers = new Headers({ Location: location, "Cache-Control": "no-store, max-age=0" });
+  headers.append("Set-Cookie", expiredOauthStateCookie(request));
+  headers.append("Set-Cookie", sessionCookie);
+  return new Response(null, { status: 302, headers });
+}
+
+export async function GET(request) {
+  const config = discordConfig(request);
+  if (!config) return redirect(new URL("/?discord=not_configured", new URL(request.url).origin).toString());
+  const url = new URL(request.url);
+  const state = url.searchParams.get("state");
+  const code = url.searchParams.get("code");
+  const clearState = { "Set-Cookie": expiredOauthStateCookie(request) };
+  if (!hasValidState(request, state) || !code) return redirect(portalRedirect(config, "invalid_link"), clearState);
+  try {
+    const profile = await discordUser(config, code);
+    const discordId = String(profile.id);
+    const email = discordEmail(profile);
+    if (!email) return redirect(portalRedirect(config, "email_required"), clearState);
+    const byDiscord = await database(`portal_users?discord_id=eq.${encodeURIComponent(discordId)}&select=*`);
+    let user = Array.isArray(byDiscord) ? byDiscord[0] : null;
+    if (!user) {
+      const byEmail = await database(`portal_users?email=eq.${encodeURIComponent(email)}&select=*`);
+      user = Array.isArray(byEmail) ? byEmail[0] : null;
+    }
+    const name = discordDisplayName(profile);
+    const bootstrapId = String(process.env.DISCORD_BOOTSTRAP_USER_ID || "").trim();
+    const isBootstrapUser = bootstrapId === discordId;
+    if (!user && isBootstrapUser) {
+      const admins = await database("portal_users?role=eq.admin&discord_id=is.null&select=*&order=created_at.asc&limit=1");
+      user = Array.isArray(admins) ? admins[0] : null;
+    }
+    if (user) {
+      const rows = await database(`portal_users?id=eq.${encodeURIComponent(user.id)}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ discord_id: discordId, discord_username: name, approval_status: user.approval_status || "approved" }),
+      });
+      user = Array.isArray(rows) ? rows[0] : user;
+    } else {
+      const bootstrap = isBootstrapUser && await firstAdminMissing();
+      const rows = await database("portal_users", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          email,
+          first_name: name,
+          last_name: "",
+          role: bootstrap ? "admin" : "officer",
+          grade: bootstrap ? (cleanGrade(process.env.DISCORD_BOOTSTRAP_GRADE) || "Sergent") : "Sergent",
+          presence: bootstrap ? null : "present",
+          blocked: false,
+          approval_status: bootstrap ? "approved" : "pending",
+          discord_id: discordId,
+          discord_username: name,
+        }),
+      });
+      user = Array.isArray(rows) ? rows[0] : null;
+    }
+    if (!user || user.blocked) return redirect(portalRedirect(config, "blocked"), clearState);
+    if (user.approval_status !== "approved") return redirect(portalRedirect(config, user.approval_status === "rejected" ? "rejected" : "pending"), clearState);
+    const cookie = await createSession(user.id, request);
+    return redirectWithSession(portalRedirect(config, "connected"), request, cookie);
+  } catch (error) {
+    console.error("Discord authentication failed", error instanceof Error ? error.message : "Unknown error");
+    return redirect(portalRedirect(config, "failed"), clearState);
+  }
+}

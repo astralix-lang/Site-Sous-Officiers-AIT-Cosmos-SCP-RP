@@ -1,40 +1,38 @@
 import {
-  canManage, cleanGrade, cleanName, cleanPresence, cleanRole, createPasswordRecord, createSession, database,
-  deleteSessionsForUser, json, listUsers, manager, normalizeEmail, passwordError, publicUser, readJson,
-  requireSession, validCsrfRequest,
+  canManage, cleanApprovalStatus, cleanGrade, cleanName, cleanPresence, cleanRole, database,
+  deleteSessionsForUser, json, listUsers, manager, publicUser, readJson, requireSession, validCsrfRequest,
 } from "../_shared";
 
 export const runtime = "edge";
 
 const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function allowedRoles(actor) { return actor.role === "admin" ? new Set(["referent", "senior", "officer"]) : new Set(["senior", "officer"]); }
+function allowedRoles(actor) {
+  return actor.role === "admin" ? new Set(["referent", "senior", "officer"]) : new Set(["senior", "officer"]);
+}
+
 function errorResponse(error) {
   const message = error instanceof Error ? error.message : "";
   if (message === "INVALID_CONTENT_TYPE" || message === "INVALID_JSON") return json({ error: "Formulaire invalide." }, 400);
   if (message === "BODY_TOO_LARGE") return json({ error: "Formulaire trop volumineux." }, 413);
-  if (message === "DATABASE_REQUEST_FAILED" || message === "DATABASE_INVALID_RESPONSE") {
-    return json({ error: "La modification est temporairement indisponible. Réessayez dans quelques minutes." }, 503);
-  }
-  if (message === "USER_NOT_UPDATED") return json({ error: "Le compte n’a pas pu être enregistré. Réessayez dans un instant." }, 503);
+  if (message === "DATABASE_REQUEST_FAILED" || message === "DATABASE_INVALID_RESPONSE") return json({ error: "La modification est temporairement indisponible. Reessayez dans quelques minutes." }, 503);
   console.error("Portal user action failed", message || "Unknown error");
-  return json({ error: "La modification du compte a échoué." }, 500);
+  return json({ error: "La modification du compte a echoue." }, 500);
 }
 
-function identityPayload(body, role, existing = null) {
-  const email = normalizeEmail(body?.email);
-  const firstName = cleanName(body?.firstName);
-  const lastName = cleanName(body?.lastName);
-  const grade = cleanGrade(body?.grade);
-  if (!email || !firstName || !grade || !role) return { error: "Le prénom, l’adresse e-mail, le grade et le niveau d’accès sont obligatoires." };
+function identityPayload(body, role, existing, canChangeGrade) {
+  const firstName = cleanName(body?.firstName ?? existing.first_name);
+  const lastName = cleanName(body?.lastName ?? existing.last_name);
+  const requestedGrade = cleanGrade(body?.grade);
+  const grade = canChangeGrade && requestedGrade ? requestedGrade : existing.grade;
+  if (!firstName || !grade || !role) return { error: "Le prenom, le grade et le niveau d'acces sont obligatoires." };
   return {
     value: {
-      email,
       first_name: firstName,
       last_name: lastName,
       grade,
       role,
-      presence: ["senior", "officer"].includes(role) ? cleanPresence(body?.presence ?? existing?.presence) : null,
+      presence: ["senior", "officer"].includes(role) ? cleanPresence(body?.presence ?? existing.presence) : null,
     },
   };
 }
@@ -46,28 +44,12 @@ export async function GET(request) {
   catch (error) { return errorResponse(error); }
 }
 
-export async function POST(request) {
-  if (!validCsrfRequest(request)) return json({ error: "Jeton de sécurité invalide. Rechargez la page." }, 403);
-  const current = await requireSession(request);
-  if (current.error) return current.error;
-  if (!manager(current.user)) return json({ error: "Vous n’êtes pas autorisé à créer un compte." }, 403);
-  try {
-    const body = await readJson(request);
-    const role = cleanRole(body?.role);
-    if (!allowedRoles(current.user).has(role)) return json({ error: "Niveau d’accès non autorisé." }, 403);
-    const identity = identityPayload(body, role);
-    if (identity.error) return json({ error: identity.error }, 400);
-    const password = String(body?.password || "");
-    const passwordIssue = passwordError(password);
-    if (passwordIssue) return json({ error: passwordIssue }, 400);
-    const record = await createPasswordRecord(password);
-    await database("portal_users", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ ...identity.value, blocked: false, ...record }) });
-    return json({ ok: true, session: publicUser(current.user, current.user), users: await listUsers(current.user) }, 201);
-  } catch (error) { return errorResponse(error); }
+export async function POST() {
+  return json({ error: "Les comptes sont crees exclusivement lors de la connexion Discord." }, 405);
 }
 
 export async function PATCH(request) {
-  if (!validCsrfRequest(request)) return json({ error: "Jeton de sécurité invalide. Rechargez la page." }, 403);
+  if (!validCsrfRequest(request)) return json({ error: "Jeton de securite invalide. Rechargez la page." }, 403);
   const current = await requireSession(request);
   if (current.error) return current.error;
   try {
@@ -78,33 +60,39 @@ export async function PATCH(request) {
     const target = Array.isArray(rows) ? rows[0] : null;
     if (!target) return json({ error: "Compte introuvable." }, 404);
     const self = target.id === current.user.id;
-    if (!self && !canManage(current.user, target)) return json({ error: "Vous n’êtes pas autorisé à modifier ce compte." }, 403);
+    if (!self && !canManage(current.user, target)) return json({ error: "Vous n'etes pas autorise a modifier ce compte." }, 403);
+
+    const targetStatus = cleanApprovalStatus(target.approval_status) || "approved";
+    const requestedStatus = cleanApprovalStatus(body?.approvalStatus);
+    if (!self && requestedStatus && requestedStatus !== targetStatus && current.user.role !== "admin") {
+      return json({ error: "Seul un administrateur peut valider ou refuser une demande Discord." }, 403);
+    }
+    if (self && requestedStatus && requestedStatus !== targetStatus) return json({ error: "Vous ne pouvez pas modifier le statut de votre demande." }, 403);
 
     const requestedRole = cleanRole(body?.role);
     const role = self ? target.role : (allowedRoles(current.user).has(requestedRole) ? requestedRole : target.role);
-    const identity = identityPayload({ ...body, grade: self && current.user.role !== "admin" ? target.grade : body?.grade }, role, target);
+    const canChangeGrade = self ? current.user.role === "admin" : manager(current.user);
+    const identity = identityPayload(body, role, target, canChangeGrade);
     if (identity.error) return json({ error: identity.error }, 400);
-    if (self && !manager(current.user)) identity.value.email = target.email;
-    if (self && current.user.role !== "admin") identity.value.grade = target.grade;
-    const password = String(body?.password || "");
-    const passwordIssue = password ? passwordError(password) : "";
-    if (passwordIssue) return json({ error: passwordIssue }, 400);
-    if (password) Object.assign(identity.value, await createPasswordRecord(password));
+    const approvalStatus = self ? targetStatus : (requestedStatus || targetStatus);
+    identity.value.approval_status = approvalStatus;
     const changedBlock = typeof body?.blocked === "boolean" && !self && current.user.role === "admin" && target.role !== "admin";
     if (changedBlock) identity.value.blocked = body.blocked;
-    const updatedRows = await database(`portal_users?id=eq.${encodeURIComponent(id)}`, { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify(identity.value) });
+
+    const updatedRows = await database(`portal_users?id=eq.${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify(identity.value),
+    });
     const updated = updatedRows?.[0];
     if (!updated) throw new Error("USER_NOT_UPDATED");
-    let cookie = null;
-    if ((!self && (changedBlock || password)) || (self && password)) await deleteSessionsForUser(target.id);
-    if (self && password) cookie = await createSession(updated.id, request);
-    const viewer = self ? updated : current.user;
-    return json({ ok: true, session: publicUser(viewer, viewer), users: await listUsers(viewer) }, 200, cookie ? { "Set-Cookie": cookie } : {});
+    if ((!self && (changedBlock || approvalStatus !== targetStatus)) || approvalStatus !== "approved") await deleteSessionsForUser(target.id);
+    return json({ ok: true, session: publicUser(current.user, current.user), users: await listUsers(current.user) });
   } catch (error) { return errorResponse(error); }
 }
 
 export async function DELETE(request) {
-  if (!validCsrfRequest(request)) return json({ error: "Jeton de sécurité invalide. Rechargez la page." }, 403);
+  if (!validCsrfRequest(request)) return json({ error: "Jeton de securite invalide. Rechargez la page." }, 403);
   const current = await requireSession(request);
   if (current.error) return current.error;
   try {
@@ -114,7 +102,7 @@ export async function DELETE(request) {
     const rows = await database(`portal_users?id=eq.${encodeURIComponent(id)}&select=*`);
     const target = Array.isArray(rows) ? rows[0] : null;
     if (!target) return json({ error: "Compte introuvable." }, 404);
-    if (!canManage(current.user, target)) return json({ error: "Vous n’êtes pas autorisé à supprimer ce compte." }, 403);
+    if (!canManage(current.user, target)) return json({ error: "Vous n'etes pas autorise a supprimer ce compte." }, 403);
     await database(`portal_users?id=eq.${encodeURIComponent(id)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
     return json({ ok: true, session: publicUser(current.user, current.user), users: await listUsers(current.user) });
   } catch (error) { return errorResponse(error); }

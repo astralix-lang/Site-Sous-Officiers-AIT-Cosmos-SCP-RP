@@ -11,7 +11,6 @@ import {
   FileText,
   Gauge,
   Home,
-  KeyRound,
   LayoutDashboard,
   LogOut,
   Medal,
@@ -19,7 +18,6 @@ import {
   Moon,
   Paperclip,
   Pencil,
-  Plus,
   RotateCcw,
   Search,
   ScrollText,
@@ -117,14 +115,6 @@ function readStoredJson(key, fallback) {
   } catch {
     return fallback;
   }
-}
-
-function passwordError(password) {
-  if (password.length < 12) return "Le mot de passe doit contenir au moins 12 caractères.";
-  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
-    return "Ajoutez une minuscule, une majuscule, un chiffre et un caractère spécial.";
-  }
-  return "";
 }
 
 let csrfTokenPromise;
@@ -376,24 +366,17 @@ function MenuGroup({ title, icon: Icon, open, onToggle, children }) {
   );
 }
 
-function Login({ onLogin, onSetup, setupRequired, configurationError, error }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [grade, setGrade] = useState(GRADES[0]);
-  const [setupCode, setSetupCode] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-
-  async function submit(event) {
-    event.preventDefault();
-    setSubmitting(true);
-    try {
-      if (setupRequired) await onSetup({ firstName, lastName, email, password, grade, setupCode });
-      else await onLogin(email, password);
-    }
-    finally { setSubmitting(false); }
-  }
+function Login({ configurationError, error }) {
+  const status = typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("discord") || "";
+  const messages = {
+    pending: "Votre demande a été envoyée. Un administrateur doit encore vous attribuer un niveau d’accès.",
+    rejected: "Cette demande d’accès a été refusée. Contactez un administrateur si besoin.",
+    blocked: "Ce compte est bloqué. Contactez un administrateur.",
+    email_required: "Discord doit autoriser le partage de votre adresse e-mail pour vérifier votre compte.",
+    not_configured: "La connexion Discord n’est pas encore configurée par l’administrateur.",
+    invalid_link: "Le lien de connexion Discord a expiré. Recommencez la connexion.",
+    failed: "La connexion Discord n’a pas pu être finalisée. Réessayez dans un instant.",
+  };
 
   return (
     <main className="login-page">
@@ -409,21 +392,13 @@ function Login({ onLogin, onSetup, setupRequired, configurationError, error }) {
         <div className="login-card">
           <div className="mobile-logo"><div className="brand-mark"><ShieldCheck size={23} /></div><strong>Portail SO</strong></div>
           <p className="eyebrow dark">CONNEXION</p>
-          <h2>{setupRequired ? "Configuration initiale" : "Bienvenue"}</h2>
-          <p className="muted">{setupRequired ? "Créez le premier compte Administrateur du portail." : "Identifiez-vous pour accéder à votre espace."}</p>
-          <form autoComplete="off" onSubmit={submit}>
-            {setupRequired && <>
-              <div className="form-grid"><div><label>Prénom</label><input value={firstName} onChange={(event) => setFirstName(event.target.value)} required /></div><div><label>Nom <span className="optional">(facultatif)</span></label><input value={lastName} onChange={(event) => setLastName(event.target.value)} /></div></div>
-              <label>Grade</label><select value={grade} onChange={(event) => setGrade(event.target.value)} required>{GRADES.map((item) => <option value={item} key={item}>{item}</option>)}</select>
-            </>}
-            <label>Adresse e-mail</label>
-            <div className="input-wrap"><UserRound size={19} /><input type="email" name="portal-email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} required /></div>
-            <label>Mot de passe</label>
-            <div className="input-wrap"><KeyRound size={19} /><input type="password" name="portal-password" autoComplete={setupRequired ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} required minLength={setupRequired ? 12 : undefined} /></div>
-            {setupRequired && <><small className="muted">Au moins 12 caractères : majuscule, minuscule, chiffre et caractère spécial.</small><label>Code de configuration</label><div className="input-wrap"><ShieldCheck size={19} /><input type="password" value={setupCode} onChange={(event) => setSetupCode(event.target.value)} required /></div></>}
-            {(configurationError || error) && <p className="form-error">{configurationError || error}</p>}
-            <button className="primary wide" type="submit" disabled={submitting || Boolean(configurationError)}>{submitting ? "Vérification…" : setupRequired ? "Créer l’Administrateur" : "Se connecter"} <span>→</span></button>
-          </form>
+          <h2>Connexion Discord</h2>
+          <p className="muted">Connectez votre compte Discord pour accéder au portail.</p>
+          <div className="discord-login-panel">
+            <a className={`primary wide discord-login ${configurationError ? "disabled" : ""}`} href={configurationError ? undefined : "/api/auth/discord"} aria-disabled={Boolean(configurationError)}><MessageSquareText size={20} /> Continuer avec Discord <span>→</span></a>
+            <p className="discord-login-note">Lors de votre première connexion, une demande est créée et reste en attente de validation par un administrateur.</p>
+          </div>
+          {(configurationError || error || messages[status]) && <p className="form-error">{configurationError || error || messages[status]}</p>}
         </div>
       </section>
     </main>
@@ -448,8 +423,9 @@ function LoginTransition({ user }) {
 
 function UserModal({ actor, editing, onClose, onSave }) {
   const allowedRoles = actor.role === "admin" ? ["referent", "senior", "officer"] : ["senior", "officer"];
-  const [form, setForm] = useState(editing ? { ...editing, password: "" } : { firstName: "", lastName: "", email: "", grade: GRADES[0], role: allowedRoles[0], password: "", presence: "present" });
+  const [form, setForm] = useState({ ...editing });
   const [saving, setSaving] = useState(false);
+  const isRequest = editing.approvalStatus !== "approved";
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
 
   async function submit(event) {
@@ -464,23 +440,21 @@ function UserModal({ actor, editing, onClose, onSave }) {
       <div className="modal">
         <button className="icon-button close" onClick={onClose}><X size={20} /></button>
         <p className="eyebrow dark">GESTION DES ACCÈS</p>
-        <h2>{editing ? "Modifier le compte" : "Créer un compte"}</h2>
-        <p className="muted">Renseignez les informations et attribuez le niveau d’accès.</p>
+        <h2>{isRequest ? "Valider la demande Discord" : "Modifier le compte"}</h2>
+        <p className="muted">{isRequest ? "Attribuez le grade et le niveau d’accès avant de valider ou de refuser la demande." : "Les informations Discord restent liées au compte du membre."}</p>
         <form onSubmit={submit}>
           <div className="form-grid">
             <div><label>Prénom</label><input value={form.firstName} onChange={(e) => set("firstName", e.target.value)} required /></div>
             <div><label>Nom <span className="optional">(facultatif)</span></label><input value={form.lastName} onChange={(e) => set("lastName", e.target.value)} /></div>
           </div>
-          <label>Adresse e-mail</label><input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} required />
+          <label>Compte Discord</label><div className="readonly-grade"><span>{form.discordUsername || "Compte Discord lié"}</span><small>{form.email}</small></div>
           <label>Grade</label><select value={form.grade || GRADES[0]} onChange={(e) => set("grade", e.target.value)} required>{GRADES.map((grade) => <option key={grade} value={grade}>{grade}</option>)}</select>
           <label>Niveau d’accès</label>
           <select value={form.role} onChange={(e) => set("role", e.target.value)} disabled={editing && !allowedRoles.includes(editing.role)}>
             {(allowedRoles.includes(form.role) ? allowedRoles : [form.role]).map((role) => <option key={role} value={role}>{ROLES[role].label}</option>)}
           </select>
-          <label>{editing ? "Nouveau mot de passe (facultatif)" : "Mot de passe temporaire"}</label>
-          <input type="password" value={form.password} onChange={(e) => set("password", e.target.value)} required={!editing} minLength={editing ? undefined : 12} placeholder="12 caractères minimum" />
-          <small className="muted">Majuscule, minuscule, chiffre et caractère spécial requis. La sauvegarde sécurisée dure habituellement quelques secondes.</small>
-          <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Annuler</button><button type="submit" className="primary" disabled={saving}>{saving ? "Sécurisation…" : editing ? "Enregistrer" : "Créer le compte"}</button></div>
+          {isRequest && <><label>Décision</label><select value={form.approvalStatus || "pending"} onChange={(e) => set("approvalStatus", e.target.value)}><option value="pending">Laisser en attente</option><option value="approved">Valider l’accès</option><option value="rejected">Refuser la demande</option></select></>}
+          <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Annuler</button><button type="submit" className="primary" disabled={saving}>{saving ? "Enregistrement…" : isRequest ? "Enregistrer la décision" : "Enregistrer"}</button></div>
         </form>
       </div>
     </div>
@@ -506,11 +480,9 @@ function ProfileModal({ user, onClose, onSave }) {
         <div className="profile-modal-head"><div className={`avatar profile-avatar ${ROLES[user.role].tone}`}>{initials(user)}</div><div><p className="eyebrow dark">MON COMPTE</p><h2>Personnaliser mon profil</h2><p className="muted">Mettez à jour vos informations personnelles.</p></div></div>
         <form onSubmit={submit}>
           <div className="form-grid"><div><label>Prénom</label><input value={form.firstName} onChange={(event) => set("firstName", event.target.value)} required /></div><div><label>Nom <span className="optional">(facultatif)</span></label><input value={form.lastName} onChange={(event) => set("lastName", event.target.value)} /></div></div>
-          {["admin", "referent"].includes(user.role) && <><label>Adresse e-mail</label><input type="email" value={form.email} onChange={(event) => set("email", event.target.value)} required /></>}
+          <label>Compte Discord</label><div className="readonly-grade"><span>{user.discordUsername || "Compte Discord lié"}</span><small>L’adresse e-mail et la connexion sont gérées par Discord.</small></div>
           <label>Grade</label>{user.role === "admin" ? <select value={form.grade || GRADES[0]} onChange={(event) => set("grade", event.target.value)} required>{GRADES.map((grade) => <option key={grade} value={grade}>{grade}</option>)}</select> : <div className="readonly-grade"><span>{user.grade || GRADES[0]}</span><small>Le grade est géré par un Admin ou un Référent SO.</small></div>}
           <label>Niveau d’accès</label><div className="readonly-role"><RoleBadge role={user.role} /><span>Ce niveau est géré par un responsable.</span></div>
-          <label>Nouveau mot de passe <span className="optional">(facultatif)</span></label><input type="password" value={form.password} onChange={(event) => set("password", event.target.value)} minLength={form.password ? 12 : undefined} placeholder="Laisser vide pour conserver le mot de passe actuel" />
-          <small className="muted">Majuscule, minuscule, chiffre et caractère spécial requis.</small>
           <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Annuler</button><button type="submit" className="primary" disabled={saving}>{saving ? "Sécurisation…" : "Enregistrer mon profil"}</button></div>
         </form>
       </div>
@@ -519,7 +491,7 @@ function ProfileModal({ user, onClose, onSave }) {
 }
 
 function PresencePanel({ users, onChange }) {
-  const team = users.filter((user) => ["senior", "officer"].includes(user.role)).sort(compareUsersByGrade);
+  const team = users.filter((user) => user.approvalStatus === "approved" && ["senior", "officer"].includes(user.role)).sort(compareUsersByGrade);
   const presentCount = team.filter((user) => user.presence !== "absent").length;
 
   return (
@@ -542,10 +514,11 @@ function PresencePanel({ users, onChange }) {
 function WorkforcePanel({ users, quotas }) {
   const roleOrder = ["admin", "referent", "senior", "officer"];
   const targets = { ...DEFAULT_QUOTAS.targets, ...quotas.targets };
+  const approvedUsers = users.filter((user) => user.approvalStatus === "approved");
   const roleDescriptions = { admin: "Administration du portail", referent: "Gestion et encadrement SO", senior: "Sous-Officiers Supérieurs", officer: "Sous-Officiers" };
   const groups = roleOrder.map((role) => ({
     role,
-    users: users.filter((user) => user.role === role).sort(compareUsersByGrade),
+    users: users.filter((user) => user.approvalStatus === "approved" && user.role === role).sort(compareUsersByGrade),
   }));
 
   function quotaState(user) {
@@ -560,7 +533,7 @@ function WorkforcePanel({ users, quotas }) {
 
   return (
     <div className="workforce-directory">
-      <section className="workforce-summary"><div><p className="eyebrow dark">VUE D’ENSEMBLE</p><h2>Effectif du portail</h2><p>Les membres sont classés automatiquement par niveau d’accès puis du grade le plus élevé au plus bas.</p></div><div><span><strong>{users.length}</strong> membres</span><span><strong>{users.filter((user) => user.presence === "absent").length}</strong> absents</span><span><strong>{users.filter((user) => user.blocked).length}</strong> bloqués</span></div></section>
+      <section className="workforce-summary"><div><p className="eyebrow dark">VUE D’ENSEMBLE</p><h2>Effectif du portail</h2><p>Les membres sont classés automatiquement par niveau d’accès puis du grade le plus élevé au plus bas.</p></div><div><span><strong>{approvedUsers.length}</strong> membres</span><span><strong>{approvedUsers.filter((user) => user.presence === "absent").length}</strong> absents</span><span><strong>{approvedUsers.filter((user) => user.blocked).length}</strong> bloqués</span></div></section>
       <div className="workforce-groups">{groups.map((group) => <section className={`workforce-group ${ROLES[group.role].tone}`} key={group.role}><header><div><RoleBadge role={group.role} /><span>{roleDescriptions[group.role]}</span></div><strong>{group.users.length}</strong></header><div className="workforce-list">{group.users.map((user) => { const quota = quotaState(user); const concerned = ["senior", "officer"].includes(user.role); return <article key={user.id}><div className={`avatar ${ROLES[user.role].tone}`}>{initials(user)}</div><div className="workforce-name"><strong>{user.grade || GRADES[0]} {user.firstName} {user.lastName}</strong><small>{ROLES[user.role].label}</small></div><span className={`workforce-presence ${concerned ? user.presence === "absent" ? "absent" : "present" : "neutral"}`}>{user.blocked ? "Compte bloqué" : concerned ? user.presence === "absent" ? "Absent" : "Présent" : "Actif"}</span><span className={`workforce-quota ${quota.tone}`}><Gauge size={14} /> {quota.label}</span></article>; })}{!group.users.length && <p className="workforce-empty">Aucun membre dans cette catégorie.</p>}</div></section>)}</div>
     </div>
   );
@@ -589,8 +562,8 @@ function HomePanel({ session, users, missions, chats, quotas, logs, assignments,
   const [editingShortcuts, setEditingShortcuts] = useState(false);
   const [shortcutDraft, setShortcutDraft] = useState(selectedShortcutIds);
   useEffect(() => setShortcutDraft(selectedShortcutIds), [shortcutIds, session.role]);
-  const team = users.filter((user) => ["senior", "officer"].includes(user.role));
-  const activeAccounts = users.filter((user) => !user.blocked).length;
+  const team = users.filter((user) => user.approvalStatus === "approved" && ["senior", "officer"].includes(user.role));
+  const activeAccounts = users.filter((user) => user.approvalStatus === "approved" && !user.blocked).length;
   const myChats = chats.filter((chat) => chat.participants.includes(session.id));
   const pendingMissions = missions.filter((mission) => mission.status === "pending");
   const myMissions = missions.filter((mission) => mission.userId === session.id);
@@ -701,7 +674,7 @@ function SummaryPanel({ session, users, logs, activityResetAt, onResetActivity }
   const chartMaximum = Math.max(1, ...chartBins.flatMap((bin) => visibleSeries.map((series) => bin.counts[series.subtype])));
   const totalForBin = (bin) => visibleSeries.reduce((total, series) => total + bin.counts[series.subtype], 0);
   const busiestBin = chartBins.reduce((best, bin) => totalForBin(bin) > totalForBin(best) ? bin : best, chartBins[0]);
-  const team = users.filter((user) => ["senior", "officer"].includes(user.role));
+  const team = users.filter((user) => user.approvalStatus === "approved" && ["senior", "officer"].includes(user.role));
   const rankingFloor = resetDate && !Number.isNaN(resetDate.getTime()) ? new Date(Math.max(periodData.start.getTime(), resetDate.getTime())) : periodData.start;
   const rankingActivity = allActivity.filter((entry) => entry.date >= rankingFloor && entry.date <= periodData.end);
   const ranking = team.map((user) => {
@@ -753,7 +726,7 @@ function LogsPanel({ session, logs, onClear }) {
 }
 
 function QuotaPanel({ users, quotas, onTargetChange, onReset, onToggleExemption }) {
-  const team = users.filter((user) => ["senior", "officer"].includes(user.role)).sort(compareUsersByGrade);
+  const team = users.filter((user) => user.approvalStatus === "approved" && ["senior", "officer"].includes(user.role)).sort(compareUsersByGrade);
   const targets = { ...DEFAULT_QUOTAS.targets, ...quotas.targets };
 
   return (
@@ -834,7 +807,7 @@ function MissionInternalPanel({ session, missions, onSubmit, onValidate, onRejec
 
 function ChatPanel({ session, users, chats, onStart, onCreateGroup, onUpdateGroup, onSend, onEditMessage, onDeleteMessage, onDeleteChat }) {
   const isModerator = ["admin", "referent"].includes(session.role);
-  const availableContacts = users.filter((user) => user.id !== session.id && !user.blocked).sort(compareUsersByGrade);
+  const availableContacts = users.filter((user) => user.id !== session.id && user.approvalStatus === "approved" && !user.blocked).sort(compareUsersByGrade);
   const supportContacts = availableContacts.filter((user) => ["admin", "referent"].includes(user.role));
   const visibleChats = useMemo(() => isModerator ? chats : chats.filter((chat) => chat.participants.includes(session.id)), [chats, isModerator, session.id]);
   const [selectedChatId, setSelectedChatId] = useState("");
@@ -1058,8 +1031,8 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onUpdateGrou
 
 function SergeantAssignmentPanel({ users, session, assignments, onAssign, onReminder, onDelete }) {
   const canManage = ["admin", "referent"].includes(session.role);
-  const sergeants = users.filter((user) => user.role === "officer" && user.grade === "Sergent" && !user.blocked).sort(compareUsersByGrade);
-  const supervisors = users.filter((user) => user.role === "senior" && !user.blocked).sort(compareUsersByGrade);
+  const sergeants = users.filter((user) => user.approvalStatus === "approved" && user.role === "officer" && user.grade === "Sergent" && !user.blocked).sort(compareUsersByGrade);
+  const supervisors = users.filter((user) => user.approvalStatus === "approved" && user.role === "senior" && !user.blocked).sort(compareUsersByGrade);
   const defaultDueDate = (() => { const date = new Date(); date.setDate(date.getDate() + 7); return date.toISOString().slice(0, 10); })();
   const [form, setForm] = useState({ sergeantId: sergeants[0]?.id || "", observerId: supervisors[0]?.id || "", dueDate: defaultDueDate });
   useEffect(() => {
@@ -1315,7 +1288,6 @@ function App() {
   const [users, setUsers] = useState([]);
   const [session, setSession] = useState(null);
   const [ready, setReady] = useState(false);
-  const [setupRequired, setSetupRequired] = useState(false);
   const [configurationError, setConfigurationError] = useState("");
   const [loginError, setLoginError] = useState("");
   const [query, setQuery] = useState("");
@@ -1377,7 +1349,6 @@ function App() {
       const accountState = await accountRequest("/api/auth/bootstrap");
       if (cancelled) return;
       setConfigurationError(accountState.configured ? "" : "La base des comptes n’est pas configurée. Contactez l’administrateur du portail.");
-      setSetupRequired(accountState.configured && !accountState.hasUsers);
       setUsers(Array.isArray(accountState.users) ? accountState.users : []);
       if (accountState.session) {
         setSession(accountState.session);
@@ -1500,9 +1471,12 @@ function App() {
   }, [darkMode, ready]);
 
   const canManage = session && ["admin", "referent"].includes(session.role);
-  const manageable = (user) => session?.role === "admin" ? user.role !== "admin" : ["senior", "officer"].includes(user.role);
+  const manageable = (user) => {
+    if (user.approvalStatus !== "approved") return session?.role === "admin";
+    return session?.role === "admin" ? user.role !== "admin" : ["senior", "officer"].includes(user.role);
+  };
   const visibleUsers = useMemo(() => users.filter((user) => {
-    const text = `${user.firstName} ${user.lastName} ${user.email}`.toLowerCase();
+    const text = `${user.firstName} ${user.lastName} ${user.email} ${user.discordUsername || ""}`.toLowerCase();
     return text.includes(query.toLowerCase()) && (roleFilter === "all" || user.role === roleFilter);
   }).sort(compareUsersByGrade), [users, query, roleFilter]);
 
@@ -1741,7 +1715,7 @@ function App() {
     flash("Les documents de missions internes ont été réinitialisés.");
   }
   function startChat(otherUserId) {
-    const contact = users.find((user) => user.id === otherUserId && user.id !== session.id && !user.blocked);
+    const contact = users.find((user) => user.id === otherUserId && user.id !== session.id && user.approvalStatus === "approved" && !user.blocked);
     if (!contact) return "";
     const existingChat = chats.find((chat) => chat.participants.length === 2 && chat.participants.includes(session.id) && chat.participants.includes(otherUserId));
     if (existingChat) return existingChat.id;
@@ -1752,7 +1726,7 @@ function App() {
     return chatId;
   }
   function createChatGroup(name, memberIds) {
-    const validMemberIds = [...new Set(memberIds)].filter((id) => users.some((user) => user.id === id && user.id !== session.id && !user.blocked));
+    const validMemberIds = [...new Set(memberIds)].filter((id) => users.some((user) => user.id === id && user.id !== session.id && user.approvalStatus === "approved" && !user.blocked));
     if (!name || validMemberIds.length < 2) return "";
     const chatId = crypto.randomUUID();
     setChats((current) => [{ id: chatId, type: "group", name, createdBy: session.id, participants: [session.id, ...validMemberIds], messages: [], updatedAt: new Date().toISOString() }, ...current]);
@@ -1763,7 +1737,7 @@ function App() {
   function updateChatGroup(chatId, memberIds) {
     const chat = chats.find((item) => item.id === chatId);
     if (!chat || chat.type !== "group" || chat.createdBy !== session.id) return false;
-    const validMemberIds = [...new Set(memberIds)].filter((id) => users.some((user) => user.id === id && user.id !== session.id && !user.blocked));
+    const validMemberIds = [...new Set(memberIds)].filter((id) => users.some((user) => user.id === id && user.id !== session.id && user.approvalStatus === "approved" && !user.blocked));
     if (validMemberIds.length < 2) {
       flash("Un groupe doit conserver au moins trois membres, créateur inclus.");
       return false;
@@ -1813,26 +1787,6 @@ function App() {
     flash("La conversation a été supprimée.");
   }
   function toggleGroup(group) { setOpenGroups((current) => ({ ...current, [group]: !current[group] })); }
-  async function login(email, password) {
-    try {
-      const result = await accountRequest("/api/auth/login", "POST", { email, password });
-      const user = result.session;
-      setUsers(Array.isArray(result.users) ? result.users : []);
-      setLoginError(""); setSession(user); setActiveSection("home"); setLoginTransition(user);
-      window.setTimeout(() => setLoginTransition(null), 1850);
-    } catch (error) { setLoginError(error instanceof Error ? error.message : "Connexion impossible."); }
-  }
-  async function setupInitialAdmin(form) {
-    const error = passwordError(form.password || "");
-    if (error) { setLoginError(error); return; }
-    try {
-      const result = await accountRequest("/api/auth/bootstrap", "POST", form);
-      setUsers(Array.isArray(result.users) ? result.users : []);
-      setSetupRequired(false);
-      setLoginError(""); setSession(result.session); setActiveSection("home"); setLoginTransition(result.session);
-      window.setTimeout(() => setLoginTransition(null), 1850);
-    } catch (error) { setLoginError(error instanceof Error ? error.message : "Création impossible."); }
-  }
   async function logout() {
     addLog("auth", "Déconnexion du portail");
     try { await accountRequest("/api/auth/logout", "POST", {}); } catch { /* La fermeture locale reste possible. */ }
@@ -1842,17 +1796,12 @@ function App() {
     setSession(null);
   }
   async function saveUser(form) {
-    if (form.password) {
-      const error = passwordError(form.password);
-      if (error) { flash(error); return; }
-    }
     try {
-      const payload = modal?.id ? { ...form, id: modal.id } : form;
-      const result = await accountRequest("/api/auth/users", modal?.id ? "PATCH" : "POST", payload);
+      const result = await accountRequest("/api/auth/users", "PATCH", { ...form, id: modal.id });
       setUsers(Array.isArray(result.users) ? result.users : []);
       if (result.session) setSession(result.session);
-      addLog("account", modal?.id ? "Compte modifié" : "Compte créé", `${form.firstName} ${form.lastName}`);
-      flash(modal?.id ? "Le compte a bien été modifié." : "Le compte a bien été créé.");
+      addLog("account", form.approvalStatus === "approved" ? "Demande Discord validée" : form.approvalStatus === "rejected" ? "Demande Discord refusée" : "Compte modifié", `${form.firstName} ${form.lastName}`);
+      flash(form.approvalStatus === "approved" ? "Le compte Discord est maintenant autorisé." : form.approvalStatus === "rejected" ? "La demande Discord a été refusée." : "Le compte a bien été modifié.");
       setModal(null);
     } catch (error) { flash(error instanceof Error ? error.message : "La modification du compte a échoué."); }
   }
@@ -1886,13 +1835,8 @@ function App() {
     } catch (error) { flash(error instanceof Error ? error.message : "Le blocage du compte a échoué."); }
   }
   async function saveProfile(form) {
-    if (form.password) {
-      const error = passwordError(form.password);
-      if (error) { flash(error); return; }
-    }
-    const nextEmail = ["admin", "referent"].includes(session.role) ? String(form.email || "").trim().toLowerCase() : session.email;
-    if (!String(form.firstName || "").trim() || !nextEmail) {
-      flash("Le prénom et l’adresse e-mail sont obligatoires.");
+    if (!String(form.firstName || "").trim()) {
+      flash("Le prénom est obligatoire.");
       return;
     }
     try {
@@ -1900,7 +1844,6 @@ function App() {
         ...session,
         ...form,
         id: session.id,
-        email: nextEmail,
         grade: session.role === "admin" && GRADES.includes(form.grade) ? form.grade : session.grade,
       });
       setUsers(Array.isArray(result.users) ? result.users : []);
@@ -1912,7 +1855,7 @@ function App() {
   }
 
   if (!ready) return null;
-  if (!session) return <Login onLogin={login} onSetup={setupInitialAdmin} setupRequired={setupRequired} configurationError={configurationError} error={loginError} />;
+  if (!session) return <Login configurationError={configurationError} error={loginError} />;
 
   return (
     <div className="app-shell">
@@ -1940,18 +1883,18 @@ function App() {
 
       <main className="content">
         <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{session.role === "admin" && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{["admin", "referent"].includes(session.role) && <optgroup label="Référent SO"><option value="workforce">Effectif</option><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="summary">Résumé</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{["admin", "referent", "senior"].includes(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="sergeant_assignments">Référent</option><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{["admin", "referent"].includes(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
-        {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "workforce" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Effectif</h1><p className="muted">Consultez l’organisation complète des membres par accès et par grade.</p></div><span className="referent-access"><UsersRound size={16} /> Vue des effectifs</span></header> : activeSection === "sergeant_assignments" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Référent</h1><p className="muted">Attribuez et suivez les référents des nouveaux Sergents.</p></div><span className="senior-access"><BadgeCheck size={16} /> Suivi des semaines de test</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Gérez les accès et gardez une vue claire sur votre équipe.</p></div>{canManage && <button className="primary" onClick={() => setModal({ type: "create" })}><Plus size={18} /> Nouveau compte</button>}</header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
+        {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "workforce" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Effectif</h1><p className="muted">Consultez l’organisation complète des membres par accès et par grade.</p></div><span className="referent-access"><UsersRound size={16} /> Vue des effectifs</span></header> : activeSection === "sergeant_assignments" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Référent</h1><p className="muted">Attribuez et suivez les référents des nouveaux Sergents.</p></div><span className="senior-access"><BadgeCheck size={16} /> Suivi des semaines de test</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Validez les demandes Discord et gardez une vue claire sur votre équipe.</p></div><span className="all-access"><MessageSquareText size={16} /> Connexion Discord</span></header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
         {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={setActiveSection} onDismissNotification={dismissPortalNotification} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} logs={auditLogs} activityResetAt={summarySettings.activityResetAt || summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
         <section className="stats">
           <article><span className="stat-icon blue"><UsersRound /></span><div><strong>{users.length}</strong><small>Comptes au total</small></div><span className="trend">Tous niveaux</span></article>
-          <article><span className="stat-icon red"><UserX /></span><div><strong>{users.filter((user) => user.blocked).length}</strong><small>Comptes bloqués</small></div><span className="trend">Accès suspendu</span></article>
+          <article><span className="stat-icon gold"><UserRound /></span><div><strong>{users.filter((user) => user.approvalStatus === "pending").length}</strong><small>Demandes en attente</small></div><span className="trend">À valider</span></article>
           <article><span className="stat-icon violet"><ShieldCheck /></span><div><strong>{users.filter((u) => ["admin", "referent"].includes(u.role)).length}</strong><small>Gestionnaires</small></div><span className="trend">Admin & Référent</span></article>
         </section>
 
         <section className="accounts-card">
           <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
-          <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>État du compte</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.email}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td><RoleBadge role={user.role} /></td><td>{user.role === "admin" ? <span className="account-state active"><UserCheck size={15} /> Compte actif</span> : <button className={`account-state ${user.blocked ? "blocked" : "active"}`} type="button" onClick={() => toggleAccountBlock(user)}>{user.blocked ? <UserX size={15} /> : <UserCheck size={15} />}{user.blocked ? "Compte bloqué" : "Compte actif"}</button>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title="Modifier" onClick={() => setModal(user)}><Pencil size={17} /></button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
+          <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>État du compte</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.discordUsername ? `Discord : ${user.discordUsername}` : user.email}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td>{user.approvalStatus === "pending" ? <span className="locked">À attribuer</span> : <RoleBadge role={user.role} />}</td><td>{user.approvalStatus === "pending" ? <button className="account-state pending" type="button" onClick={() => session.role === "admin" && setModal(user)}><UserRound size={15} /> En attente</button> : user.approvalStatus === "rejected" ? <span className="account-state blocked"><UserX size={15} /> Refusé</span> : user.role === "admin" ? <span className="account-state active"><UserCheck size={15} /> Compte actif</span> : <button className={`account-state ${user.blocked ? "blocked" : "active"}`} type="button" onClick={() => toggleAccountBlock(user)}>{user.blocked ? <UserX size={15} /> : <UserCheck size={15} />}{user.blocked ? "Compte bloqué" : "Compte actif"}</button>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title={user.approvalStatus === "pending" ? "Examiner la demande" : "Modifier"} onClick={() => setModal(user)}>{user.approvalStatus === "pending" ? <BadgeCheck size={17} /> : <Pencil size={17} />}</button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
         </section>
         </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onUpdateGroup={updateChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} assignments={sergeantAssignments} onSuccess={sergeantReportSuccess} history={submissionHistory.filter((entry) => entry.type === "sergeant_report")} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} history={submissionHistory.filter((entry) => entry.type === activeSection)} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} />}
       </main>

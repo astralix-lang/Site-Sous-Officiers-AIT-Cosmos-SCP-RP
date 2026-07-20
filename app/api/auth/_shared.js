@@ -5,6 +5,7 @@ const PASSWORD_ITERATIONS = 100000;
 const SESSION_MAX_AGE_SECONDS = 24 * 60 * 60;
 const MAX_JSON_BYTES = 16 * 1024;
 const ROLES = new Set(["admin", "referent", "senior", "officer"]);
+const APPROVAL_STATUSES = new Set(["pending", "approved", "rejected"]);
 const GRADES = new Set([
   "Sergent", "Sergent-Chef", "Adjudant", "Adjudant-Chef", "Major", "Élève Officier", "Aspirant",
   "Sous-Lieutenant", "Lieutenant", "Capitaine", "Vice-Commandant", "Commandant", "Lieutenant-Colonel",
@@ -110,6 +111,10 @@ export function cleanRole(value) {
   return ROLES.has(value) ? value : "";
 }
 
+export function cleanApprovalStatus(value) {
+  return APPROVAL_STATUSES.has(value) ? value : "";
+}
+
 export function cleanPresence(value) {
   return value === "absent" ? "absent" : "present";
 }
@@ -206,7 +211,7 @@ export async function getSession(request) {
     return null;
   }
   const user = await getRawUser(session.user_id);
-  if (!user || user.blocked) {
+  if (!user || user.blocked || (user.approval_status && user.approval_status !== "approved")) {
     if (user?.id) await deleteSessionsForUser(user.id);
     return null;
   }
@@ -237,13 +242,15 @@ export function publicUser(row, viewer = null) {
     grade: row.grade,
     presence: ["senior", "officer"].includes(row.role) ? (row.presence === "absent" ? "absent" : "present") : undefined,
     blocked: row.blocked === true,
+    approvalStatus: cleanApprovalStatus(row.approval_status) || "approved",
+    discordUsername: String(row.discord_username || "").slice(0, 100),
     createdAtIso: row.created_at,
     createdAt: dateLabel(row.created_at),
   };
 }
 
 export async function listUsers(viewer = null) {
-  const rows = await database("portal_users?select=id,email,first_name,last_name,role,grade,presence,blocked,created_at,updated_at&order=created_at.asc");
+  const rows = await database("portal_users?select=id,email,first_name,last_name,role,grade,presence,blocked,approval_status,discord_username,created_at,updated_at&order=created_at.asc");
   return Array.isArray(rows) ? rows.map((row) => publicUser(row, viewer)) : [];
 }
 
