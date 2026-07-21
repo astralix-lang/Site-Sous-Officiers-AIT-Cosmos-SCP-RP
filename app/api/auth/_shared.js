@@ -4,7 +4,7 @@ export const runtime = "edge";
 const PASSWORD_ITERATIONS = 100000;
 const SESSION_MAX_AGE_SECONDS = 24 * 60 * 60;
 const MAX_JSON_BYTES = 16 * 1024;
-const ROLES = new Set(["admin", "referent", "senior", "officer"]);
+const ROLES = new Set(["admin", "management", "referent", "senior", "officer"]);
 const APPROVAL_STATUSES = new Set(["pending", "approved", "rejected"]);
 const GRADES = new Set([
   "Sergent", "Sergent-Chef", "Adjudant", "Adjudant-Chef", "Major", "Élève Officier", "Aspirant",
@@ -218,11 +218,13 @@ export async function getSession(request) {
   return { user, session, tokenHash };
 }
 
-export function manager(user) { return ["admin", "referent"].includes(user?.role); }
+export function adminAccess(user) { return ["admin", "management"].includes(user?.role); }
+export function manager(user) { return ["admin", "management", "referent"].includes(user?.role); }
 
 export function canManage(actor, target) {
   if (!actor || !target || actor.id === target.id) return false;
   if (actor.role === "admin") return target.role !== "admin";
+  if (actor.role === "management") return !["admin", "management"].includes(target.role);
   return actor.role === "referent" && ["senior", "officer"].includes(target.role);
 }
 

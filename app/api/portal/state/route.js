@@ -1,4 +1,4 @@
-import { database, json, readJson, recordAuditLog, requireSession, validCsrfRequest } from "../../auth/_shared";
+import { adminAccess, database, json, readJson, recordAuditLog, requireSession, validCsrfRequest } from "../../auth/_shared";
 
 export const runtime = "edge";
 
@@ -17,7 +17,7 @@ function clean(value, max = 1000) {
   return typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, max) : "";
 }
 
-function isManager(user) { return ["admin", "referent"].includes(user?.role); }
+function isManager(user) { return ["admin", "management", "referent"].includes(user?.role); }
 function parseArray(value) { return Array.isArray(value) ? value : []; }
 function uniqueIds(values) { return [...new Set(parseArray(values).filter((value) => UUID.test(String(value))))]; }
 function label(date) { return new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(date)); }
@@ -245,7 +245,7 @@ export async function POST(request) {
       if (!notification || !canReceive(notification, actor.id)) return json({ error: "Notification introuvable." }, 404);
       await database("portal_notification_dismissals?on_conflict=notification_id,user_id", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=minimal" }, body: JSON.stringify({ notification_id: notificationId, user_id: actor.id }) });
     } else if (action === "clear_audit_logs") {
-      if (actor.role !== "admin") return json({ error: "Seul un administrateur peut r\u00e9initialiser les logs." }, 403);
+      if (!adminAccess(actor)) return json({ error: "Seul un administrateur ou la g\u00e9rance peut r\u00e9initialiser les logs." }, 403);
       await database("portal_audit_logs?created_at=not.is.null", { method: "DELETE", headers: { Prefer: "return=minimal" } });
       await recordAuditLog({ actor, category: "system", action: "Journal des logs r\u00e9initialis\u00e9", details: "L\u2019historique pr\u00e9c\u00e9dent a \u00e9t\u00e9 supprim\u00e9." });
     } else {

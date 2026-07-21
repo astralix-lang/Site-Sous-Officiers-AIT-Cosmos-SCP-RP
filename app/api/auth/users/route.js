@@ -1,5 +1,5 @@
 import {
-  canManage, cleanApprovalStatus, cleanGrade, cleanName, cleanPresence, cleanRole, database,
+  adminAccess, canManage, cleanApprovalStatus, cleanGrade, cleanName, cleanPresence, cleanRole, database,
   deleteSessionsForUser, json, listUsers, manager, publicUser, readJson, requireSession, validCsrfRequest,
 } from "../_shared";
 
@@ -8,7 +8,8 @@ export const runtime = "edge";
 const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function allowedRoles(actor) {
-  return actor.role === "admin" ? new Set(["referent", "senior", "officer"]) : new Set(["senior", "officer"]);
+  if (actor.role === "admin") return new Set(["management", "referent", "senior", "officer"]);
+  return actor.role === "management" ? new Set(["referent", "senior", "officer"]) : new Set(["senior", "officer"]);
 }
 
 function errorResponse(error) {
@@ -64,19 +65,19 @@ export async function PATCH(request) {
 
     const targetStatus = cleanApprovalStatus(target.approval_status) || "approved";
     const requestedStatus = cleanApprovalStatus(body?.approvalStatus);
-    if (!self && requestedStatus && requestedStatus !== targetStatus && current.user.role !== "admin") {
+    if (!self && requestedStatus && requestedStatus !== targetStatus && !adminAccess(current.user)) {
       return json({ error: "Seul un administrateur peut valider ou refuser une demande Discord." }, 403);
     }
     if (self && requestedStatus && requestedStatus !== targetStatus) return json({ error: "Vous ne pouvez pas modifier le statut de votre demande." }, 403);
 
     const requestedRole = cleanRole(body?.role);
     const role = self ? target.role : (allowedRoles(current.user).has(requestedRole) ? requestedRole : target.role);
-    const canChangeGrade = self ? current.user.role === "admin" : manager(current.user);
+    const canChangeGrade = self ? adminAccess(current.user) : manager(current.user);
     const identity = identityPayload(body, role, target, canChangeGrade);
     if (identity.error) return json({ error: identity.error }, 400);
     const approvalStatus = self ? targetStatus : (requestedStatus || targetStatus);
     identity.value.approval_status = approvalStatus;
-    const changedBlock = typeof body?.blocked === "boolean" && !self && current.user.role === "admin" && target.role !== "admin";
+    const changedBlock = typeof body?.blocked === "boolean" && !self && adminAccess(current.user) && target.role !== "admin";
     if (changedBlock) identity.value.blocked = body.blocked;
 
     const updatedRows = await database(`portal_users?id=eq.${encodeURIComponent(id)}`, {

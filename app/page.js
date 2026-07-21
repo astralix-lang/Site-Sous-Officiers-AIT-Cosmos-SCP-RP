@@ -40,10 +40,18 @@ import {
 
 const ROLES = {
   admin: { label: "Admin", short: "AD", tone: "violet" },
+  management: { label: "Gérance", short: "GE", tone: "violet" },
   referent: { label: "Référent SO", short: "RS", tone: "blue" },
   senior: { label: "Sous-Officier Supérieur", short: "SS", tone: "gold" },
   officer: { label: "Sous-Officier", short: "SO", tone: "green" },
 };
+
+const ADMIN_ACCESS_ROLES = new Set(["admin", "management"]);
+const MANAGER_ACCESS_ROLES = new Set(["admin", "management", "referent"]);
+const SENIOR_ACCESS_ROLES = new Set(["admin", "management", "referent", "senior"]);
+const hasAdminAccess = (role) => ADMIN_ACCESS_ROLES.has(role);
+const hasManagerAccess = (role) => MANAGER_ACCESS_ROLES.has(role);
+const hasSeniorAccess = (role) => SENIOR_ACCESS_ROLES.has(role);
 
 const GRADES = [
   "Sergent",
@@ -425,7 +433,7 @@ function LoginTransition({ user }) {
 }
 
 function UserModal({ actor, editing, onClose, onSave }) {
-  const allowedRoles = actor.role === "admin" ? ["referent", "senior", "officer"] : ["senior", "officer"];
+  const allowedRoles = actor.role === "admin" ? ["management", "referent", "senior", "officer"] : actor.role === "management" ? ["referent", "senior", "officer"] : ["senior", "officer"];
   const [form, setForm] = useState({ ...editing });
   const [saving, setSaving] = useState(false);
   const isRequest = editing.approvalStatus !== "approved";
@@ -484,7 +492,7 @@ function ProfileModal({ user, onClose, onSave, soundEnabled, onSoundEnabledChang
         <form onSubmit={submit}>
           <div className="form-grid"><div><label>Prénom</label><input value={form.firstName} onChange={(event) => set("firstName", event.target.value)} required /></div><div><label>Nom <span className="optional">(facultatif)</span></label><input value={form.lastName} onChange={(event) => set("lastName", event.target.value)} /></div></div>
           <label>Compte Discord</label><div className="readonly-grade"><span>{user.discordUsername || "Compte Discord lié"}</span><small>La connexion est gérée par Discord.</small></div>
-          <label>Grade</label>{user.role === "admin" ? <select value={form.grade || GRADES[0]} onChange={(event) => set("grade", event.target.value)} required>{GRADES.map((grade) => <option key={grade} value={grade}>{grade}</option>)}</select> : <div className="readonly-grade"><span>{user.grade || GRADES[0]}</span><small>Le grade est géré par un Admin ou un Référent SO.</small></div>}
+          <label>Grade</label>{hasAdminAccess(user.role) ? <select value={form.grade || GRADES[0]} onChange={(event) => set("grade", event.target.value)} required>{GRADES.map((grade) => <option key={grade} value={grade}>{grade}</option>)}</select> : <div className="readonly-grade"><span>{user.grade || GRADES[0]}</span><small>Le grade est géré par un Admin ou une Gérance.</small></div>}
           <label>Niveau d’accès</label><div className="readonly-role"><RoleBadge role={user.role} /><span>Ce niveau est géré par un responsable.</span></div>
           <section className="profile-preferences"><p className="eyebrow dark">PARAMÈTRES</p><label className="preference-toggle"><span className="preference-icon">{soundEnabled ? <Volume2 size={19} /> : <VolumeX size={19} />}</span><span><strong>Sons de l’interface</strong><small>{soundEnabled ? "Des sons discrets sont joués lors des clics." : "Les sons sont désactivés sur cet appareil."}</small></span><input type="checkbox" checked={soundEnabled} onChange={(event) => onSoundEnabledChange(event.target.checked)} aria-label="Activer les sons de l’interface" /><i aria-hidden="true"><span /></i></label></section>
           <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Annuler</button><button type="submit" className="primary" disabled={saving}>{saving ? "Sécurisation…" : "Enregistrer mon profil"}</button></div>
@@ -516,10 +524,10 @@ function PresencePanel({ users, onChange }) {
 }
 
 function WorkforcePanel({ users, quotas }) {
-  const roleOrder = ["admin", "referent", "senior", "officer"];
+  const roleOrder = ["admin", "management", "referent", "senior", "officer"];
   const targets = { ...DEFAULT_QUOTAS.targets, ...quotas.targets };
   const approvedUsers = users.filter((user) => user.approvalStatus === "approved");
-  const roleDescriptions = { admin: "Administration du portail", referent: "Gestion et encadrement SO", senior: "Sous-Officiers Supérieurs", officer: "Sous-Officiers" };
+  const roleDescriptions = { admin: "Administration du portail", management: "Gestion complète du portail", referent: "Gestion et encadrement SO", senior: "Sous-Officiers Supérieurs", officer: "Sous-Officiers" };
   const groups = roleOrder.map((role) => ({
     role,
     users: users.filter((user) => user.approvalStatus === "approved" && user.role === role).sort(compareUsersByGrade),
@@ -544,7 +552,7 @@ function WorkforcePanel({ users, quotas }) {
 }
 
 function HomePanel({ session, users, missions, chats, quotas, logs, assignments, portalNotifications, shortcutIds, onSaveShortcuts, onNavigate, onDismissNotification }) {
-  const isManager = ["admin", "referent"].includes(session.role);
+  const isManager = hasManagerAccess(session.role);
   const isQuotaMember = ["senior", "officer"].includes(session.role);
   const shortcutCatalog = [
     { id: "summary", label: "Résumé", description: "Consulter les statistiques", icon: <BarChart3 size={18} />, allowed: true },
@@ -553,10 +561,10 @@ function HomePanel({ session, users, missions, chats, quotas, logs, assignments,
     { id: "recommendation", label: "Recommandation", description: "Envoyer une recommandation", icon: <Medal size={18} />, allowed: true },
     { id: "pcs_exp", label: "Reco PCS EXP", description: "Ouvrir le formulaire PCS EXP", icon: <ClipboardCheck size={18} />, allowed: true },
     { id: "observation_hdr", label: "Observation HDR", description: "Consigner une observation HDR", icon: <ClipboardCheck size={18} />, allowed: true },
-    { id: "observation_so", label: "Observation SO", description: "Consigner une observation SO", icon: <MessageSquareText size={18} />, allowed: ["admin", "referent", "senior"].includes(session.role) },
-    { id: "sergeant_assignments", label: "Mes référents", description: "Consulter les Sergents assignés", icon: <UsersRound size={18} />, allowed: ["admin", "referent", "senior"].includes(session.role) },
-    { id: "sergeant_report", label: "Rapport nouveau SO", description: "Évaluer un nouveau Sergent", icon: <FileText size={18} />, allowed: ["admin", "referent", "senior"].includes(session.role) },
-    { id: "dashboard", label: "Gestion des comptes", description: "Administrer les accès", icon: <ShieldCheck size={18} />, allowed: session.role === "admin" },
+    { id: "observation_so", label: "Observation SO", description: "Consigner une observation SO", icon: <MessageSquareText size={18} />, allowed: hasSeniorAccess(session.role) },
+    { id: "sergeant_assignments", label: "Mes référents", description: "Consulter les Sergents assignés", icon: <UsersRound size={18} />, allowed: hasSeniorAccess(session.role) },
+    { id: "sergeant_report", label: "Rapport nouveau SO", description: "Évaluer un nouveau Sergent", icon: <FileText size={18} />, allowed: hasSeniorAccess(session.role) },
+    { id: "dashboard", label: "Gestion des comptes", description: "Administrer les accès", icon: <ShieldCheck size={18} />, allowed: hasAdminAccess(session.role) },
     { id: "presence", label: "Présences", description: "Mettre l’équipe à jour", icon: <UserCheck size={18} />, allowed: isManager },
     { id: "workforce", label: "Effectif", description: "Voir l’organisation de l’équipe", icon: <UsersRound size={18} />, allowed: isManager },
     { id: "quotas", label: "Gestion des quotas", description: "Consulter les objectifs de l’équipe", icon: <Gauge size={18} />, allowed: isManager },
@@ -690,7 +698,7 @@ function SummaryPanel({ session, users, logs, activityResetAt, onResetActivity }
   const arrivals = team.map((user) => ({ user, date: getUserCreatedDate(user) })).filter((item) => item.date && item.date >= arrivalStart && item.date <= periodData.end);
   const arrivalBins = periodData.bins.map((bin) => ({ ...bin, count: arrivals.filter((item) => item.date >= bin.start && item.date <= bin.end).length }));
   const arrivalMaximum = Math.max(1, ...arrivalBins.map((bin) => bin.count));
-  const canReset = session.role === "admin";
+  const canReset = hasAdminAccess(session.role);
 
   return (
     <div className="summary-dashboard">
@@ -725,7 +733,7 @@ function LogsPanel({ session, logs, onClear }) {
   }
 
   return (
-    <section className="logs-card"><div className="logs-summary"><div><p className="eyebrow dark">JOURNAL D’AUDIT</p><h2>Activité du portail</h2><p className="muted">Les {Math.min(logs.length, 500)} dernières actions importantes sont conservées.</p></div><div><span><ScrollText size={18} /> {logs.length} entrées</span><button className="secondary" onClick={exportLogs}><Download size={16} /> Exporter</button>{session.role === "admin" && <button className="clear-logs" onClick={onClear}><Trash2 size={16} /> Réinitialiser</button>}</div></div><div className="logs-filters"><div className="search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Rechercher une action…" /></div><select value={category} onChange={(event) => setCategory(event.target.value)}><option value="all">Toutes les catégories</option>{categories.map((item) => <option value={item} key={item}>{LOG_CATEGORY_LABELS[item] || item}</option>)}</select></div><div className="table-wrap"><table className="logs-table"><thead><tr><th>Date</th><th>Acteur</th><th>Catégorie</th><th>Action</th><th>Détails</th></tr></thead><tbody>{filteredLogs.map((entry) => <tr key={entry.id}><td>{entry.displayAt}</td><td><strong>{entry.actorName}</strong><small>{entry.actorRole ? ROLES[entry.actorRole]?.label || entry.actorRole : "Système"}</small></td><td><span className={`log-category ${entry.category}`}>{LOG_CATEGORY_LABELS[entry.category] || entry.category}</span></td><td><strong>{entry.action}</strong></td><td>{entry.details || "—"}</td></tr>)}{!filteredLogs.length && <tr><td colSpan="5" className="empty-presence">Aucun log ne correspond à votre recherche.</td></tr>}</tbody></table></div></section>
+<section className="logs-card"><div className="logs-summary"><div><p className="eyebrow dark">JOURNAL D’AUDIT</p><h2>Activité du portail</h2><p className="muted">Les {Math.min(logs.length, 500)} dernières actions importantes sont conservées.</p></div><div><span><ScrollText size={18} /> {logs.length} entrées</span><button className="secondary" onClick={exportLogs}><Download size={16} /> Exporter</button>{hasAdminAccess(session.role) && <button className="clear-logs" onClick={onClear}><Trash2 size={16} /> Réinitialiser</button>}</div></div><div className="logs-filters"><div className="search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Rechercher une action…" /></div><select value={category} onChange={(event) => setCategory(event.target.value)}><option value="all">Toutes les catégories</option>{categories.map((item) => <option value={item} key={item}>{LOG_CATEGORY_LABELS[item] || item}</option>)}</select></div><div className="table-wrap"><table className="logs-table"><thead><tr><th>Date</th><th>Acteur</th><th>Catégorie</th><th>Action</th><th>Détails</th></tr></thead><tbody>{filteredLogs.map((entry) => <tr key={entry.id}><td>{entry.displayAt}</td><td><strong>{entry.actorName}</strong><small>{entry.actorRole ? ROLES[entry.actorRole]?.label || entry.actorRole : "Système"}</small></td><td><span className={`log-category ${entry.category}`}>{LOG_CATEGORY_LABELS[entry.category] || entry.category}</span></td><td><strong>{entry.action}</strong></td><td>{entry.details || "—"}</td></tr>)}{!filteredLogs.length && <tr><td colSpan="5" className="empty-presence">Aucun log ne correspond à votre recherche.</td></tr>}</tbody></table></div></section>
   );
 }
 
@@ -768,7 +776,7 @@ function MissionInternalPanel({ session, missions, onSubmit, onValidate, onRejec
   const [documentUrl, setDocumentUrl] = useState("");
   const [error, setError] = useState("");
   const canSubmit = ["senior", "officer"].includes(session.role);
-  const canValidate = ["admin", "referent"].includes(session.role);
+  const canValidate = hasManagerAccess(session.role);
   const displayedMissions = canValidate ? missions : missions.filter((mission) => mission.userId === session.id);
 
   function submit(event) {
@@ -810,9 +818,9 @@ function MissionInternalPanel({ session, missions, onSubmit, onValidate, onRejec
 }
 
 function ChatPanel({ session, users, chats, onStart, onCreateGroup, onUpdateGroup, onSend, onEditMessage, onDeleteMessage, onDeleteChat }) {
-  const isModerator = ["admin", "referent"].includes(session.role);
+  const isModerator = hasManagerAccess(session.role);
   const availableContacts = users.filter((user) => user.id !== session.id && user.approvalStatus === "approved" && !user.blocked).sort(compareUsersByGrade);
-  const supportContacts = availableContacts.filter((user) => ["admin", "referent"].includes(user.role));
+  const supportContacts = availableContacts.filter((user) => hasManagerAccess(user.role));
   const visibleChats = useMemo(() => isModerator ? chats : chats.filter((chat) => chat.participants.includes(session.id)), [chats, isModerator, session.id]);
   const [selectedChatId, setSelectedChatId] = useState("");
   const [contactId, setContactId] = useState(availableContacts[0]?.id || "");
@@ -1002,7 +1010,7 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onUpdateGrou
       <aside className="chat-contacts-card">
         <div className="chat-card-head"><p className="eyebrow dark">NOUVELLE DISCUSSION</p><h2>Messagerie</h2><p className="muted">Choisissez un membre ou créez un groupe.</p></div>
         <div className="chat-start"><label>Contacter un membre</label><div className="chat-start-row"><select value={contactId} onChange={(event) => setContactId(event.target.value)} disabled={!availableContacts.length}>{availableContacts.map((user) => <option value={user.id} key={user.id}>{user.firstName} {user.lastName} — {ROLES[user.role].label}</option>)}</select><button className="primary" type="button" disabled={!contactId} onClick={() => openChat(contactId)}><MessageSquareText size={16} /> Ouvrir</button></div><button className="create-group-toggle" type="button" onClick={() => setGroupOpen((open) => !open)}><UsersRound size={16} /> {groupOpen ? "Fermer la création" : "Créer un groupe"}</button>{groupOpen && <form className="group-form" onSubmit={createGroup}><label>Nom du groupe</label><input value={groupName} onChange={(event) => setGroupName(event.target.value)} maxLength={60} placeholder="Ex. Équipe Alpha" required /><label>Membres du groupe <small>(au moins 2 en plus de vous)</small></label><div className="group-member-list">{availableContacts.map((user) => <label key={user.id}><input type="checkbox" checked={groupMembers.includes(user.id)} onChange={() => toggleGroupMember(user.id)} /><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><span>{user.firstName} {user.lastName}<small>{ROLES[user.role].label}</small></span></label>)}</div>{groupError && <p className="form-error">{groupError}</p>}<button className="primary wide" type="submit"><UsersRound size={16} /> Créer le groupe</button></form>}</div>
-        <div className="referent-contact"><div><p className="eyebrow dark">CONTACT RAPIDE</p><strong>Contacter un Référent SO ou un Admin</strong></div>{supportContacts.length ? supportContacts.map((contact) => <button type="button" key={contact.id} onClick={() => openChat(contact.id)}><span className={`avatar small ${ROLES[contact.role].tone}`}>{initials(contact)}</span><span>{contact.firstName} {contact.lastName}<small>{contact.role === "admin" ? "Admin · Contact Référent SO" : `${contact.grade || GRADES[0]} · Référent SO`}</small></span><Send size={15} /></button>) : <p className="chat-empty-small">{isModerator ? "Vous êtes actuellement le contact Référent SO principal." : "Aucun contact Référent SO disponible."}</p>}</div>
+<div className="referent-contact"><div><p className="eyebrow dark">CONTACT RAPIDE</p><strong>Contacter un Référent SO, la Gérance ou un Admin</strong></div>{supportContacts.length ? supportContacts.map((contact) => <button type="button" key={contact.id} onClick={() => openChat(contact.id)}><span className={`avatar small ${ROLES[contact.role].tone}`}>{initials(contact)}</span><span>{contact.firstName} {contact.lastName}<small>{hasAdminAccess(contact.role) ? `${ROLES[contact.role].label} · Contact Référent SO` : `${contact.grade || GRADES[0]} · Référent SO`}</small></span><Send size={15} /></button>) : <p className="chat-empty-small">{isModerator ? "Vous êtes actuellement le contact Référent SO principal." : "Aucun contact Référent SO disponible."}</p>}</div>
         <div className="conversation-picker"><div className="conversation-list-title"><p className="eyebrow dark">{isModerator ? "TOUTES LES DISCUSSIONS" : "MES DISCUSSIONS"}</p>{isModerator && <span>Modération</span>}</div><label>Accéder à une discussion</label><select value={selectedChatId} onChange={(event) => { clearEditor(); setSelectedChatId(event.target.value); }}><option value="">Choisir une discussion…</option>{visibleChats.map((chat) => <option value={chat.id} key={chat.id}>{chat.type === "group" ? "Groupe · " : "Discussion · "}{chatMeta(chat).title}</option>)}</select>{selectedChat ? <small>{selectedChat.messages.length} message{selectedChat.messages.length > 1 ? "s" : ""}{selectedChat.messages.at(-1)?.attachments?.length ? ` · ${selectedChat.messages.at(-1).attachments.length} pièce(s) jointe(s) dans le dernier message` : ""}</small> : <p className="chat-empty-small">Aucune discussion sélectionnée.</p>}</div>
       </aside>
       <div className="chat-conversation-card">
@@ -1034,7 +1042,7 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onUpdateGrou
 }
 
 function SergeantAssignmentPanel({ users, session, assignments, onAssign, onReminder, onDelete }) {
-  const canManage = ["admin", "referent"].includes(session.role);
+  const canManage = hasManagerAccess(session.role);
   const sergeants = users.filter((user) => user.approvalStatus === "approved" && user.role === "officer" && user.grade === "Sergent" && !user.blocked).sort(compareUsersByGrade);
   const supervisors = users.filter((user) => user.approvalStatus === "approved" && user.role === "senior" && !user.blocked).sort(compareUsersByGrade);
   const defaultDueDate = (() => { const date = new Date(); date.setDate(date.getDate() + 7); return date.toISOString().slice(0, 10); })();
@@ -1520,10 +1528,12 @@ function App() {
     if (context?.close) context.close().catch(() => {});
   }, []);
 
-  const canManage = session && ["admin", "referent"].includes(session.role);
+  const canManage = session && hasManagerAccess(session.role);
   const manageable = (user) => {
-    if (user.approvalStatus !== "approved") return session?.role === "admin";
-    return session?.role === "admin" ? user.role !== "admin" : ["senior", "officer"].includes(user.role);
+    if (user.approvalStatus !== "approved") return hasAdminAccess(session?.role);
+    if (session?.role === "admin") return user.role !== "admin";
+    if (session?.role === "management") return !["admin", "management"].includes(user.role);
+    return ["senior", "officer"].includes(user.role);
   };
   const visibleUsers = useMemo(() => users.filter((user) => {
     const text = `${user.firstName} ${user.lastName} ${user.discordUsername || ""}`.toLowerCase();
@@ -1570,7 +1580,7 @@ function App() {
     if (portalRemote) syncSharedPortal("dismiss_notification", { notificationId });
   }
   function clearAuditLogs() {
-    if (session.role !== "admin" || !confirm("Réinitialiser définitivement le journal des logs ?")) return;
+    if (!hasAdminAccess(session.role) || !confirm("Réinitialiser définitivement le journal des logs ?")) return;
     if (portalRemote) {
       portalRequest("POST", { action: "clear_audit_logs" })
         .then((state) => {
@@ -1593,7 +1603,7 @@ function App() {
     flash("Vos raccourcis ont bien été enregistrés.");
   }
   function resetActivitySummary() {
-    if (session.role !== "admin" || !confirm("Réinitialiser les compteurs de recommandations, d’observations et le classement ?")) return;
+    if (!hasAdminAccess(session.role) || !confirm("Réinitialiser les compteurs de recommandations, d’observations et le classement ?")) return;
     const activityResetAt = new Date().toISOString();
     setSummarySettings((current) => ({ ...current, activityResetAt, rankingResetAt: activityResetAt }));
     addLog("summary", "Statistiques d’activité réinitialisées", "Recommandations, observations et classement remis à zéro.");
@@ -1616,7 +1626,7 @@ function App() {
     setSubmissionHistory((current) => [entry, ...current].slice(0, 300));
   }
   function resetSubmissionHistory(type) {
-    if (!["admin", "referent"].includes(session.role)) return;
+    if (!hasManagerAccess(session.role)) return;
     const label = type === "sergeant_report" ? "Rapports nouveau Sous-Officier" : TRANSMISSION_TYPES[type]?.title || type;
     if (!confirm(`Réinitialiser uniquement l’historique « ${label} » ?`)) return;
     setSubmissionHistory((current) => current.filter((entry) => entry.type !== type));
@@ -1624,7 +1634,7 @@ function App() {
     flash(`L’historique « ${label} » a été réinitialisé.`);
   }
   function updateSubmissionHistory(type, entryId, values) {
-    if (!["admin", "referent"].includes(session.role)) return;
+    if (!hasManagerAccess(session.role)) return;
     const text = (value, limit = 950) => typeof value === "string" ? value.trim().slice(0, limit) : "";
     const isReport = type === "sergeant_report";
     const updatedValues = isReport
@@ -1651,7 +1661,7 @@ function App() {
     flash("L’historique a été modifié.");
   }
   function deleteSubmissionHistory(type, entryId) {
-    if (!["admin", "referent"].includes(session.role) || !confirm("Supprimer définitivement cet élément de l’historique public ?")) return;
+    if (!hasManagerAccess(session.role) || !confirm("Supprimer définitivement cet élément de l’historique public ?")) return;
     const entry = submissionHistory.find((item) => item.id === entryId && item.type === type);
     if (!entry) return;
     setSubmissionHistory((current) => current.filter((item) => item.id !== entryId));
@@ -1687,7 +1697,7 @@ function App() {
     });
   }
   function assignSergeant({ sergeantId, observerId, dueDate }) {
-    if (!["admin", "referent"].includes(session.role)) return;
+    if (!hasManagerAccess(session.role)) return;
     const sergeant = users.find((user) => user.id === sergeantId && user.role === "officer" && user.grade === "Sergent");
     const observer = users.find((user) => user.id === observerId && user.role === "senior");
     if (!sergeant || !observer || !dueDate) return flash("L’assignation est invalide.");
@@ -1701,7 +1711,7 @@ function App() {
     flash("Le Référent du nouveau Sergent a bien été enregistré.");
   }
   function remindSergeantAssignment(assignmentId) {
-    if (!["admin", "referent"].includes(session.role)) return;
+    if (!hasManagerAccess(session.role)) return;
     const assignment = sergeantAssignments.find((item) => item.id === assignmentId && item.status === "active");
     if (!assignment) return;
     const now = new Date().toISOString();
@@ -1712,7 +1722,7 @@ function App() {
     flash("Le rappel apparaîtra sur l’accueil du SO Sup assigné.");
   }
   function deleteSergeantAssignment(assignmentId) {
-    if (!["admin", "referent"].includes(session.role)) return;
+    if (!hasManagerAccess(session.role)) return;
     const assignment = sergeantAssignments.find((item) => item.id === assignmentId);
     if (!assignment || !confirm("Supprimer cette assignation ?")) return;
     setSergeantAssignments((current) => current.filter((item) => item.id !== assignmentId));
@@ -1732,7 +1742,7 @@ function App() {
     flash("Les quotas ont été réinitialisés.");
   }
   function toggleQuotaExemption(userId) {
-    if (!["admin", "referent"].includes(session.role)) return;
+    if (!hasManagerAccess(session.role)) return;
     const targetUser = users.find((user) => user.id === userId);
     const willExempt = !quotas.exemptions?.[userId];
     setQuotas((current) => {
@@ -1750,7 +1760,7 @@ function App() {
     flash("Le document a été déposé et placé en attente.");
   }
   function validateMission(missionId) {
-    if (!["admin", "referent"].includes(session.role)) return;
+    if (!hasManagerAccess(session.role)) return;
     const mission = missions.find((item) => item.id === missionId);
     if (!mission || mission.status !== "pending") return;
     setMissions((current) => current.map((item) => item.id === missionId ? { ...item, status: "validated", validatedBy: `${session.firstName} ${session.lastName}`, validatedAt: new Date().toISOString() } : item));
@@ -1762,7 +1772,7 @@ function App() {
     flash("La mission interne est validée et ajoutée au quota.");
   }
   function rejectMission(missionId) {
-    if (!["admin", "referent"].includes(session.role)) return;
+    if (!hasManagerAccess(session.role)) return;
     const mission = missions.find((item) => item.id === missionId);
     if (!mission || mission.status !== "pending") return;
     setMissions((current) => current.map((item) => item.id === missionId ? { ...item, status: "rejected", rejectedBy: `${session.firstName} ${session.lastName}`, rejectedAt: new Date().toISOString() } : item));
@@ -1778,7 +1788,7 @@ function App() {
     flash("Le document de mission interne a été supprimé.");
   }
   function resetMissions() {
-    if (!["admin", "referent"].includes(session.role)) return;
+    if (!hasManagerAccess(session.role)) return;
     if (!confirm("Réinitialiser tous les documents de missions internes ? Les quotas déjà validés resteront inchangés.")) return;
     const removedCount = missions.length;
     setMissions([]);
@@ -1841,7 +1851,7 @@ function App() {
   function deleteChatMessage(chatId, messageId) {
     const chat = chats.find((item) => item.id === chatId);
     const message = chat?.messages.find((item) => item.id === messageId);
-    const canModerate = ["admin", "referent"].includes(session.role);
+    const canModerate = hasManagerAccess(session.role);
     if (!message || (message.senderId !== session.id && !canModerate) || !confirm("Supprimer ce message ?")) return;
     setChats((current) => current.map((item) => item.id === chatId ? { ...item, messages: item.messages.filter((entry) => entry.id !== messageId), updatedAt: new Date().toISOString() } : item));
     if (portalRemote) syncSharedPortal("delete_message", { chatId, messageId });
@@ -1849,7 +1859,7 @@ function App() {
   }
   function deleteChat(chatId) {
     const chat = chats.find((item) => item.id === chatId);
-    const canModerate = ["admin", "referent"].includes(session.role);
+    const canModerate = hasManagerAccess(session.role);
     const canDelete = chat?.type === "group" ? chat.createdBy === session.id || canModerate : chat?.participants.includes(session.id) || canModerate;
     if (!chat || !canDelete || !confirm("Supprimer définitivement cette conversation et tous ses messages ?")) return;
     setChats((current) => current.filter((item) => item.id !== chatId));
@@ -1896,7 +1906,7 @@ function App() {
     } catch (error) { flash(error instanceof Error ? error.message : "La présence n’a pas pu être modifiée."); }
   }
   async function toggleAccountBlock(user) {
-    if (session.role !== "admin" || user.id === session.id || user.role === "admin") return;
+    if (!hasAdminAccess(session.role) || user.id === session.id || user.role === "admin" || (session.role === "management" && user.role === "management")) return;
     const willBlock = !user.blocked;
     try {
       const result = await accountRequest("/api/auth/users", "PATCH", { ...user, id: user.id, blocked: willBlock });
@@ -1915,7 +1925,7 @@ function App() {
         ...session,
         ...form,
         id: session.id,
-        grade: session.role === "admin" && GRADES.includes(form.grade) ? form.grade : session.grade,
+        grade: hasAdminAccess(session.role) && GRADES.includes(form.grade) ? form.grade : session.grade,
       });
       setUsers(Array.isArray(result.users) ? result.users : []);
       setSession(result.session || session);
@@ -1934,12 +1944,12 @@ function App() {
         <div className="brand-row"><div className="brand-mark"><ShieldCheck size={23} /></div><div><strong>Portail SO</strong><small>Espace sécurisé</small></div></div>
         <nav>
           <button className={`menu-item standalone-nav ${activeSection === "home" ? "active" : ""}`} onClick={() => setActiveSection("home")}><Home size={18} /> Accueil</button>
-          {session.role === "admin" && <MenuGroup title="Admin" icon={ShieldCheck} open={openGroups.admin} onToggle={() => toggleGroup("admin")}><button className={`menu-item ${activeSection === "dashboard" ? "active" : ""}`} onClick={() => setActiveSection("dashboard")}><LayoutDashboard size={17} /> Tableau de bord</button></MenuGroup>}
-          {["admin", "referent"].includes(session.role) && <MenuGroup title="Référent SO" icon={UsersRound} open={openGroups.referent} onToggle={() => toggleGroup("referent")}><button className={`menu-item ${activeSection === "workforce" ? "active" : ""}`} onClick={() => setActiveSection("workforce")}><UsersRound size={17} /> Effectif</button><button className={`menu-item ${activeSection === "presence" ? "active" : ""}`} onClick={() => setActiveSection("presence")}><UserCheck size={17} /> Présences</button><button className={`menu-item ${activeSection === "quotas" ? "active" : ""}`} onClick={() => setActiveSection("quotas")}><Gauge size={17} /> Quotas</button></MenuGroup>}
+        {hasAdminAccess(session.role) && <MenuGroup title="Admin" icon={ShieldCheck} open={openGroups.admin} onToggle={() => toggleGroup("admin")}><button className={`menu-item ${activeSection === "dashboard" ? "active" : ""}`} onClick={() => setActiveSection("dashboard")}><LayoutDashboard size={17} /> Tableau de bord</button></MenuGroup>}
+        {hasManagerAccess(session.role) && <MenuGroup title="Référent SO" icon={UsersRound} open={openGroups.referent} onToggle={() => toggleGroup("referent")}><button className={`menu-item ${activeSection === "workforce" ? "active" : ""}`} onClick={() => setActiveSection("workforce")}><UsersRound size={17} /> Effectif</button><button className={`menu-item ${activeSection === "presence" ? "active" : ""}`} onClick={() => setActiveSection("presence")}><UserCheck size={17} /> Présences</button><button className={`menu-item ${activeSection === "quotas" ? "active" : ""}`} onClick={() => setActiveSection("quotas")}><Gauge size={17} /> Quotas</button></MenuGroup>}
           <MenuGroup title="Globale" icon={Send} open={openGroups.global} onToggle={() => toggleGroup("global")}><button className={`menu-item ${activeSection === "summary" ? "active" : ""}`} onClick={() => setActiveSection("summary")}><BarChart3 size={17} /> Résumé</button><button className={`menu-item ${activeSection === "recommendation" ? "active" : ""}`} onClick={() => setActiveSection("recommendation")}><Medal size={17} /> Recommandation</button><button className={`menu-item ${activeSection === "pcs_exp" ? "active" : ""}`} onClick={() => setActiveSection("pcs_exp")}><ClipboardCheck size={17} /> Recommandation PCS EXP</button><button className={`menu-item ${activeSection === "observation_hdr" ? "active" : ""}`} onClick={() => setActiveSection("observation_hdr")}><MessageSquareText size={17} /> Observation HDR</button><button className={`menu-item ${activeSection === "mission_internal" ? "active" : ""}`} onClick={() => setActiveSection("mission_internal")}><FileText size={17} /> Mission interne</button></MenuGroup>
-          {["admin", "referent", "senior"].includes(session.role) && <MenuGroup title="Sous-Officier Supérieur" icon={BadgeCheck} open={openGroups.senior} onToggle={() => toggleGroup("senior")}><button className={`menu-item ${activeSection === "sergeant_assignments" ? "active" : ""}`} onClick={() => setActiveSection("sergeant_assignments")}><UsersRound size={17} /> Référent</button><button className={`menu-item ${activeSection === "observation_so" ? "active" : ""}`} onClick={() => setActiveSection("observation_so")}><MessageSquareText size={17} /> Observation SO</button><button className={`menu-item ${activeSection === "sergeant_report" ? "active" : ""}`} onClick={() => setActiveSection("sergeant_report")}><FileText size={17} /> Rapport nouveau SO</button></MenuGroup>}
+        {hasSeniorAccess(session.role) && <MenuGroup title="Sous-Officier Supérieur" icon={BadgeCheck} open={openGroups.senior} onToggle={() => toggleGroup("senior")}><button className={`menu-item ${activeSection === "sergeant_assignments" ? "active" : ""}`} onClick={() => setActiveSection("sergeant_assignments")}><UsersRound size={17} /> Référent</button><button className={`menu-item ${activeSection === "observation_so" ? "active" : ""}`} onClick={() => setActiveSection("observation_so")}><MessageSquareText size={17} /> Observation SO</button><button className={`menu-item ${activeSection === "sergeant_report" ? "active" : ""}`} onClick={() => setActiveSection("sergeant_report")}><FileText size={17} /> Rapport nouveau SO</button></MenuGroup>}
           <MenuGroup title="Chat" icon={MessageSquareText} open={openGroups.chat} onToggle={() => toggleGroup("chat")}><button className={`menu-item ${activeSection === "chat" ? "active" : ""}`} onClick={() => setActiveSection("chat")}><Send size={17} /> Messagerie</button></MenuGroup>
-          {["admin", "referent"].includes(session.role) && <button className={`menu-item standalone-nav logs-nav ${activeSection === "logs" ? "active" : ""}`} onClick={() => setActiveSection("logs")}><ScrollText size={18} /> Logs</button>}
+        {hasManagerAccess(session.role) && <button className={`menu-item standalone-nav logs-nav ${activeSection === "logs" ? "active" : ""}`} onClick={() => setActiveSection("logs")}><ScrollText size={18} /> Logs</button>}
         </nav>
         <button className="profile-card" onClick={() => setProfileOpen(true)} title="Profil et paramètres"><div className={`avatar ${ROLES[session.role].tone}`}>{initials(session)}</div><div><strong>{session.firstName} {session.lastName}</strong><small>{session.grade || GRADES[0]} · {ROLES[session.role].label}</small></div><ChevronDown size={16} /></button>
         <div className="sidebar-actions">
@@ -1953,19 +1963,19 @@ function App() {
       </aside>
 
       <main className="content">
-        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{session.role === "admin" && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{["admin", "referent"].includes(session.role) && <optgroup label="Référent SO"><option value="workforce">Effectif</option><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="summary">Résumé</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{["admin", "referent", "senior"].includes(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="sergeant_assignments">Référent</option><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{["admin", "referent"].includes(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
+        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{hasAdminAccess(session.role) && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{hasManagerAccess(session.role) && <optgroup label="Référent SO"><option value="workforce">Effectif</option><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="summary">Résumé</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{hasSeniorAccess(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="sergeant_assignments">Référent</option><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{hasManagerAccess(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
         {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "workforce" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Effectif</h1><p className="muted">Consultez l’organisation complète des membres par accès et par grade.</p></div><span className="referent-access"><UsersRound size={16} /> Vue des effectifs</span></header> : activeSection === "sergeant_assignments" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Référent</h1><p className="muted">Attribuez et suivez les référents des nouveaux Sergents.</p></div><span className="senior-access"><BadgeCheck size={16} /> Suivi des semaines de test</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Validez les demandes Discord et gardez une vue claire sur votre équipe.</p></div><span className="all-access"><MessageSquareText size={16} /> Connexion Discord</span></header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
         {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={setActiveSection} onDismissNotification={dismissPortalNotification} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} logs={auditLogs} activityResetAt={summarySettings.activityResetAt || summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
         <section className="stats">
           <article><span className="stat-icon blue"><UsersRound /></span><div><strong>{users.length}</strong><small>Comptes au total</small></div><span className="trend">Tous niveaux</span></article>
           <article><span className="stat-icon gold"><UserRound /></span><div><strong>{users.filter((user) => user.approvalStatus === "pending").length}</strong><small>Demandes en attente</small></div><span className="trend">À valider</span></article>
-          <article><span className="stat-icon violet"><ShieldCheck /></span><div><strong>{users.filter((u) => ["admin", "referent"].includes(u.role)).length}</strong><small>Gestionnaires</small></div><span className="trend">Admin & Référent</span></article>
+          <article><span className="stat-icon violet"><ShieldCheck /></span><div><strong>{users.filter((u) => hasManagerAccess(u.role)).length}</strong><small>Gestionnaires</small></div><span className="trend">Admin, Gérance & Référent</span></article>
         </section>
 
         <section className="accounts-card">
           <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
-          <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>État du compte</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.discordUsername ? `Discord : ${user.discordUsername}` : "Compte Discord lié"}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td>{user.approvalStatus === "pending" ? <span className="locked">À attribuer</span> : <RoleBadge role={user.role} />}</td><td>{user.approvalStatus === "pending" ? <button className="account-state pending" type="button" onClick={() => session.role === "admin" && setModal(user)}><UserRound size={15} /> En attente</button> : user.approvalStatus === "rejected" ? <span className="account-state blocked"><UserX size={15} /> Refusé</span> : user.role === "admin" ? <span className="account-state active"><UserCheck size={15} /> Compte actif</span> : <button className={`account-state ${user.blocked ? "blocked" : "active"}`} type="button" onClick={() => toggleAccountBlock(user)}>{user.blocked ? <UserX size={15} /> : <UserCheck size={15} />}{user.blocked ? "Compte bloqué" : "Compte actif"}</button>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title={user.approvalStatus === "pending" ? "Examiner la demande" : "Modifier"} onClick={() => setModal(user)}>{user.approvalStatus === "pending" ? <BadgeCheck size={17} /> : <Pencil size={17} />}</button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
+          <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>État du compte</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.discordUsername ? `Discord : ${user.discordUsername}` : "Compte Discord lié"}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td>{user.approvalStatus === "pending" ? <span className="locked">À attribuer</span> : <RoleBadge role={user.role} />}</td><td>{user.approvalStatus === "pending" ? <button className="account-state pending" type="button" onClick={() => hasAdminAccess(session.role) && setModal(user)}><UserRound size={15} /> En attente</button> : user.approvalStatus === "rejected" ? <span className="account-state blocked"><UserX size={15} /> Refusé</span> : user.role === "admin" ? <span className="account-state active"><UserCheck size={15} /> Compte actif</span> : <button className={`account-state ${user.blocked ? "blocked" : "active"}`} type="button" onClick={() => toggleAccountBlock(user)}>{user.blocked ? <UserX size={15} /> : <UserCheck size={15} />}{user.blocked ? "Compte bloqué" : "Compte actif"}</button>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title={user.approvalStatus === "pending" ? "Examiner la demande" : "Modifier"} onClick={() => setModal(user)}>{user.approvalStatus === "pending" ? <BadgeCheck size={17} /> : <Pencil size={17} />}</button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
         </section>
         </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onUpdateGroup={updateChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} assignments={sergeantAssignments} onSuccess={sergeantReportSuccess} history={submissionHistory.filter((entry) => entry.type === "sergeant_report")} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} history={submissionHistory.filter((entry) => entry.type === activeSection)} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} />}
       </main>
