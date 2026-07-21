@@ -36,9 +36,8 @@ export function randomState() {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export function oauthStateCookie(state, request, flow = "login") {
-  const safeFlow = flow === "signup" ? "signup" : "login";
-  return `portal-so-discord-state=${state}.${safeFlow}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${secureCookie(request)}`;
+export function oauthStateCookie(state, request) {
+  return `portal-so-discord-state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${secureCookie(request)}`;
 }
 
 export function expiredOauthStateCookie(request) {
@@ -46,13 +45,7 @@ export function expiredOauthStateCookie(request) {
 }
 
 export function hasValidState(request, state) {
-  const stored = cookieValue(request, "portal-so-discord-state");
-  const storedState = stored.slice(0, 64);
-  return /^[a-f0-9]{64}$/i.test(String(state || "")) && /^[a-f0-9]{64}$/i.test(storedState) && sameValue(storedState, String(state));
-}
-
-export function oauthFlow(request) {
-  return cookieValue(request, "portal-so-discord-state").endsWith(".signup") ? "signup" : "login";
+  return /^[a-f0-9]{64}$/i.test(String(state || "")) && sameValue(cookieValue(request, "portal-so-discord-state"), String(state));
 }
 
 export async function discordUser(config, code) {
