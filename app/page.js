@@ -379,6 +379,8 @@ function Login({ configurationError, error }) {
     not_configured: "La connexion Discord n’est pas encore configurée par l’administrateur.",
     invalid_link: "Le lien de connexion Discord a expiré. Recommencez la connexion.",
     failed: "La connexion Discord n’a pas pu être finalisée. Réessayez dans un instant.",
+    account_exists: "Ce compte Discord existe déjà. Utilisez « Se connecter ».",
+    account_missing: "Aucun compte n’est associé à ce Discord. Créez d’abord une demande de compte.",
   };
 
   return (
@@ -394,12 +396,13 @@ function Login({ configurationError, error }) {
       <section className="login-panel">
         <div className="login-card">
           <div className="mobile-logo"><div className="brand-mark"><ShieldCheck size={23} /></div><strong>Portail SO</strong></div>
-          <p className="eyebrow dark">CRÉATION DE COMPTE</p>
-          <h2>Création de compte</h2>
-          <p className="muted">Créez votre compte en le reliant à Discord.</p>
+          <p className="eyebrow dark">ACCÈS AU PORTAIL</p>
+          <h2>Bienvenue</h2>
+          <p className="muted">Connectez-vous ou créez une demande d’accès avec Discord.</p>
           <div className="discord-login-panel">
-            <a className={`primary wide discord-login ${configurationError ? "disabled" : ""}`} href={configurationError ? undefined : "/api/auth/discord"} aria-disabled={Boolean(configurationError)}><MessageSquareText size={20} /> Créer avec Discord <span>→</span></a>
-            <p className="discord-login-note">Votre demande est créée puis reste en attente de validation par un administrateur.</p>
+            <a className={`primary wide discord-login ${configurationError ? "disabled" : ""}`} href={configurationError ? undefined : "/api/auth/discord?flow=login"} aria-disabled={Boolean(configurationError)}><MessageSquareText size={20} /> Se connecter avec Discord <span>→</span></a>
+            <a className={`discord-secondary ${configurationError ? "disabled" : ""}`} href={configurationError ? undefined : "/api/auth/discord?flow=signup"} aria-disabled={Boolean(configurationError)}><UserRound size={19} /> Créer un compte <span>→</span></a>
+            <p className="discord-login-note">La création de compte génère une demande, qui devra être validée par un administrateur.</p>
           </div>
           {(configurationError || error || messages[status]) && <p className="form-error">{configurationError || error || messages[status]}</p>}
         </div>

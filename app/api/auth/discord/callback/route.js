@@ -1,5 +1,5 @@
 import { createSession, database, cleanGrade, recordAuditLog } from "../../_shared";
-import { discordConfig, discordDisplayName, discordUser, expiredOauthStateCookie, hasValidState, portalRedirect, redirect } from "../oauth";
+import { discordConfig, discordDisplayName, discordUser, expiredOauthStateCookie, hasValidState, oauthFlow, portalRedirect, redirect } from "../oauth";
 
 export const runtime = "edge";
 
@@ -29,6 +29,7 @@ export async function GET(request) {
   const clearState = { "Set-Cookie": expiredOauthStateCookie(request) };
   if (!hasValidState(request, state) || !code) return redirect(portalRedirect(config, "invalid_link"), clearState);
   try {
+    const flow = oauthFlow(request);
     const profile = await discordUser(config, code);
     const discordId = String(profile.id);
     const email = discordEmail(profile);
@@ -47,6 +48,8 @@ export async function GET(request) {
       user = Array.isArray(admins) ? admins[0] : null;
     }
     const existingUser = Boolean(user);
+    if (flow === "signup" && existingUser) return redirect(portalRedirect(config, "account_exists"), clearState);
+    if (flow === "login" && !existingUser) return redirect(portalRedirect(config, "account_missing"), clearState);
     if (user) {
       const rows = await database(`portal_users?id=eq.${encodeURIComponent(user.id)}`, {
         method: "PATCH",
