@@ -394,12 +394,12 @@ function Login({ configurationError, error }) {
       <section className="login-panel">
         <div className="login-card">
           <div className="mobile-logo"><div className="brand-mark"><ShieldCheck size={23} /></div><strong>Portail SO</strong></div>
-          <p className="eyebrow dark">CRÉATION DE COMPTE</p>
-          <h2>Création de compte</h2>
-          <p className="muted">Créez votre compte en le reliant à Discord.</p>
+          <p className="eyebrow dark">ACCÈS AU PORTAIL</p>
+          <h2>Continuez avec Discord</h2>
+          <p className="muted">Connectez-vous avec votre compte Discord pour accéder au portail.</p>
           <div className="discord-login-panel">
-            <a className={`primary wide discord-login ${configurationError ? "disabled" : ""}`} href={configurationError ? undefined : "/api/auth/discord"} aria-disabled={Boolean(configurationError)}><MessageSquareText size={20} /> Créer avec Discord <span>→</span></a>
-            <p className="discord-login-note">Votre demande est créée puis reste en attente de validation par un administrateur.</p>
+            <a className={`primary wide discord-login ${configurationError ? "disabled" : ""}`} href={configurationError ? undefined : "/api/auth/discord"} aria-disabled={Boolean(configurationError)}><MessageSquareText size={20} /> Continuer avec Discord <span>→</span></a>
+            <p className="discord-login-note">Lors de votre première connexion, votre demande devra être validée par un administrateur.</p>
           </div>
           {(configurationError || error || messages[status]) && <p className="form-error">{configurationError || error || messages[status]}</p>}
         </div>
@@ -1357,6 +1357,16 @@ function App() {
       if (accountState.session) {
         setSession(accountState.session);
         setActiveSection("home");
+        const discordStatus = new URLSearchParams(window.location.search).get("discord");
+        if (discordStatus === "connected") {
+          setLoginTransition(accountState.session);
+          const cleanUrl = new URL(window.location.href);
+          cleanUrl.searchParams.delete("discord");
+          window.history.replaceState({}, "", `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+          window.setTimeout(() => {
+            if (!cancelled) setLoginTransition(null);
+          }, 1850);
+        }
       }
 
       const parsedQuotas = readStoredJson(QUOTA_KEY, DEFAULT_QUOTAS);
