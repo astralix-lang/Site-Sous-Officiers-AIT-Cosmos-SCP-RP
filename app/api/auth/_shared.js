@@ -254,10 +254,9 @@ export function publicUser(row) {
     discordId: String(row.discord_id || "").replace(/\D/g, "").slice(0, 20),
     discordContactId: String(row.discord_contact_id || row.discord_id || "").replace(/\D/g, "").slice(0, 20),
     steamId64: String(row.steam_id_64 || "").replace(/\D/g, "").slice(0, 17),
-    specializationInstruction: String(row.specialization_instruction || "Aucune").slice(0, 40),
-    specializationPm: String(row.specialization_pm || "Aucune").slice(0, 40),
-    specializationMdc: String(row.specialization_mdc || "Aucune").slice(0, 40),
-    specializationIng: String(row.specialization_ing || "Aucune").slice(0, 40),
+    specialization1: String(row.specialization_1 || "Aucune").slice(0, 40),
+    specialization2: String(row.specialization_2 || "Aucune").slice(0, 40),
+    specialization3: String(row.specialization_3 || "Aucune").slice(0, 40),
     avatarUrl: safeDiscordAvatarUrl(row.discord_avatar_url),
     createdAtIso: row.created_at,
     createdAt: dateLabel(row.created_at),
@@ -265,7 +264,7 @@ export function publicUser(row) {
 }
 
 export async function listUsers() {
-  const rows = await database("portal_users?select=id,first_name,last_name,role,grade,presence,blocked,approval_status,discord_id,discord_contact_id,steam_id_64,specialization_instruction,specialization_pm,specialization_mdc,specialization_ing,discord_username,discord_avatar_url,created_at,updated_at&order=created_at.asc");
+  const rows = await database("portal_users?select=id,first_name,last_name,role,grade,presence,blocked,approval_status,discord_id,discord_contact_id,steam_id_64,specialization_1,specialization_2,specialization_3,discord_username,discord_avatar_url,created_at,updated_at&order=created_at.asc");
   return Array.isArray(rows) ? rows.map(publicUser) : [];
 }
 

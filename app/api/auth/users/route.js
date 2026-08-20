@@ -8,11 +8,11 @@ export const runtime = "edge";
 const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const STEAM_ID_64 = /^\d{17}$/;
 const DISCORD_ID = /^\d{17,20}$/;
+const SPECIALIZATION_OPTIONS = new Set(["Aucune", "Resp Instr", "Instr CATI", "Instr", "Resp PM", "Référent PM", "PM", "Resp MDC", "Forma MDC", "MDC", "Resp ING", "Cadre ING", "ING"]);
 const SPECIALIZATION_FIELDS = {
-  specializationInstruction: { column: "specialization_instruction", values: new Set(["Aucune", "Resp Instr", "Instr CATI", "Instr"]) },
-  specializationPm: { column: "specialization_pm", values: new Set(["Aucune", "Resp PM", "Référent PM", "PM"]) },
-  specializationMdc: { column: "specialization_mdc", values: new Set(["Aucune", "Resp MDC", "Forma MDC", "MDC"]) },
-  specializationIng: { column: "specialization_ing", values: new Set(["Aucune", "Resp ING", "Cadre ING", "ING"]) },
+  specialization1: "specialization_1",
+  specialization2: "specialization_2",
+  specialization3: "specialization_3",
 };
 
 function allowedRoles(actor) {
@@ -40,9 +40,9 @@ function identityPayload(body, role, existing, canChangeGrade, canChangeSpeciali
   if (steamId64 && !STEAM_ID_64.test(steamId64)) return { error: "Le Steam ID 64 doit contenir exactement 17 chiffres." };
   if (discordContactId && !DISCORD_ID.test(discordContactId)) return { error: "L’identifiant Discord doit contenir entre 17 et 20 chiffres." };
   const specializations = {};
-  for (const [key, definition] of Object.entries(SPECIALIZATION_FIELDS)) {
-    const requested = canChangeSpecializations ? (body?.[key] ?? existing[definition.column] ?? "Aucune") : (existing[definition.column] ?? "Aucune");
-    specializations[definition.column] = definition.values.has(requested) ? requested : "Aucune";
+  for (const [key, column] of Object.entries(SPECIALIZATION_FIELDS)) {
+    const requested = canChangeSpecializations ? (body?.[key] ?? existing[column] ?? "Aucune") : (existing[column] ?? "Aucune");
+    specializations[column] = SPECIALIZATION_OPTIONS.has(requested) ? requested : "Aucune";
   }
   return {
     value: {

@@ -16,6 +16,10 @@ const SUMMARY_SETTINGS_ID = "a148a81a-6d81-46a4-8c82-fd09391b76cc";
 const SUMMARY_SETTINGS_TARGET = "__portal_summary_settings";
 const ASSIGNMENTS_ID = "c90a8db5-8c52-4a2b-b2a7-503c95dcb2e2";
 const ASSIGNMENTS_TARGET = "__portal_sergeant_assignments";
+const MANAGEMENT_REPORTS_ID = "5b5254f3-f22b-4cb4-935f-cffd73e8bba7";
+const MANAGEMENT_REPORTS_TARGET = "__portal_management_reports";
+const MANAGEMENT_SETTINGS_ID = "b8d9ba07-0f50-4558-b0af-173790f89ab4";
+const MANAGEMENT_SETTINGS_TARGET = "__portal_management_settings";
 const FILE_TYPES = new Set([
   "image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf", "text/plain",
   "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -217,10 +221,11 @@ async function quotaState(submissions) {
 }
 
 async function stateFor(user) {
-  const [chats, notifications, auditLogs, allSubmissions, summarySettings, sergeantAssignments] = await Promise.all([
-    allChats(user), notificationsFor(user), auditLogsFor(user), submissionsFor(), summarySettingsFor(), assignmentsFor(),
+  const [chats, notifications, auditLogs, allSubmissions, summarySettings, sergeantAssignments, allManagementReports, managementReportSettings] = await Promise.all([
+    allChats(user), notificationsFor(user), auditLogsFor(user), submissionsFor(), summarySettingsFor(), assignmentsFor(), managementReportsFor(), managementReportSettingsFor(),
   ]);
-  return { chats, notifications, auditLogs, submissions: allSubmissions, quotas: await quotaState(allSubmissions), summarySettings, sergeantAssignments };
+  const managementReports = isManager(user) ? allManagementReports : allManagementReports.filter((report) => report.authorId === user.id);
+  return { chats, notifications, auditLogs, submissions: allSubmissions, quotas: await quotaState(allSubmissions), summarySettings, sergeantAssignments, managementReports, managementReportSettings };
 }
 
 async function chatById(id) {
@@ -365,6 +370,62 @@ async function saveAssignments(assignments) {
   await saveSharedRecord(ASSIGNMENTS_ID, ASSIGNMENTS_TARGET, "Assignations internes des Sergents", assignments);
 }
 
+function managementReportValues(value) {
+  const source = objectValue(value);
+  const occurred = new Date(String(source.occurredAt || ""));
+  if (!Number.isFinite(occurred.getTime())) return null;
+  const result = {
+    occurredAt: occurred.toISOString(),
+    managementType: clean(source.managementType, 100),
+    description: clean(source.description, 1500),
+    positivePoint: clean(source.positivePoint, 950),
+    negativePoint: clean(source.negativePoint, 950),
+  };
+  return Object.values(result).every(Boolean) ? result : null;
+}
+
+function managementReportsFromValue(value) {
+  return parseArray(value).filter((report) => UUID.test(String(report?.id || "")) && UUID.test(String(report?.authorId || "")) && Number.isFinite(new Date(report?.occurredAt).getTime())).map((report) => ({
+    id: report.id,
+    authorId: report.authorId,
+    authorName: clean(report.authorName, 120) || "Membre du portail",
+    authorGrade: clean(report.authorGrade, 60),
+    authorRole: clean(report.authorRole, 40),
+    occurredAt: new Date(report.occurredAt).toISOString(),
+    managementType: clean(report.managementType, 100),
+    description: clean(report.description, 1500),
+    positivePoint: clean(report.positivePoint, 950),
+    negativePoint: clean(report.negativePoint, 950),
+    createdAt: typeof report.createdAt === "string" ? report.createdAt : new Date().toISOString(),
+    comments: parseArray(report.comments).filter((comment) => UUID.test(String(comment?.id || "")) && UUID.test(String(comment?.authorId || "")) && clean(comment?.content, 1000)).map((comment) => ({
+      id: comment.id,
+      authorId: comment.authorId,
+      authorName: clean(comment.authorName, 120) || "Responsable",
+      authorGrade: clean(comment.authorGrade, 60),
+      authorRole: clean(comment.authorRole, 40),
+      content: clean(comment.content, 1000),
+      createdAt: typeof comment.createdAt === "string" ? comment.createdAt : new Date().toISOString(),
+    })),
+  })).filter((report) => report.managementType && report.description && report.positivePoint && report.negativePoint);
+}
+
+async function managementReportsFor() {
+  return managementReportsFromValue(await sharedRecord(MANAGEMENT_REPORTS_ID, MANAGEMENT_REPORTS_TARGET, "Rapports internes de gérance", []));
+}
+
+async function saveManagementReports(reports) {
+  await saveSharedRecord(MANAGEMENT_REPORTS_ID, MANAGEMENT_REPORTS_TARGET, "Rapports internes de gérance", reports);
+}
+
+async function managementReportSettingsFor() {
+  const value = await sharedRecord(MANAGEMENT_SETTINGS_ID, MANAGEMENT_SETTINGS_TARGET, "Réglages internes des rapports de gérance", { rankingResetAt: null });
+  return { rankingResetAt: typeof value?.rankingResetAt === "string" ? value.rankingResetAt : null };
+}
+
+async function saveManagementReportSettings(value) {
+  await saveSharedRecord(MANAGEMENT_SETTINGS_ID, MANAGEMENT_SETTINGS_TARGET, "Réglages internes des rapports de gérance", { rankingResetAt: value?.rankingResetAt || null });
+}
+
 function failure(error) {
   const message = error instanceof Error ? error.message : "";
   if (message === "INVALID_CONTENT_TYPE" || message === "INVALID_JSON") return json({ error: "Requête invalide." }, 400);
@@ -460,6 +521,48 @@ export async function POST(request) {
       const next = scope === "ranking" ? { ...settings, rankingResetAt: now } : { ...settings, activityResetAt: now };
       await saveSharedRecord(SUMMARY_SETTINGS_ID, SUMMARY_SETTINGS_TARGET, "Réglages internes du résumé", next);
       await recordAuditLog({ actor, category: "summary", action: scope === "ranking" ? "Classement d’activité réinitialisé" : "Graphiques d’activité réinitialisés" });
+    } else if (action === "create_management_report") {
+      if (!["senior", "officer"].includes(actor.role)) return json({ error: "Seuls les Sous-Officiers peuvent remplir ce rapport." }, 403);
+      const values = managementReportValues(body?.values);
+      if (!values) return json({ error: "Tous les champs du rapport de gérance sont obligatoires." }, 400);
+      const reports = await managementReportsFor();
+      const report = {
+        id: crypto.randomUUID(),
+        ...values,
+        authorId: actor.id,
+        authorName: `${actor.first_name} ${actor.last_name || ""}`.trim(),
+        authorGrade: actor.grade || "",
+        authorRole: actor.role,
+        createdAt: new Date().toISOString(),
+        comments: [],
+      };
+      await saveManagementReports([report, ...reports].slice(0, 800));
+      await createNotification({ recipients: [actor.id], kind: "form", title: "Rapport de gérance enregistré", text: "Votre auto-évaluation a été transmise aux responsables.", target: "management_report" });
+      await recordAuditLog({ actor, category: "management", action: "Rapport de gérance envoyé", details: values.managementType });
+    } else if (action === "comment_management_report") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent donner un avis sur ce rapport." }, 403);
+      const reportId = String(body?.reportId || "");
+      const content = clean(body?.content, 1000);
+      if (!UUID.test(reportId) || !content) return json({ error: "Votre avis est invalide." }, 400);
+      const reports = await managementReportsFor();
+      const report = reports.find((item) => item.id === reportId);
+      if (!report) return json({ error: "Rapport introuvable." }, 404);
+      const comment = {
+        id: crypto.randomUUID(),
+        authorId: actor.id,
+        authorName: `${actor.first_name} ${actor.last_name || ""}`.trim(),
+        authorGrade: actor.grade || "",
+        authorRole: actor.role,
+        content,
+        createdAt: new Date().toISOString(),
+      };
+      await saveManagementReports(reports.map((item) => item.id === report.id ? { ...item, comments: [...parseArray(item.comments), comment].slice(-50) } : item));
+      await createNotification({ recipients: [report.authorId], kind: "info", title: "Avis ajouté à votre rapport de gérance", text: `${comment.authorGrade ? `${comment.authorGrade} ` : ""}${comment.authorName} a laissé un retour.`, target: "management_report" });
+      await recordAuditLog({ actor, category: "management", action: "Avis ajouté à un rapport de gérance", details: report.authorName });
+    } else if (action === "reset_management_ranking") {
+      if (actor.role !== "admin") return json({ error: "Seul l’Admin peut réinitialiser ce classement." }, 403);
+      await saveManagementReportSettings({ rankingResetAt: new Date().toISOString() });
+      await recordAuditLog({ actor, category: "management", action: "Classement des gérances réinitialisé" });
     } else if (action === "assign_sergeant") {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent créer une assignation." }, 403);
       const sergeantId = String(body?.sergeantId || "");
