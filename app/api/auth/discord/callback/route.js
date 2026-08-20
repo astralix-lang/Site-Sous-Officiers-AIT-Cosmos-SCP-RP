@@ -54,6 +54,7 @@ export async function GET(request) {
         headers: { Prefer: "return=representation" },
         body: JSON.stringify({
           discord_id: discordId,
+          discord_contact_id: user.discord_contact_id || discordId,
           discord_username: name,
           discord_avatar_url: discordAvatarUrl(profile),
           discord_refresh_token: discord.refreshToken || user.discord_refresh_token || null,
@@ -77,6 +78,7 @@ export async function GET(request) {
           blocked: false,
           approval_status: bootstrap ? "approved" : "pending",
           discord_id: discordId,
+          discord_contact_id: discordId,
           discord_username: name,
           discord_avatar_url: discordAvatarUrl(profile),
           discord_refresh_token: discord.refreshToken || null,

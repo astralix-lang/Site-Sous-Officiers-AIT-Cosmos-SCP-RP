@@ -6,6 +6,14 @@ import {
 export const runtime = "edge";
 
 const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const STEAM_ID_64 = /^\d{17}$/;
+const DISCORD_ID = /^\d{17,20}$/;
+const SPECIALIZATION_FIELDS = {
+  specializationInstruction: { column: "specialization_instruction", values: new Set(["Aucune", "Resp Instr", "Instr CATI", "Instr"]) },
+  specializationPm: { column: "specialization_pm", values: new Set(["Aucune", "Resp PM", "Référent PM", "PM"]) },
+  specializationMdc: { column: "specialization_mdc", values: new Set(["Aucune", "Resp MDC", "Forma MDC", "MDC"]) },
+  specializationIng: { column: "specialization_ing", values: new Set(["Aucune", "Resp ING", "Cadre ING", "ING"]) },
+};
 
 function allowedRoles(actor) {
   if (actor.role === "admin") return new Set(["management", "referent", "senior", "officer"]);
@@ -27,6 +35,15 @@ function identityPayload(body, role, existing, canChangeGrade) {
   const requestedGrade = cleanGrade(body?.grade);
   const grade = canChangeGrade && requestedGrade ? requestedGrade : existing.grade;
   if (!firstName || !grade || !role) return { error: "Le prenom, le grade et le niveau d'acces sont obligatoires." };
+  const steamId64 = String(body?.steamId64 ?? existing.steam_id_64 ?? "").replace(/\D/g, "").slice(0, 17);
+  const discordContactId = String(body?.discordContactId ?? existing.discord_contact_id ?? existing.discord_id ?? "").replace(/\D/g, "").slice(0, 20);
+  if (steamId64 && !STEAM_ID_64.test(steamId64)) return { error: "Le Steam ID 64 doit contenir exactement 17 chiffres." };
+  if (discordContactId && !DISCORD_ID.test(discordContactId)) return { error: "L’identifiant Discord doit contenir entre 17 et 20 chiffres." };
+  const specializations = {};
+  for (const [key, definition] of Object.entries(SPECIALIZATION_FIELDS)) {
+    const requested = body?.[key] ?? existing[definition.column] ?? "Aucune";
+    specializations[definition.column] = definition.values.has(requested) ? requested : "Aucune";
+  }
   return {
     value: {
       first_name: firstName,
@@ -34,6 +51,9 @@ function identityPayload(body, role, existing, canChangeGrade) {
       grade,
       role,
       presence: ["senior", "officer"].includes(role) ? cleanPresence(body?.presence ?? existing.presence) : null,
+      steam_id_64: steamId64 || null,
+      discord_contact_id: discordContactId || null,
+      ...specializations,
     },
   };
 }
@@ -88,7 +108,7 @@ export async function PATCH(request) {
     const updated = updatedRows?.[0];
     if (!updated) throw new Error("USER_NOT_UPDATED");
     if ((!self && (changedBlock || approvalStatus !== targetStatus)) || approvalStatus !== "approved") await deleteSessionsForUser(target.id);
-    return json({ ok: true, session: publicUser(current.user), users: await listUsers() });
+    return json({ ok: true, session: self ? publicUser(updated) : publicUser(current.user), users: await listUsers() });
   } catch (error) { return errorResponse(error); }
 }
 

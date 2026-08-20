@@ -107,6 +107,12 @@ const REPORT_CONCLUSIONS = [
   "Prolongation de la semaine de test",
   "Retour caporal-chef",
 ];
+const SPECIALIZATION_GROUPS = [
+  { key: "specializationInstruction", label: "Instruction", tone: "instruction", options: ["Aucune", "Resp Instr", "Instr CATI", "Instr"] },
+  { key: "specializationPm", label: "Police militaire", shortLabel: "PM", tone: "pm", options: ["Aucune", "Resp PM", "Référent PM", "PM"] },
+  { key: "specializationMdc", label: "MDC", tone: "mdc", options: ["Aucune", "Resp MDC", "Forma MDC", "MDC"] },
+  { key: "specializationIng", label: "ING", tone: "ing", options: ["Aucune", "Resp ING", "Cadre ING", "ING"] },
+];
 const RECOVERY_ADMIN_EMAIL = "admin@portail-so.fr";
 const RECOVERY_ADMIN_PASSWORD = "Admin2026!";
 const RECOVERY_ADMIN_PROFILE = {
@@ -225,13 +231,19 @@ const TRANSMISSION_TYPES = {
     icon: MessageSquareText,
     tone: "violet",
   },
+  specializations: {
+    title: "Spécialisations",
+    description: "Consultez les compétences et identifiants de l’effectif.",
+    icon: BadgeCheck,
+    tone: "blue",
+  },
 };
 
 const THEME_OPTIONS = [
-  { id: "clair", label: "Aurore", mode: "light", accent: "#0b9078", deep: "#08625b", surface: "#e7f7f2", sidebarA: "#083c40", sidebarB: "#0b766d" },
-  { id: "sable", label: "Sable", mode: "light", accent: "#be6b2f", deep: "#7e3d14", surface: "#fff6e8", sidebarA: "#372317", sidebarB: "#72512a" },
-  { id: "rose", label: "Sakura", mode: "light", accent: "#ca4f7c", deep: "#88334f", surface: "#fff1f6", sidebarA: "#3b1b3f", sidebarB: "#742a5d" },
-  { id: "ocean", label: "Nord", mode: "light", accent: "#2475c9", deep: "#174c8a", surface: "#edf7ff", sidebarA: "#0b2d53", sidebarB: "#0b5c8e" },
+  { id: "clair", label: "Aurore", mode: "dark", accent: "#3caf93", deep: "#1f7565", surface: "#091b1b", sidebarA: "#071716", sidebarB: "#15443c" },
+  { id: "sable", label: "Sable", mode: "dark", accent: "#d59a58", deep: "#9d622b", surface: "#1b130d", sidebarA: "#21160e", sidebarB: "#50351c" },
+  { id: "rose", label: "Sakura", mode: "dark", accent: "#d76a96", deep: "#9d3e65", surface: "#1d1018", sidebarA: "#24101d", sidebarB: "#522241" },
+  { id: "ocean", label: "Nord", mode: "dark", accent: "#4b8ed9", deep: "#2b619f", surface: "#091624", sidebarA: "#0a1b30", sidebarB: "#123e65" },
   { id: "nuit", label: "Nuit", mode: "dark", accent: "#4d82e5", deep: "#284f9c", surface: "#081421", sidebarA: "#0b1a30", sidebarB: "#0d223e" },
   { id: "foret", label: "Forêt", mode: "dark", accent: "#48ba78", deep: "#237247", surface: "#071c15", sidebarA: "#0a261b", sidebarB: "#174b32" },
   { id: "cyberpunk", label: "Cyberpunk", mode: "dark", accent: "#ff45c7", deep: "#a4198c", surface: "#160b22", sidebarA: "#210b31", sidebarB: "#5c1257" },
@@ -513,6 +525,8 @@ function UserModal({ actor, editing, onClose, onSave }) {
             <div><label>Nom <span className="optional">(facultatif)</span></label><input value={form.lastName} onChange={(e) => set("lastName", e.target.value)} /></div>
           </div>
           <label>Compte Discord</label><div className="readonly-grade"><span>{form.discordUsername || "Compte Discord lié"}</span><small>Identité vérifiée par Discord.</small></div>
+          <div className="form-grid identity-fields"><div><label>Steam ID 64</label><input value={form.steamId64 || ""} onChange={(e) => set("steamId64", e.target.value.replace(/\D/g, ""))} inputMode="numeric" minLength={17} maxLength={17} placeholder="17 chiffres" /></div><div><label>Discord ID</label><input value={form.discordContactId || form.discordId || ""} onChange={(e) => set("discordContactId", e.target.value.replace(/\D/g, ""))} inputMode="numeric" minLength={17} maxLength={20} placeholder="17 à 20 chiffres" /></div></div>
+          <section className="specialization-fields"><p className="eyebrow dark">SPÉCIALISATIONS</p><div>{SPECIALIZATION_GROUPS.map((group) => <label key={group.key}>{group.shortLabel || group.label}<select value={form[group.key] || "Aucune"} onChange={(e) => set(group.key, e.target.value)}>{group.options.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>)}</div></section>
           <label>Grade</label><select value={form.grade || GRADES[0]} onChange={(e) => set("grade", e.target.value)} required>{GRADES.map((grade) => <option key={grade} value={grade}>{grade}</option>)}</select>
           <label>Niveau d’accès</label>
           <select value={form.role} onChange={(e) => set("role", e.target.value)} disabled={editing && !allowedRoles.includes(editing.role)}>
@@ -546,10 +560,49 @@ function ProfileModal({ user, onClose, onSave, soundEnabled, onSoundEnabledChang
         <form onSubmit={submit}>
           <div className="form-grid"><div><label>Prénom</label><input value={form.firstName} onChange={(event) => set("firstName", event.target.value)} required /></div><div><label>Nom <span className="optional">(facultatif)</span></label><input value={form.lastName} onChange={(event) => set("lastName", event.target.value)} /></div></div>
           <label>Compte Discord</label><div className="readonly-grade"><span>{user.discordUsername || "Compte Discord lié"}</span><small>La connexion est gérée par Discord.</small></div>
+          <div className="form-grid identity-fields"><div><label>Steam ID 64</label><input value={form.steamId64 || ""} onChange={(event) => set("steamId64", event.target.value.replace(/\D/g, ""))} inputMode="numeric" minLength={17} maxLength={17} placeholder="17 chiffres" /></div><div><label>Discord ID</label><input value={form.discordContactId || form.discordId || ""} onChange={(event) => set("discordContactId", event.target.value.replace(/\D/g, ""))} inputMode="numeric" minLength={17} maxLength={20} placeholder="17 à 20 chiffres" /></div></div>
+          <section className="specialization-fields"><p className="eyebrow dark">MES SPÉCIALISATIONS</p><div>{SPECIALIZATION_GROUPS.map((group) => <label key={group.key}>{group.shortLabel || group.label}<select value={form[group.key] || "Aucune"} onChange={(event) => set(group.key, event.target.value)}>{group.options.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>)}</div></section>
           <label>Grade</label>{hasAdminAccess(user.role) ? <select value={form.grade || GRADES[0]} onChange={(event) => set("grade", event.target.value)} required>{GRADES.map((grade) => <option key={grade} value={grade}>{grade}</option>)}</select> : <div className="readonly-grade"><span>{user.grade || GRADES[0]}</span><small>Le grade est géré par un Admin ou une Gérance.</small></div>}
           <label>Niveau d’accès</label><div className="readonly-role"><RoleBadge role={user.role} /><span>Ce niveau est géré par un responsable.</span></div>
           <section className="profile-preferences"><p className="eyebrow dark">PARAMÈTRES</p><label className="preference-toggle"><span className="preference-icon">{soundEnabled ? <Volume2 size={19} /> : <VolumeX size={19} />}</span><span><strong>Sons de l’interface</strong><small>{soundEnabled ? "Des sons discrets sont joués lors des clics." : "Les sons sont désactivés sur cet appareil."}</small></span><input type="checkbox" checked={soundEnabled} onChange={(event) => onSoundEnabledChange(event.target.checked)} aria-label="Activer les sons de l’interface" /><i aria-hidden="true"><span /></i></label></section>
           <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Annuler</button><button type="submit" className="primary" disabled={saving}>{saving ? "Sécurisation…" : "Enregistrer mon profil"}</button></div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function InitialIdentityModal({ user, onSave }) {
+  const [form, setForm] = useState(() => ({ steamId64: user.steamId64 || "", discordContactId: user.discordContactId || user.discordId || "" }));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+
+  async function submit(event) {
+    event.preventDefault();
+    const steamId64 = String(form.steamId64 || "").replace(/\D/g, "");
+    const discordContactId = String(form.discordContactId || "").replace(/\D/g, "");
+    if (!/^\d{17}$/.test(steamId64)) { setError("Le Steam ID 64 doit contenir exactement 17 chiffres."); return; }
+    if (!/^\d{17,20}$/.test(discordContactId)) { setError("L’identifiant Discord doit contenir entre 17 et 20 chiffres."); return; }
+    setSaving(true);
+    setError("");
+    try { await onSave({ steamId64, discordContactId }); }
+    catch (saveError) { setError(saveError instanceof Error ? saveError.message : "La sauvegarde est temporairement indisponible."); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <div className="modal-backdrop identity-setup-backdrop">
+      <div className="modal identity-setup-modal" role="dialog" aria-modal="true" aria-labelledby="identity-setup-title">
+        <p className="eyebrow dark">PREMIÈRE CONNEXION</p>
+        <h2 id="identity-setup-title">Complétez votre profil</h2>
+        <p className="muted">Ces informations sont nécessaires pour apparaître dans l’effectif. Elles restent modifiables depuis votre profil.</p>
+        <form onSubmit={submit}>
+          <label>Steam ID 64</label><input value={form.steamId64} onChange={(event) => set("steamId64", event.target.value.replace(/\D/g, ""))} inputMode="numeric" minLength={17} maxLength={17} required placeholder="17 chiffres" autoFocus />
+          <label>Discord ID</label><input value={form.discordContactId} onChange={(event) => set("discordContactId", event.target.value.replace(/\D/g, ""))} inputMode="numeric" minLength={17} maxLength={20} required placeholder="17 à 20 chiffres" />
+          <p className="identity-setup-note">Votre Discord ID est prérempli grâce à votre connexion Discord. Vérifiez-le avant de continuer.</p>
+          {error && <p className="form-error">{error}</p>}
+          <div className="modal-actions"><button type="submit" className="primary" disabled={saving}>{saving ? "Enregistrement…" : "Accéder au portail"}</button></div>
         </form>
       </div>
     </div>
@@ -600,8 +653,30 @@ function WorkforcePanel({ users, quotas }) {
   return (
     <div className="workforce-directory">
       <section className="workforce-summary"><div><p className="eyebrow dark">VUE D’ENSEMBLE</p><h2>Effectif du portail</h2><p>Les membres sont classés automatiquement par niveau d’accès puis du grade le plus élevé au plus bas.</p></div><div><span><strong>{approvedUsers.length}</strong> membres</span><span><strong>{approvedUsers.filter((user) => user.presence === "absent").length}</strong> absents</span><span><strong>{approvedUsers.filter((user) => user.blocked).length}</strong> bloqués</span></div></section>
-      <div className="workforce-groups">{groups.map((group) => <section className={`workforce-group ${ROLES[group.role].tone}`} key={group.role}><header><div><RoleBadge role={group.role} /><span>{roleDescriptions[group.role]}</span></div><strong>{group.users.length}</strong></header><div className="workforce-list">{group.users.map((user) => { const quota = quotaState(user); const concerned = ["senior", "officer"].includes(user.role); return <article key={user.id}><Avatar user={user} /><div className="workforce-name"><strong>{user.grade || GRADES[0]} {user.firstName} {user.lastName}</strong><small>{ROLES[user.role].label}</small></div><span className={`workforce-presence ${concerned ? user.presence === "absent" ? "absent" : "present" : "neutral"}`}>{user.blocked ? "Compte bloqué" : concerned ? user.presence === "absent" ? "Absent" : "Présent" : "Actif"}</span><span className={`workforce-quota ${quota.tone}`}><Gauge size={14} /> {quota.label}</span></article>; })}{!group.users.length && <p className="workforce-empty">Aucun membre dans cette catégorie.</p>}</div></section>)}</div>
+      <div className="workforce-groups">{groups.map((group) => <section className={`workforce-group ${ROLES[group.role].tone}`} key={group.role}><header><div><RoleBadge role={group.role} /><span>{roleDescriptions[group.role]}</span></div><strong>{group.users.length}</strong></header><div className="workforce-list">{group.users.map((user) => { const quota = quotaState(user); const concerned = ["senior", "officer"].includes(user.role); return <article key={user.id}><Avatar user={user} /><div className="workforce-name"><strong>{user.grade || GRADES[0]} {user.firstName} {user.lastName}</strong><small>{ROLES[user.role].label}</small><small className="workforce-ids">Steam : {user.steamId64 || "Non renseigné"}<br />Discord : {user.discordContactId || "Non renseigné"}</small></div><span className={`workforce-presence ${concerned ? user.presence === "absent" ? "absent" : "present" : "neutral"}`}>{user.blocked ? "Compte bloqué" : concerned ? user.presence === "absent" ? "Absent" : "Présent" : "Actif"}</span><span className={`workforce-quota ${quota.tone}`}><Gauge size={14} /> {quota.label}</span></article>; })}{!group.users.length && <p className="workforce-empty">Aucun membre dans cette catégorie.</p>}</div></section>)}</div>
     </div>
+  );
+}
+
+function SpecializationBadge({ group, value }) {
+  const selected = group.options.includes(value) ? value : "Aucune";
+  return <span className={`specialization-badge ${group.tone} ${selected === "Aucune" ? "none" : ""}`}>{selected}</span>;
+}
+
+function SpecializationsPanel({ users: suppliedUsers }) {
+  const [remoteUsers, setRemoteUsers] = useState([]);
+  useEffect(() => {
+    if (Array.isArray(suppliedUsers)) return;
+    accountRequest("/api/auth/users").then((result) => setRemoteUsers(Array.isArray(result.users) ? result.users : [])).catch(() => setRemoteUsers([]));
+  }, [suppliedUsers]);
+  const users = Array.isArray(suppliedUsers) ? suppliedUsers : remoteUsers;
+  const members = users.filter((user) => user.approvalStatus === "approved").sort(compareUsersByGrade);
+  const specialists = members.filter((user) => SPECIALIZATION_GROUPS.some((group) => (user[group.key] || "Aucune") !== "Aucune"));
+  return (
+    <section className="specializations-card">
+      <div className="specializations-head"><div><p className="eyebrow dark">RÉFÉRENT SO</p><h2>Spécialisations</h2><p className="muted">Répartition des compétences par membre. Les modifications se font depuis le profil ou la gestion du compte.</p></div><span><BadgeCheck size={16} /><strong>{specialists.length}</strong> spécialisé{specialists.length > 1 ? "s" : ""}</span></div>
+      <div className="table-wrap"><table className="specializations-table"><thead><tr><th>Membre</th><th>Grade</th>{SPECIALIZATION_GROUPS.map((group) => <th key={group.key}>{group.shortLabel || group.label}</th>)}<th>Steam ID 64</th><th>Discord ID</th></tr></thead><tbody>{members.map((user) => <tr key={user.id}><td><div className="user-cell"><Avatar user={user} size="small" /><div><strong>{user.firstName} {user.lastName}</strong><small>{ROLES[user.role].label}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td>{SPECIALIZATION_GROUPS.map((group) => <td key={group.key}><SpecializationBadge group={group} value={user[group.key]} /></td>)}<td><code>{user.steamId64 || "Non renseigné"}</code></td><td><code>{user.discordContactId || "Non renseigné"}</code></td></tr>)}{!members.length && <tr><td colSpan={8} className="empty-presence">Aucun membre à afficher.</td></tr>}</tbody></table></div>
+    </section>
   );
 }
 
@@ -1270,7 +1345,12 @@ function SergeantReportPanel({ users, session, assignments, onSuccess, history, 
   );
 }
 
-function TransmissionPanel({ session, onSuccess, type, history, canManageHistory, onResetHistory, onEditHistory, onDeleteHistory }) {
+function TransmissionPanel({ type, ...props }) {
+  if (type === "specializations") return <SpecializationsPanel />;
+  return <StandardTransmissionPanel type={type} {...props} />;
+}
+
+function StandardTransmissionPanel({ session, onSuccess, type, history, canManageHistory, onResetHistory, onEditHistory, onDeleteHistory }) {
   const defaultAuthor = `${session.firstName} ${session.lastName}`;
   const initialDraft = readFormDraft(session.id, type);
   const [form, setForm] = useState(() => ({ aitName: "", author: defaultAuthor, reason: "", observation: "positive", ...(initialDraft?.values || {}) }));
@@ -2112,9 +2192,23 @@ function App() {
       flash("Votre profil a bien été mis à jour.");
     } catch (error) { flash(error instanceof Error ? error.message : "Votre profil n’a pas pu être modifié."); }
   }
+  async function saveRequiredIdentity(form) {
+    const steamId64 = String(form.steamId64 || "").replace(/\D/g, "");
+    const discordContactId = String(form.discordContactId || "").replace(/\D/g, "");
+    if (!/^\d{17}$/.test(steamId64)) throw new Error("Le Steam ID 64 doit contenir exactement 17 chiffres.");
+    if (!/^\d{17,20}$/.test(discordContactId)) throw new Error("L’identifiant Discord doit contenir entre 17 et 20 chiffres.");
+    const result = await accountRequest("/api/auth/users", "PATCH", { ...session, ...form, id: session.id, steamId64, discordContactId });
+    const refreshedUsers = Array.isArray(result.users) ? result.users : [];
+    const refreshedSession = result.session || refreshedUsers.find((user) => user.id === session.id) || session;
+    setUsers(refreshedUsers);
+    setSession(refreshedSession);
+    addLog("profile", "Identifiants de profil renseignés", `${session.firstName} ${session.lastName}`);
+    flash("Votre profil est complet. Bienvenue sur le portail.");
+  }
 
   if (!ready) return null;
   if (!session) return <Login configurationError={configurationError} error={loginError} />;
+  const requiresIdentitySetup = !loginTransition && (!/^\d{17}$/.test(String(session.steamId64 || "")) || !/^\d{17,20}$/.test(String(session.discordContactId || "")));
 
   return (
     <div className="app-shell">
@@ -2123,7 +2217,7 @@ function App() {
         <nav>
           <button className={`menu-item standalone-nav ${activeSection === "home" ? "active" : ""}`} onClick={() => setActiveSection("home")}><Home size={18} /> Accueil</button>
         {hasAdminAccess(session.role) && <MenuGroup title="Admin" icon={ShieldCheck} open={openGroups.admin} onToggle={() => toggleGroup("admin")}><button className={`menu-item ${activeSection === "dashboard" ? "active" : ""}`} onClick={() => setActiveSection("dashboard")}><LayoutDashboard size={17} /> Tableau de bord</button></MenuGroup>}
-        {hasManagerAccess(session.role) && <MenuGroup title="Référent SO" icon={UsersRound} open={openGroups.referent} onToggle={() => toggleGroup("referent")}><button className={`menu-item ${activeSection === "workforce" ? "active" : ""}`} onClick={() => setActiveSection("workforce")}><UsersRound size={17} /> Effectif</button><button className={`menu-item ${activeSection === "presence" ? "active" : ""}`} onClick={() => setActiveSection("presence")}><UserCheck size={17} /> Présences</button><button className={`menu-item ${activeSection === "quotas" ? "active" : ""}`} onClick={() => setActiveSection("quotas")}><Gauge size={17} /> Quotas</button></MenuGroup>}
+        {hasManagerAccess(session.role) && <MenuGroup title="Référent SO" icon={UsersRound} open={openGroups.referent} onToggle={() => toggleGroup("referent")}><button className={`menu-item ${activeSection === "workforce" ? "active" : ""}`} onClick={() => setActiveSection("workforce")}><UsersRound size={17} /> Effectif</button><button className={`menu-item ${activeSection === "specializations" ? "active" : ""}`} onClick={() => setActiveSection("specializations")}><BadgeCheck size={17} /> Spécialisations</button><button className={`menu-item ${activeSection === "presence" ? "active" : ""}`} onClick={() => setActiveSection("presence")}><UserCheck size={17} /> Présences</button><button className={`menu-item ${activeSection === "quotas" ? "active" : ""}`} onClick={() => setActiveSection("quotas")}><Gauge size={17} /> Quotas</button></MenuGroup>}
           <MenuGroup title="Globale" icon={Send} open={openGroups.global} onToggle={() => toggleGroup("global")}><button className={`menu-item ${activeSection === "summary" ? "active" : ""}`} onClick={() => setActiveSection("summary")}><BarChart3 size={17} /> Résumé</button><button className={`menu-item ${activeSection === "recommendation" ? "active" : ""}`} onClick={() => setActiveSection("recommendation")}><Medal size={17} /> Recommandation</button><button className={`menu-item ${activeSection === "pcs_exp" ? "active" : ""}`} onClick={() => setActiveSection("pcs_exp")}><ClipboardCheck size={17} /> Recommandation PCS EXP</button><button className={`menu-item ${activeSection === "observation_hdr" ? "active" : ""}`} onClick={() => setActiveSection("observation_hdr")}><MessageSquareText size={17} /> Observation HDR</button><button className={`menu-item ${activeSection === "mission_internal" ? "active" : ""}`} onClick={() => setActiveSection("mission_internal")}><FileText size={17} /> Mission interne</button></MenuGroup>
         {hasSeniorAccess(session.role) && <MenuGroup title="Sous-Officier Supérieur" icon={BadgeCheck} open={openGroups.senior} onToggle={() => toggleGroup("senior")}><button className={`menu-item ${activeSection === "sergeant_assignments" ? "active" : ""}`} onClick={() => setActiveSection("sergeant_assignments")}><UsersRound size={17} /> Référent</button><button className={`menu-item ${activeSection === "observation_so" ? "active" : ""}`} onClick={() => setActiveSection("observation_so")}><MessageSquareText size={17} /> Observation SO</button><button className={`menu-item ${activeSection === "sergeant_report" ? "active" : ""}`} onClick={() => setActiveSection("sergeant_report")}><FileText size={17} /> Rapport nouveau SO</button></MenuGroup>}
           <MenuGroup title="Chat" icon={MessageSquareText} open={openGroups.chat} onToggle={() => toggleGroup("chat")}><button className={`menu-item ${activeSection === "chat" ? "active" : ""}`} onClick={() => setActiveSection("chat")}><Send size={17} /> Messagerie</button></MenuGroup>
@@ -2137,8 +2231,8 @@ function App() {
       </aside>
 
       <main className="content">
-        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{hasAdminAccess(session.role) && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{hasManagerAccess(session.role) && <optgroup label="Référent SO"><option value="workforce">Effectif</option><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="summary">Résumé</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{hasSeniorAccess(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="sergeant_assignments">Référent</option><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{hasManagerAccess(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
-        {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "workforce" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Effectif</h1><p className="muted">Consultez l’organisation complète des membres par accès et par grade.</p></div><span className="referent-access"><UsersRound size={16} /> Vue des effectifs</span></header> : activeSection === "sergeant_assignments" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Référent</h1><p className="muted">Attribuez et suivez les référents des nouveaux Sergents.</p></div><span className="senior-access"><BadgeCheck size={16} /> Suivi des semaines de test</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Validez les demandes Discord et gardez une vue claire sur votre équipe.</p></div><span className="all-access"><MessageSquareText size={16} /> Connexion Discord</span></header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
+        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{hasAdminAccess(session.role) && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{hasManagerAccess(session.role) && <optgroup label="Référent SO"><option value="workforce">Effectif</option><option value="specializations">Spécialisations</option><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="summary">Résumé</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{hasSeniorAccess(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="sergeant_assignments">Référent</option><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{hasManagerAccess(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
+        {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "workforce" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Effectif</h1><p className="muted">Consultez l’organisation complète des membres par accès et par grade.</p></div><span className="referent-access"><UsersRound size={16} /> Vue des effectifs</span></header> : activeSection === "specializations" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Spécialisations</h1><p className="muted">Consultez les spécialités, Steam ID et Discord ID de l’effectif.</p></div><span className="referent-access"><BadgeCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "sergeant_assignments" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Référent</h1><p className="muted">Attribuez et suivez les référents des nouveaux Sergents.</p></div><span className="senior-access"><BadgeCheck size={16} /> Suivi des semaines de test</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Validez les demandes Discord et gardez une vue claire sur votre équipe.</p></div><span className="all-access"><MessageSquareText size={16} /> Connexion Discord</span></header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
         {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={setActiveSection} onDismissNotification={dismissPortalNotification} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} submissions={submissionHistory} activityResetAt={summarySettings.activityResetAt} rankingResetAt={summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} onResetRanking={resetActivityRanking} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
         <section className="stats">
@@ -2156,6 +2250,7 @@ function App() {
       {notice && <div className="toast"><BadgeCheck size={19} />{notice}</div>}
       {modal && <UserModal actor={session} editing={modal.id ? modal : null} onClose={() => setModal(null)} onSave={saveUser} />}
       {profileOpen && <ProfileModal user={session} onClose={() => setProfileOpen(false)} onSave={saveProfile} soundEnabled={soundEnabled} onSoundEnabledChange={setSoundEnabled} />}
+      {requiresIdentitySetup && <InitialIdentityModal user={session} onSave={saveRequiredIdentity} />}
       {loginTransition && <LoginTransition user={loginTransition} />}
     </div>
   );
