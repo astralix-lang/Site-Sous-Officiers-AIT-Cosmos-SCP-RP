@@ -29,7 +29,7 @@ function errorResponse(error) {
   return json({ error: "La modification du compte a echoue." }, 500);
 }
 
-function identityPayload(body, role, existing, canChangeGrade) {
+function identityPayload(body, role, existing, canChangeGrade, canChangeSpecializations) {
   const firstName = cleanName(body?.firstName ?? existing.first_name);
   const lastName = cleanName(body?.lastName ?? existing.last_name);
   const requestedGrade = cleanGrade(body?.grade);
@@ -41,7 +41,7 @@ function identityPayload(body, role, existing, canChangeGrade) {
   if (discordContactId && !DISCORD_ID.test(discordContactId)) return { error: "L’identifiant Discord doit contenir entre 17 et 20 chiffres." };
   const specializations = {};
   for (const [key, definition] of Object.entries(SPECIALIZATION_FIELDS)) {
-    const requested = body?.[key] ?? existing[definition.column] ?? "Aucune";
+    const requested = canChangeSpecializations ? (body?.[key] ?? existing[definition.column] ?? "Aucune") : (existing[definition.column] ?? "Aucune");
     specializations[definition.column] = definition.values.has(requested) ? requested : "Aucune";
   }
   return {
@@ -93,7 +93,7 @@ export async function PATCH(request) {
     const requestedRole = cleanRole(body?.role);
     const role = self ? target.role : (allowedRoles(current.user).has(requestedRole) ? requestedRole : target.role);
     const canChangeGrade = self ? adminAccess(current.user) : manager(current.user);
-    const identity = identityPayload(body, role, target, canChangeGrade);
+    const identity = identityPayload(body, role, target, canChangeGrade, !self || manager(current.user));
     if (identity.error) return json({ error: identity.error }, 400);
     const approvalStatus = self ? targetStatus : (requestedStatus || targetStatus);
     identity.value.approval_status = approvalStatus;
