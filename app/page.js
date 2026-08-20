@@ -109,6 +109,12 @@ const REPORT_CONCLUSIONS = [
   "Retour caporal-chef",
 ];
 
+function observationQuotaCount(counts) {
+  const sharedCount = Number(counts?.observations);
+  if (Number.isFinite(sharedCount)) return Math.max(0, sharedCount);
+  return Math.max(0, Number(counts?.observation_hdr) || 0) + Math.max(0, Number(counts?.observation_so) || 0);
+}
+
 const ATTACHMENT_TYPE_BY_EXTENSION = {
   png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif",
   pdf: "application/pdf", txt: "text/plain", doc: "application/msword",
@@ -544,7 +550,7 @@ function WorkforcePanel({ users, quotas }) {
     if (user.presence === "absent") return { label: "Absent", tone: "absent", completed: 0 };
     if (quotas.exemptions?.[user.id]) return { label: "Exempté", tone: "exempt", completed: 4 };
     const counts = quotas.counts?.[user.id] || {};
-    const values = { recommendation: counts.recommendation || 0, pcs_exp: counts.pcs_exp || 0, observations: (counts.observation_hdr || 0) + (counts.observation_so || 0), mission_internal: counts.mission_internal || 0 };
+    const values = { recommendation: counts.recommendation || 0, pcs_exp: counts.pcs_exp || 0, observations: observationQuotaCount(counts), mission_internal: counts.mission_internal || 0 };
     const completed = Object.keys(targets).filter((key) => values[key] >= targets[key]).length;
     return { label: completed === 4 ? "Quota fait" : `${completed}/4 catégories`, tone: completed === 4 ? "done" : "progress", completed };
   }
@@ -590,7 +596,7 @@ function HomePanel({ session, users, missions, chats, quotas, logs, assignments,
   const mySergeantReferent = mySergeantAssignment ? users.find((user) => user.id === mySergeantAssignment.observerId) : null;
   const targets = { ...DEFAULT_QUOTAS.targets, ...quotas.targets };
   const counts = quotas.counts?.[session.id] || {};
-  const categoryCounts = { recommendation: counts.recommendation || 0, pcs_exp: counts.pcs_exp || 0, observations: (counts.observation_hdr || 0) + (counts.observation_so || 0), mission_internal: counts.mission_internal || 0 };
+  const categoryCounts = { recommendation: counts.recommendation || 0, pcs_exp: counts.pcs_exp || 0, observations: observationQuotaCount(counts), mission_internal: counts.mission_internal || 0 };
   const completedQuotaCategories = Object.keys(targets).filter((category) => categoryCounts[category] >= targets[category]).length;
   const quotaItems = [
     { key: "recommendation", label: "Recommandations", icon: <Medal size={17} /> },
@@ -657,7 +663,7 @@ function HomePanel({ session, users, missions, chats, quotas, logs, assignments,
   );
 }
 
-function SummaryPanel({ session, users, logs, activityResetAt, onResetActivity }) {
+function SummaryPanel({ session, users, logs, activityResetAt, rankingResetAt, onResetActivity, onResetRanking }) {
   const [period, setPeriod] = useState("week");
   const [scope, setScope] = useState("global");
   const allSeries = [
@@ -693,7 +699,8 @@ function SummaryPanel({ session, users, logs, activityResetAt, onResetActivity }
   const totalForBin = (bin) => visibleSeries.reduce((total, series) => total + bin.counts[series.subtype], 0);
   const busiestBin = chartBins.reduce((best, bin) => totalForBin(bin) > totalForBin(best) ? bin : best, chartBins[0]);
   const team = users.filter((user) => user.approvalStatus === "approved" && ["senior", "officer"].includes(user.role));
-  const rankingFloor = resetDate && !Number.isNaN(resetDate.getTime()) ? new Date(Math.max(periodData.start.getTime(), resetDate.getTime())) : periodData.start;
+  const rankingResetDate = rankingResetAt ? new Date(rankingResetAt) : null;
+  const rankingFloor = rankingResetDate && !Number.isNaN(rankingResetDate.getTime()) ? new Date(Math.max(periodData.start.getTime(), rankingResetDate.getTime())) : periodData.start;
   const rankingActivity = allActivity.filter((entry) => entry.date >= rankingFloor && entry.date <= periodData.end);
   const ranking = team.map((user) => {
     const entries = rankingActivity.filter((entry) => entry.actorId === user.id);
@@ -708,12 +715,12 @@ function SummaryPanel({ session, users, logs, activityResetAt, onResetActivity }
 
   return (
     <div className="summary-dashboard">
-      <section className="summary-toolbar"><div><p className="eyebrow dark">PÉRIODE ANALYSÉE</p><h2>{periodLabels[period]}</h2><p>Les données sont calculées à partir des transmissions enregistrées sur le portail.</p></div><div className="summary-controls"><label>Affichage<select value={scope} onChange={(event) => setScope(event.target.value)}><option value="global">Vue globale</option><option value="self">Moi uniquement</option></select></label><label>Période<select value={period} onChange={(event) => setPeriod(event.target.value)}><option value="day">Jour</option><option value="week">Semaine</option><option value="month">Mois</option><option value="year">Année</option></select></label>{canReset && <button className="summary-reset-button" onClick={onResetActivity}><RotateCcw size={16} /> Reset graphiques</button>}</div></section>
+      <section className="summary-toolbar"><div><p className="eyebrow dark">PÉRIODE ANALYSÉE</p><h2>{periodLabels[period]}</h2><p>Les données sont calculées à partir des transmissions enregistrées sur le portail.</p></div><div className="summary-controls"><label>Affichage<select value={scope} onChange={(event) => setScope(event.target.value)}><option value="global">Vue globale</option><option value="self">Moi uniquement</option></select></label><label>Période<select value={period} onChange={(event) => setPeriod(event.target.value)}><option value="day">Jour</option><option value="week">Semaine</option><option value="month">Mois</option><option value="year">Année</option></select></label>{canReset && <><button className="summary-reset-button" onClick={onResetActivity}><RotateCcw size={16} /> Reset graphiques</button><button className="summary-reset-button" onClick={onResetRanking}><Trophy size={16} /> Reset classement</button></>}</div></section>
       <section className="summary-kpis"><article><span className="summary-kpi-icon blue"><BarChart3 size={20} /></span><div><strong>{currentActivity.length}</strong><small>Transmissions</small></div><em className={trend >= 0 ? "positive" : "negative"}><TrendingUp size={13} /> {trend >= 0 ? "+" : ""}{trend}%</em></article>{visibleSeries.map((series) => { const SeriesIcon = series.icon; return <article key={series.subtype}><span className={`summary-kpi-icon ${series.kpiTone}`}><SeriesIcon size={20} /></span><div><strong>{counts[series.subtype]}</strong><small>{series.label}</small></div></article>; })}<article><span className="summary-kpi-icon green"><UsersRound size={20} /></span><div><strong>{activeMembers}</strong><small>Membres actifs</small></div></article></section>
       <div className="summary-grid">
         <section className="summary-card activity-chart-card"><div className="summary-card-head"><div><p className="eyebrow dark">ÉVOLUTION</p><h2>Activité détaillée par catégorie</h2></div><div className="chart-legend">{visibleSeries.map((series) => <span key={series.subtype}><i className={series.tone} /> {series.shortLabel}</span>)}</div></div><div className="activity-chart">{chartBins.map((bin, index) => <div className="activity-column" key={`${bin.label}-${index}`}><div className="activity-bars">{visibleSeries.map((series) => { const value = bin.counts[series.subtype]; return <span className={`series-bar ${series.tone}`} key={series.subtype} title={`${series.label} : ${value}`} style={{ height: `${value ? Math.max((value / chartMaximum) * 100, 7) : 2}%` }} />; })}</div><span>{bin.label}</span></div>)}</div><div className="chart-insight"><CalendarDays size={16} /><span>Période la plus active : <strong>{busiestBin?.label || "—"}</strong></span></div></section>
         <section className="summary-card distribution-card"><div className="summary-card-head"><div><p className="eyebrow dark">RÉPARTITION</p><h2>Volumes détaillés</h2><p>Chaque catégorie est comptée séparément.</p></div></div><div className="distribution-details detailed">{visibleSeries.map((series) => <div key={series.subtype}><span><i className={series.tone} /><span>{series.label}<small>{counts[series.subtype]} transmission{counts[series.subtype] > 1 ? "s" : ""}</small></span></span><strong>{currentActivity.length ? Math.round((counts[series.subtype] / currentActivity.length) * 100) : 0}%</strong></div>)}</div></section>
-        <section className="summary-card ranking-card"><div className="summary-card-head"><div><p className="eyebrow dark">CLASSEMENT</p><h2>Sous-Officiers les plus actifs</h2><p>Activité détaillée depuis le dernier reset.</p></div></div><div className="ranking-list">{ranking.map((item, index) => <article key={item.user.id}><span className={`rank-position rank-${index + 1}`}>{index < 3 ? <Trophy size={15} /> : index + 1}</span><Avatar user={item.user} size="small" /><div className="rank-member"><strong>{item.user.grade} {item.user.firstName} {item.user.lastName}</strong><small>{visibleSeries.map((series) => `${series.shortLabel} : ${item.counts[series.subtype]}`).join(" · ")}</small><div><i style={{ width: `${(item.total / rankingMaximum) * 100}%` }} /></div></div><strong className="rank-score">{item.total}</strong></article>)}</div>{activityResetAt && <p className="ranking-reset-date">Compteurs réinitialisés le {new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(activityResetAt))}</p>}</section>
+        <section className="summary-card ranking-card"><div className="summary-card-head"><div><p className="eyebrow dark">CLASSEMENT</p><h2>Sous-Officiers les plus actifs</h2><p>Activité détaillée depuis le dernier reset du classement.</p></div></div><div className="ranking-list">{ranking.map((item, index) => <article key={item.user.id}><span className={`rank-position rank-${index + 1}`}>{index < 3 ? <Trophy size={15} /> : index + 1}</span><Avatar user={item.user} size="small" /><div className="rank-member"><strong>{item.user.grade} {item.user.firstName} {item.user.lastName}</strong><small>{visibleSeries.map((series) => `${series.shortLabel} : ${item.counts[series.subtype]}`).join(" · ")}</small><div><i style={{ width: `${(item.total / rankingMaximum) * 100}%` }} /></div></div><strong className="rank-score">{item.total}</strong></article>)}</div>{rankingResetAt && <p className="ranking-reset-date">Classement réinitialisé le {new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(rankingResetAt))}</p>}</section>
         <section className="summary-card arrivals-card"><div className="summary-card-head"><div><p className="eyebrow dark">EFFECTIFS</p><h2>Arrivées de Sous-Officiers</h2><p>{arrivals.length} arrivée{arrivals.length > 1 ? "s" : ""} sur la période.</p></div><span><UsersRound size={17} /> {team.length} membres</span></div><div className="arrivals-chart">{arrivalBins.map((bin, index) => <div key={`${bin.label}-${index}`}><i title={`${bin.count} arrivée(s)`} style={{ height: `${bin.count ? Math.max((bin.count / arrivalMaximum) * 100, 9) : 3}%` }}><b>{bin.count || ""}</b></i><span>{bin.label}</span></div>)}</div></section>
       </div>
     </div>
@@ -758,7 +765,7 @@ function QuotaPanel({ users, quotas, onTargetChange, onReset, onToggleExemption 
           const counts = quotas.counts?.[user.id] || {};
           const isAbsent = user.presence === "absent";
           const isExempted = quotas.exemptions?.[user.id] === true;
-          const categoryCounts = { recommendation: counts.recommendation || 0, pcs_exp: counts.pcs_exp || 0, observations: (counts.observation_hdr || 0) + (counts.observation_so || 0), mission_internal: counts.mission_internal || 0 };
+          const categoryCounts = { recommendation: counts.recommendation || 0, pcs_exp: counts.pcs_exp || 0, observations: observationQuotaCount(counts), mission_internal: counts.mission_internal || 0 };
           const completed = Object.keys(targets).every((category) => categoryCounts[category] >= targets[category]);
           const quotaCell = (category, detail = "") => {
             const count = categoryCounts[category];
@@ -1612,11 +1619,18 @@ function App() {
     flash("Vos raccourcis ont bien été enregistrés.");
   }
   function resetActivitySummary() {
-    if (!hasAdminAccess(session.role) || !confirm("Réinitialiser les compteurs de recommandations, d’observations et le classement ?")) return;
+    if (!hasAdminAccess(session.role) || !confirm("Réinitialiser les graphiques de recommandations et d’observations ? Le classement restera inchangé.")) return;
     const activityResetAt = new Date().toISOString();
-    setSummarySettings((current) => ({ ...current, activityResetAt, rankingResetAt: activityResetAt }));
-    addLog("summary", "Statistiques d’activité réinitialisées", "Recommandations, observations et classement remis à zéro.");
+    setSummarySettings((current) => ({ ...current, activityResetAt }));
+    addLog("summary", "Graphiques d’activité réinitialisés", "Recommandations et observations remises à zéro.");
     flash("Les statistiques d’activité ont été réinitialisées.");
+  }
+  function resetActivityRanking() {
+    if (!hasAdminAccess(session.role) || !confirm("Réinitialiser uniquement le classement des Sous-Officiers les plus actifs ?")) return;
+    const rankingResetAt = new Date().toISOString();
+    setSummarySettings((current) => ({ ...current, rankingResetAt }));
+    addLog("summary", "Classement d’activité réinitialisé", "Le classement repart à zéro sans modifier les graphiques.");
+    flash("Le classement des Sous-Officiers a été réinitialisé.");
   }
   function flash(message) { setNotice(message); window.setTimeout(() => setNotice(""), 2500); }
   function recordSubmission(type, values) {
@@ -1704,7 +1718,6 @@ function App() {
       addLog("form", "Formulaire envoyé", TRANSMISSION_TYPES[type]?.title || type);
       addPortalNotification({ recipients: [session.id], title: `Formulaire envoyé — ${TRANSMISSION_TYPES[type]?.title || type}`, text: "Votre formulaire a été transmis sur Discord.", target: type });
     }
-    if (portalRemote) return;
     if (!QUOTA_TYPES.includes(type) || !["senior", "officer"].includes(session.role)) return;
     setQuotas((current) => {
       const userCounts = current.counts?.[session.id] || {};
@@ -2029,7 +2042,7 @@ function App() {
         <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{hasAdminAccess(session.role) && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{hasManagerAccess(session.role) && <optgroup label="Référent SO"><option value="workforce">Effectif</option><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="summary">Résumé</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{hasSeniorAccess(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="sergeant_assignments">Référent</option><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{hasManagerAccess(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
         {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "workforce" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Effectif</h1><p className="muted">Consultez l’organisation complète des membres par accès et par grade.</p></div><span className="referent-access"><UsersRound size={16} /> Vue des effectifs</span></header> : activeSection === "sergeant_assignments" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Référent</h1><p className="muted">Attribuez et suivez les référents des nouveaux Sergents.</p></div><span className="senior-access"><BadgeCheck size={16} /> Suivi des semaines de test</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Validez les demandes Discord et gardez une vue claire sur votre équipe.</p></div><span className="all-access"><MessageSquareText size={16} /> Connexion Discord</span></header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
-        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={setActiveSection} onDismissNotification={dismissPortalNotification} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} logs={auditLogs} activityResetAt={summarySettings.activityResetAt || summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
+        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={setActiveSection} onDismissNotification={dismissPortalNotification} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} logs={auditLogs} activityResetAt={summarySettings.activityResetAt} rankingResetAt={summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} onResetRanking={resetActivityRanking} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
         <section className="stats">
           <article><span className="stat-icon blue"><UsersRound /></span><div><strong>{users.length}</strong><small>Comptes au total</small></div><span className="trend">Tous niveaux</span></article>
           <article><span className="stat-icon gold"><UserRound /></span><div><strong>{users.filter((user) => user.approvalStatus === "pending").length}</strong><small>Demandes en attente</small></div><span className="trend">À valider</span></article>
