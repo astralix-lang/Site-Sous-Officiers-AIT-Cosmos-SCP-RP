@@ -1,3 +1,5 @@
+import { database, recordAuditLog, requireSession } from "../auth/_shared";
+
 export const runtime = "edge";
 
 const TYPE_CONFIG = {
@@ -110,11 +112,16 @@ export async function POST(request) {
 
     const config = TYPE_CONFIG[body?.type];
     if (!config) return json({ error: "Catégorie inconnue." }, 400);
+    const current = await requireSession(request);
+    if (current.error) return current.error;
+    const actor = current.user;
+    if (body.type === "sergeant_report" && actor.role !== "senior") return json({ error: "Seul le Sous-Officier Supérieur assigné peut envoyer ce rapport." }, 403);
     const webhookUrl = webhookFor(body.type);
     if (!webhookUrl || !validWebhookUrl(webhookUrl)) return json({ error: "Le salon Discord de cette catégorie n’est pas configuré." }, 503);
 
     let fields;
     let embedColor = config.color;
+    let storedValues;
     if (body.type === "sergeant_report") {
       const sergeantName = clean(body.values?.sergeantName, 100);
       const positivePoints = clean(body.values?.positivePoints, 950);
@@ -133,6 +140,7 @@ export async function POST(request) {
         { name: "🧭 Avis global", value: globalOpinion, inline: false },
         { name: `${conclusionIcon} Conclusion`, value: `**${conclusion}**`, inline: false },
       ];
+      storedValues = { sergeantName, positivePoints, negativePoints, globalOpinion, conclusion };
     } else {
       const aitName = clean(body.values?.aitName, 100);
       const author = clean(body.values?.author, 100);
@@ -148,6 +156,7 @@ export async function POST(request) {
           ? [{ name: "📌 Nature de l’observation", value: negative ? "❌ Négative" : "✅ Positive", inline: false }, { name: "📝 Raison", value: reason, inline: false }]
           : [{ name: "📝 Raison", value: reason, inline: false }]),
       ];
+      storedValues = { aitName, author, reason, ...(isObservation ? { observation: negative ? "negative" : "positive" } : {}) };
     }
 
     fields = fields.map((field, index) => ({
@@ -155,8 +164,8 @@ export async function POST(request) {
       name: `${field.name} :`,
       value: `\u200b\n${field.value}${index < fields.length - 1 ? "\n━━━━━━━━━━━━━━━━━━━━" : ""}`,
     }));
-    const senderName = clean(body.submittedBy?.name, 100) || "Utilisateur du portail";
-    const senderRole = clean(body.submittedBy?.role, 100);
+    const senderName = `${actor.first_name || ""} ${actor.last_name || ""}`.trim() || "Utilisateur du portail";
+    const senderRole = clean(actor.role, 100);
     const discordResponse = await fetch(webhookUrl, {
       method: "POST",
       // Cloudflare Workers n'accepte que "follow" ou "manual".
@@ -182,6 +191,37 @@ export async function POST(request) {
       console.error("Discord webhook rejected submission", discordResponse.status);
       return json({ error: "Discord n’a pas accepté le message. Réessayez dans un instant." }, 502);
     }
+    await database("portal_notifications", {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        id: crypto.randomUUID(),
+        recipient_ids: [actor.id],
+        kind: "info",
+        title: "Historique interne de formulaire",
+        body: JSON.stringify({
+          values: storedValues,
+          authorId: actor.id,
+          authorName: senderName,
+          authorGrade: clean(actor.grade, 60),
+          authorRole: clean(actor.role, 40),
+        }),
+        target: `__portal_submission_${body.type}`,
+      }),
+    });
+    await recordAuditLog({ actor, category: "form", action: "Formulaire envoyé", details: config.title });
+    await database("portal_notifications", {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        id: crypto.randomUUID(),
+        recipient_ids: [actor.id],
+        kind: "form",
+        title: `Formulaire envoyé — ${config.title.replace(/^\S+\s+/, "")}`,
+        body: "Votre formulaire a été transmis sur Discord.",
+        target: body.type,
+      }),
+    });
     return json({ ok: true });
   } catch (error) {
     console.error("Submission failed", error instanceof Error ? error.message : "Unknown error");

@@ -6,6 +6,12 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const MAX_MESSAGE_BYTES = 4 * 1024 * 1024;
 const MAX_ATTACHMENTS = 3;
 const MAX_ATTACHMENT_SIZE = 1024 * 1024;
+const SUBMISSION_TYPES = new Set(["recommendation", "pcs_exp", "observation_hdr", "observation_so", "sergeant_report"]);
+const QUOTA_CATEGORIES = new Set(["recommendation", "pcs_exp", "observations", "mission_internal"]);
+const DEFAULT_QUOTA_TARGETS = { recommendation: 1, pcs_exp: 1, observations: 1, mission_internal: 0 };
+const SUBMISSION_TARGET_PREFIX = "__portal_submission_";
+const QUOTA_SETTINGS_ID = "f51a7616-15ea-40c8-aac0-7e265c913521";
+const QUOTA_SETTINGS_TARGET = "__portal_quota_settings";
 const FILE_TYPES = new Set([
   "image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf", "text/plain",
   "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -16,6 +22,13 @@ const FILE_TYPES = new Set([
 function clean(value, max = 1000) {
   return typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, max) : "";
 }
+
+function numberInRange(value, minimum = 0, maximum = 100) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? Math.min(maximum, Math.max(minimum, parsed)) : minimum;
+}
+
+function objectValue(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
 
 function isManager(user) { return ["admin", "management", "referent"].includes(user?.role); }
 function parseArray(value) { return Array.isArray(value) ? value : []; }
@@ -76,13 +89,23 @@ function canReceive(row, userId) {
   return recipients === null || recipients === undefined || (Array.isArray(recipients) && recipients.includes(userId));
 }
 
+function canSeeNotification(row, user) {
+  // Les formulaires sont privés par défaut. Les responsables et les SO Sup
+  // disposent toutefois d'une vue de supervision complète.
+  if (row.kind === "form") {
+    if (["admin", "management", "referent", "senior"].includes(user?.role)) return true;
+    return Array.isArray(row.recipient_ids) && row.recipient_ids.includes(user.id);
+  }
+  return canReceive(row, user.id);
+}
+
 async function notificationsFor(user) {
   const [rows, dismissed] = await Promise.all([
     database("portal_notifications?select=*&order=created_at.desc&limit=200"),
     database(`portal_notification_dismissals?user_id=eq.${encodeURIComponent(user.id)}&select=notification_id`),
   ]);
   const dismissedIds = new Set(parseArray(dismissed).map((row) => row.notification_id));
-  return parseArray(rows).filter((row) => canReceive(row, user.id) && !dismissedIds.has(row.id)).map((row) => ({
+  return parseArray(rows).filter((row) => !String(row.target || "").startsWith("__portal_") && canSeeNotification(row, user) && !dismissedIds.has(row.id)).map((row) => ({
     id: row.id,
     recipients: row.recipient_ids === null ? null : parseArray(row.recipient_ids),
     kind: row.kind,
@@ -118,9 +141,68 @@ async function auditLogsFor(user) {
   }
 }
 
+function submissionFromRow(row) {
+  let payload = {};
+  try { payload = objectValue(JSON.parse(row.body || "{}")); } catch { payload = {}; }
+  return {
+    id: row.id,
+    type: String(row.target || "").slice(SUBMISSION_TARGET_PREFIX.length),
+    values: objectValue(payload.values),
+    authorId: payload.authorId || "",
+    authorName: payload.authorName || "Membre du portail",
+    authorGrade: payload.authorGrade || "",
+    authorRole: payload.authorRole || "",
+    createdAt: row.created_at,
+    displayAt: label(row.created_at),
+    editedAt: payload.editedAt || null,
+    editedBy: payload.editedBy || null,
+  };
+}
+
+async function submissionsFor() {
+  const rows = await database("portal_notifications?select=*&order=created_at.desc&limit=1000");
+  return parseArray(rows).filter((row) => SUBMISSION_TYPES.has(String(row.target || "").slice(SUBMISSION_TARGET_PREFIX.length))).map(submissionFromRow);
+}
+
+function normalizeQuotaTargets(value) {
+  const source = objectValue(value);
+  return Object.fromEntries(Object.keys(DEFAULT_QUOTA_TARGETS).map((key) => [key, numberInRange(source[key] ?? DEFAULT_QUOTA_TARGETS[key]) ]));
+}
+
+function normalizeExemptions(value) {
+  return Object.fromEntries(Object.entries(objectValue(value)).filter(([id, enabled]) => UUID.test(id) && enabled === true));
+}
+
+async function quotaState(submissions) {
+  const settings = await currentQuotaSettings();
+  const resetAt = settings.reset_at ? new Date(settings.reset_at).getTime() : 0;
+  const counts = {};
+  for (const submission of submissions) {
+    if (new Date(submission.createdAt).getTime() < resetAt) continue;
+    if (!counts[submission.authorId]) counts[submission.authorId] = {};
+    const memberCounts = counts[submission.authorId];
+    memberCounts[submission.type] = (memberCounts[submission.type] || 0) + 1;
+    if (["observation_hdr", "observation_so"].includes(submission.type)) {
+      memberCounts.observations = (memberCounts.observations || 0) + 1;
+    }
+  }
+  const missionCounts = objectValue(settings.mission_counts);
+  for (const [userId, value] of Object.entries(missionCounts)) {
+    if (!UUID.test(userId)) continue;
+    if (!counts[userId]) counts[userId] = {};
+    counts[userId].mission_internal = numberInRange(value);
+  }
+  return {
+    targets: normalizeQuotaTargets(settings.targets),
+    counts,
+    exemptions: normalizeExemptions(settings.exemptions),
+    resetAt: settings.reset_at || null,
+  };
+}
+
 async function stateFor(user) {
-  const [chats, notifications, auditLogs] = await Promise.all([allChats(user), notificationsFor(user), auditLogsFor(user)]);
-  return { chats, notifications, auditLogs };
+  const [chats, notifications, auditLogs, submissions] = await Promise.all([allChats(user), notificationsFor(user), auditLogsFor(user), submissionsFor()]);
+  return { chats, notifications, auditLogs, submissions, quotas: await quotaState(submissions) };
 }
 
 async function chatById(id) {
@@ -137,6 +219,19 @@ async function validMembers(ids, actorId) {
   return allowed.filter((id) => active.has(id));
 }
 
+async function createChatOnFirstMessage(chatId, draft, actor) {
+  if (!UUID.test(chatId)) return null;
+  const type = draft?.type === "group" ? "group" : draft?.type === "direct" ? "direct" : "";
+  if (!type) return null;
+  const members = await validMembers(draft?.memberIds, actor.id);
+  if ((type === "direct" && members.length !== 1) || (type === "group" && members.length < 2)) return null;
+  const name = type === "group" ? clean(draft?.name, 60) : null;
+  if (type === "group" && !name) return null;
+  const payload = { id: chatId, type, name, created_by: actor.id, participants: [actor.id, ...members] };
+  await database("portal_chats", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(payload) });
+  return payload;
+}
+
 async function createNotification({ recipients = null, kind = "info", title, text, target = "home" }) {
   const payload = {
     id: crypto.randomUUID(),
@@ -148,6 +243,55 @@ async function createNotification({ recipients = null, kind = "info", title, tex
   };
   if (!payload.title || !payload.body) return;
   await database("portal_notifications", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(payload) });
+}
+
+function submissionValues(type, value) {
+  const values = objectValue(value);
+  if (!SUBMISSION_TYPES.has(type)) return null;
+  if (type === "sergeant_report") {
+    const result = {
+      sergeantName: clean(values.sergeantName, 100),
+      positivePoints: clean(values.positivePoints, 950),
+      negativePoints: clean(values.negativePoints, 950),
+      globalOpinion: clean(values.globalOpinion, 950),
+      conclusion: clean(values.conclusion, 100),
+    };
+    return Object.values(result).every(Boolean) ? result : null;
+  }
+  const result = {
+    aitName: clean(values.aitName, 100),
+    author: clean(values.author, 100),
+    reason: clean(values.reason, 950),
+  };
+  if (["observation_hdr", "observation_so"].includes(type)) result.observation = values.observation === "negative" ? "negative" : "positive";
+  return result.aitName && result.author && result.reason ? result : null;
+}
+
+async function updateQuotaSettings(values) {
+  const current = await currentQuotaSettings();
+  await database(`portal_notifications?id=eq.${encodeURIComponent(QUOTA_SETTINGS_ID)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ body: JSON.stringify({ ...current, ...values, updated_at: new Date().toISOString() }) }),
+  });
+}
+
+async function currentQuotaSettings() {
+  const rows = await database(`portal_notifications?id=eq.${encodeURIComponent(QUOTA_SETTINGS_ID)}&select=*`);
+  const row = parseArray(rows)[0];
+  if (row) {
+    try { return { targets: DEFAULT_QUOTA_TARGETS, exemptions: {}, mission_counts: {}, ...objectValue(JSON.parse(row.body || "{}")) }; }
+    catch { return { targets: DEFAULT_QUOTA_TARGETS, exemptions: {}, mission_counts: {} }; }
+  }
+  const initial = { targets: DEFAULT_QUOTA_TARGETS, exemptions: {}, mission_counts: {} };
+  try {
+    await database("portal_notifications", {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({ id: QUOTA_SETTINGS_ID, recipient_ids: null, kind: "info", title: "Réglages internes de quotas", body: JSON.stringify(initial), target: QUOTA_SETTINGS_TARGET }),
+    });
+  } catch { /* Une autre requête a pu créer la ligne au même instant. */ }
+  return initial;
 }
 
 function failure(error) {
@@ -203,8 +347,10 @@ export async function POST(request) {
       if (!canDelete) return json({ error: "Vous ne pouvez pas supprimer cette discussion." }, 403);
       await database(`portal_chats?id=eq.${encodeURIComponent(chat.id)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
     } else if (action === "send_message") {
-      const chat = await chatById(String(body?.chatId || ""));
-      if (!chat || !parseArray(chat.participants).includes(actor.id)) return json({ error: "Discussion introuvable." }, 404);
+      const chatId = String(body?.chatId || "");
+      let chat = await chatById(chatId);
+      if (!chat) chat = await createChatOnFirstMessage(chatId, body?.draft, actor);
+      if (!chat || !parseArray(chat.participants).includes(actor.id)) return json({ error: "Discussion introuvable ou destinataire indisponible." }, 404);
       const html = clean(body?.html, 10000);
       const text = clean(body?.text, 10000);
       const attachments = attachmentList(body?.attachments);
@@ -237,12 +383,71 @@ export async function POST(request) {
       await database(`portal_chats?id=eq.${encodeURIComponent(chat.id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ updated_at: new Date().toISOString() }) });
     } else if (action === "notify") {
       await createNotification({ recipients: body?.recipients === "all" ? null : body?.recipients, kind: body?.kind, title: body?.title, text: body?.text, target: body?.target });
+    } else if (action === "quota_set_target") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent modifier les quotas." }, 403);
+      const category = String(body?.category || "");
+      if (!QUOTA_CATEGORIES.has(category)) return json({ error: "Catégorie de quota invalide." }, 400);
+      const settings = await currentQuotaSettings();
+      const targets = normalizeQuotaTargets(settings.targets);
+      targets[category] = numberInRange(body?.target);
+      await updateQuotaSettings({ targets });
+      await recordAuditLog({ actor, category: "quota", action: "Objectif de quota modifié", details: `${category} : ${targets[category]}` });
+    } else if (action === "quota_reset") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent réinitialiser les quotas." }, 403);
+      await updateQuotaSettings({ reset_at: new Date().toISOString(), mission_counts: {} });
+      await recordAuditLog({ actor, category: "quota", action: "Compteurs de quotas réinitialisés" });
+    } else if (action === "quota_toggle_exemption") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent gérer les exemptions." }, 403);
+      const userId = String(body?.userId || "");
+      if (!UUID.test(userId)) return json({ error: "Membre invalide." }, 400);
+      const settings = await currentQuotaSettings();
+      const exemptions = normalizeExemptions(settings.exemptions);
+      const enabled = body?.enabled === true;
+      if (enabled) exemptions[userId] = true;
+      else delete exemptions[userId];
+      await updateQuotaSettings({ exemptions });
+      await recordAuditLog({ actor, category: "quota", action: enabled ? "Exemption de quota accordée" : "Exemption de quota retirée", details: userId });
+    } else if (action === "quota_add_mission") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent valider une mission." }, 403);
+      const userId = String(body?.userId || "");
+      if (!UUID.test(userId)) return json({ error: "Membre invalide." }, 400);
+      const settings = await currentQuotaSettings();
+      const missionCounts = objectValue(settings.mission_counts);
+      missionCounts[userId] = numberInRange(missionCounts[userId], 0, 99) + 1;
+      await updateQuotaSettings({ mission_counts: missionCounts });
+      await recordAuditLog({ actor, category: "mission", action: "Mission interne validée", details: userId });
+    } else if (action === "reset_submissions") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent réinitialiser cet historique." }, 403);
+      const type = String(body?.type || "");
+      if (!SUBMISSION_TYPES.has(type)) return json({ error: "Historique invalide." }, 400);
+      await database(`portal_notifications?target=eq.${encodeURIComponent(`${SUBMISSION_TARGET_PREFIX}${type}`)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+      await recordAuditLog({ actor, category: "form", action: "Historique de formulaire réinitialisé", details: type });
+    } else if (action === "update_submission") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent modifier cet historique." }, 403);
+      const id = String(body?.submissionId || "");
+      const type = String(body?.type || "");
+      const values = submissionValues(type, body?.values);
+      if (!UUID.test(id) || !values) return json({ error: "Données de formulaire invalides." }, 400);
+      const rows = await database(`portal_notifications?id=eq.${encodeURIComponent(id)}&target=eq.${encodeURIComponent(`${SUBMISSION_TARGET_PREFIX}${type}`)}&select=*`);
+      const row = parseArray(rows)[0];
+      if (!row) return json({ error: "Formulaire introuvable." }, 404);
+      let payload = {};
+      try { payload = objectValue(JSON.parse(row.body || "{}")); } catch { payload = {}; }
+      await database(`portal_notifications?id=eq.${encodeURIComponent(id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ body: JSON.stringify({ ...payload, values, editedAt: new Date().toISOString(), editedBy: actor.id }) }) });
+      await recordAuditLog({ actor, category: "form", action: "Historique de formulaire modifié", details: type });
+    } else if (action === "delete_submission") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent supprimer cet historique." }, 403);
+      const id = String(body?.submissionId || "");
+      const type = String(body?.type || "");
+      if (!UUID.test(id) || !SUBMISSION_TYPES.has(type)) return json({ error: "Formulaire invalide." }, 400);
+      await database(`portal_notifications?id=eq.${encodeURIComponent(id)}&target=eq.${encodeURIComponent(`${SUBMISSION_TARGET_PREFIX}${type}`)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+      await recordAuditLog({ actor, category: "form", action: "Élément supprimé de l’historique", details: type });
     } else if (action === "dismiss_notification") {
       const notificationId = String(body?.notificationId || "");
       if (!UUID.test(notificationId)) return json({ error: "Notification invalide." }, 400);
       const rows = await database(`portal_notifications?id=eq.${encodeURIComponent(notificationId)}&select=*`);
       const notification = parseArray(rows)[0];
-      if (!notification || !canReceive(notification, actor.id)) return json({ error: "Notification introuvable." }, 404);
+      if (!notification || !canSeeNotification(notification, actor)) return json({ error: "Notification introuvable." }, 404);
       await database("portal_notification_dismissals?on_conflict=notification_id,user_id", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=minimal" }, body: JSON.stringify({ notification_id: notificationId, user_id: actor.id }) });
     } else if (action === "clear_audit_logs") {
       if (!adminAccess(actor)) return json({ error: "Seul un administrateur ou la g\u00e9rance peut r\u00e9initialiser les logs." }, 403);

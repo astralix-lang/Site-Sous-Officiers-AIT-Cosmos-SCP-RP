@@ -1,5 +1,5 @@
 import { createSession, database, cleanGrade, recordAuditLog } from "../../_shared";
-import { discordConfig, discordDisplayName, discordUser, expiredOauthStateCookie, hasValidState, portalRedirect, redirect } from "../oauth";
+import { discordAvatarUrl, discordConfig, discordDisplayName, discordUser, expiredOauthStateCookie, hasValidState, portalRedirect, redirect } from "../oauth";
 
 export const runtime = "edge";
 
@@ -29,7 +29,8 @@ export async function GET(request) {
   const clearState = { "Set-Cookie": expiredOauthStateCookie(request) };
   if (!hasValidState(request, state) || !code) return redirect(portalRedirect(config, "invalid_link"), clearState);
   try {
-    const profile = await discordUser(config, code);
+    const discord = await discordUser(config, code);
+    const profile = discord.user;
     const discordId = String(profile.id);
     const email = discordEmail(profile);
     if (!email) return redirect(portalRedirect(config, "email_required"), clearState);
@@ -51,7 +52,14 @@ export async function GET(request) {
       const rows = await database(`portal_users?id=eq.${encodeURIComponent(user.id)}`, {
         method: "PATCH",
         headers: { Prefer: "return=representation" },
-        body: JSON.stringify({ discord_id: discordId, discord_username: name, approval_status: user.approval_status || "approved" }),
+        body: JSON.stringify({
+          discord_id: discordId,
+          discord_username: name,
+          discord_avatar_url: discordAvatarUrl(profile),
+          discord_refresh_token: discord.refreshToken || user.discord_refresh_token || null,
+          discord_token_expires_at: discord.tokenExpiresAt,
+          approval_status: user.approval_status || "approved",
+        }),
       });
       user = Array.isArray(rows) ? rows[0] : user;
     } else {
@@ -70,6 +78,9 @@ export async function GET(request) {
           approval_status: bootstrap ? "approved" : "pending",
           discord_id: discordId,
           discord_username: name,
+          discord_avatar_url: discordAvatarUrl(profile),
+          discord_refresh_token: discord.refreshToken || null,
+          discord_token_expires_at: discord.tokenExpiresAt,
         }),
       });
       user = Array.isArray(rows) ? rows[0] : null;

@@ -4,6 +4,17 @@ const DISCORD_AUTHORIZE_URL = "https://discord.com/oauth2/authorize";
 const DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token";
 const DISCORD_ME_URL = "https://discord.com/api/users/@me";
 
+function usableToken(value) {
+  const token = String(value || "").trim();
+  return token && token.length <= 2_000 ? token : "";
+}
+
+function expiresAt(expiresIn) {
+  const seconds = Number(expiresIn);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return new Date(Date.now() + seconds * 1_000).toISOString();
+}
+
 function secureCookie(request) {
   return new URL(request.url).protocol === "https:" ? "; Secure" : "";
 }
@@ -48,14 +59,24 @@ export function hasValidState(request, state) {
   return /^[a-f0-9]{64}$/i.test(String(state || "")) && sameValue(cookieValue(request, "portal-so-discord-state"), String(state));
 }
 
-export async function discordUser(config, code) {
-  const body = new URLSearchParams({
-    client_id: config.clientId,
-    client_secret: config.clientSecret,
-    grant_type: "authorization_code",
-    code: String(code || ""),
-    redirect_uri: config.redirectUri,
+async function discordProfileFromToken(token) {
+  const accessToken = usableToken(token?.access_token);
+  if (!accessToken) throw new Error("DISCORD_TOKEN_FAILED");
+  const userResponse = await fetch(DISCORD_ME_URL, {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+    cache: "no-store",
+    signal: AbortSignal.timeout(12_000),
   });
+  const user = await userResponse.json().catch(() => null);
+  if (!userResponse.ok || !/^\d{17,20}$/.test(String(user?.id || ""))) throw new Error("DISCORD_PROFILE_FAILED");
+  return {
+    user,
+    refreshToken: usableToken(token?.refresh_token),
+    tokenExpiresAt: expiresAt(token?.expires_in),
+  };
+}
+
+async function discordToken(config, body) {
   const tokenResponse = await fetch(DISCORD_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
@@ -65,16 +86,49 @@ export async function discordUser(config, code) {
   });
   const token = await tokenResponse.json().catch(() => null);
   if (!tokenResponse.ok || !token?.access_token) throw new Error("DISCORD_TOKEN_FAILED");
-  const userResponse = await fetch(DISCORD_ME_URL, {
-    headers: { Authorization: `Bearer ${token.access_token}`, Accept: "application/json" },
-    cache: "no-store",
-    signal: AbortSignal.timeout(12_000),
-  });
-  const user = await userResponse.json().catch(() => null);
-  if (!userResponse.ok || !/^\d{17,20}$/.test(String(user?.id || ""))) throw new Error("DISCORD_PROFILE_FAILED");
-  return user;
+  return discordProfileFromToken(token);
+}
+
+export async function discordUser(config, code) {
+  return discordToken(config, new URLSearchParams({
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    grant_type: "authorization_code",
+    code: String(code || ""),
+    redirect_uri: config.redirectUri,
+  }));
+}
+
+export async function refreshDiscordUser(config, refreshToken) {
+  const token = usableToken(refreshToken);
+  if (!token) throw new Error("DISCORD_REFRESH_UNAVAILABLE");
+  return discordToken(config, new URLSearchParams({
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    grant_type: "refresh_token",
+    refresh_token: token,
+  }));
 }
 
 export function discordDisplayName(user) {
   return String(user?.global_name || user?.username || "Membre Discord").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 60) || "Membre Discord";
+}
+
+export function discordAvatarUrl(user) {
+  const id = String(user?.id || "");
+  if (!/^\d{17,20}$/.test(id)) return "";
+  const avatar = String(user?.avatar || "");
+  if (/^[A-Za-z0-9_]{16,128}$/.test(avatar)) {
+    const extension = avatar.startsWith("a_") ? "gif" : "png";
+    return `https://cdn.discordapp.com/avatars/${id}/${avatar}.${extension}?size=128`;
+  }
+  try {
+    const discriminator = String(user?.discriminator || "");
+    const index = /^\d{4}$/.test(discriminator) && discriminator !== "0000"
+      ? Number(discriminator) % 5
+      : Number((BigInt(id) >> 22n) % 6n);
+    return `https://cdn.discordapp.com/embed/avatars/${index}.png`;
+  } catch {
+    return "";
+  }
 }

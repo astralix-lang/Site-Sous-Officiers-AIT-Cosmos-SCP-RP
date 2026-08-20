@@ -243,6 +243,12 @@ function initials(user) {
   return `${user.firstName?.[0] || ""}${user.lastName?.[0] || ""}`.toUpperCase();
 }
 
+function Avatar({ user, size = "", className = "" }) {
+  const role = ROLES[user?.role] || ROLES.officer;
+  const classes = ["avatar", size, className, role.tone].filter(Boolean).join(" ");
+  return <span className={classes}>{initials(user)}{user?.avatarUrl ? <img src={user.avatarUrl} alt="" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.style.display = "none"; }} /> : null}</span>;
+}
+
 function getTimeGreeting(date = new Date()) {
   const hour = date.getHours();
   if (hour < 5) return "Bonne nuit";
@@ -488,7 +494,7 @@ function ProfileModal({ user, onClose, onSave, soundEnabled, onSoundEnabledChang
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div className="modal profile-modal">
         <button className="icon-button close" onClick={onClose}><X size={20} /></button>
-        <div className="profile-modal-head"><div className={`avatar profile-avatar ${ROLES[user.role].tone}`}>{initials(user)}</div><div><p className="eyebrow dark">MON COMPTE</p><h2>Personnaliser mon profil</h2><p className="muted">Mettez à jour vos informations personnelles.</p></div></div>
+        <div className="profile-modal-head"><Avatar user={user} className="profile-avatar" /><div><p className="eyebrow dark">MON COMPTE</p><h2>Personnaliser mon profil</h2><p className="muted">Mettez à jour vos informations personnelles.</p></div></div>
         <form onSubmit={submit}>
           <div className="form-grid"><div><label>Prénom</label><input value={form.firstName} onChange={(event) => set("firstName", event.target.value)} required /></div><div><label>Nom <span className="optional">(facultatif)</span></label><input value={form.lastName} onChange={(event) => set("lastName", event.target.value)} /></div></div>
           <label>Compte Discord</label><div className="readonly-grade"><span>{user.discordUsername || "Compte Discord lié"}</span><small>La connexion est gérée par Discord.</small></div>
@@ -515,7 +521,7 @@ function PresencePanel({ users, onChange }) {
       <div className="table-wrap"><table className="presence-table"><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>Situation</th><th>Mettre à jour</th></tr></thead><tbody>
         {team.map((user) => {
           const isPresent = user.presence !== "absent";
-          return <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.discordUsername ? `Discord : ${user.discordUsername}` : "Compte Discord lié"}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td><RoleBadge role={user.role} /></td><td><span className={`presence-status ${isPresent ? "present" : "absent"}`}><i />{isPresent ? "Présent" : "Absent"}</span></td><td><div className="presence-actions"><button className={isPresent ? "selected present" : ""} onClick={() => onChange(user.id, "present")}><UserCheck size={16} /> Présent</button><button className={!isPresent ? "selected absent" : ""} onClick={() => onChange(user.id, "absent")}><UserX size={16} /> Absent</button></div></td></tr>;
+          return <tr key={user.id}><td><div className="user-cell"><Avatar user={user} size="small" /><div><strong>{user.firstName} {user.lastName}</strong><small>{user.discordUsername ? `Discord : ${user.discordUsername}` : "Compte Discord lié"}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td><RoleBadge role={user.role} /></td><td><span className={`presence-status ${isPresent ? "present" : "absent"}`}><i />{isPresent ? "Présent" : "Absent"}</span></td><td><div className="presence-actions"><button className={isPresent ? "selected present" : ""} onClick={() => onChange(user.id, "present")}><UserCheck size={16} /> Présent</button><button className={!isPresent ? "selected absent" : ""} onClick={() => onChange(user.id, "absent")}><UserX size={16} /> Absent</button></div></td></tr>;
         })}
         {!team.length && <tr><td colSpan="5" className="empty-presence">Aucun Sous-Officier à afficher.</td></tr>}
       </tbody></table></div>
@@ -546,7 +552,7 @@ function WorkforcePanel({ users, quotas }) {
   return (
     <div className="workforce-directory">
       <section className="workforce-summary"><div><p className="eyebrow dark">VUE D’ENSEMBLE</p><h2>Effectif du portail</h2><p>Les membres sont classés automatiquement par niveau d’accès puis du grade le plus élevé au plus bas.</p></div><div><span><strong>{approvedUsers.length}</strong> membres</span><span><strong>{approvedUsers.filter((user) => user.presence === "absent").length}</strong> absents</span><span><strong>{approvedUsers.filter((user) => user.blocked).length}</strong> bloqués</span></div></section>
-      <div className="workforce-groups">{groups.map((group) => <section className={`workforce-group ${ROLES[group.role].tone}`} key={group.role}><header><div><RoleBadge role={group.role} /><span>{roleDescriptions[group.role]}</span></div><strong>{group.users.length}</strong></header><div className="workforce-list">{group.users.map((user) => { const quota = quotaState(user); const concerned = ["senior", "officer"].includes(user.role); return <article key={user.id}><div className={`avatar ${ROLES[user.role].tone}`}>{initials(user)}</div><div className="workforce-name"><strong>{user.grade || GRADES[0]} {user.firstName} {user.lastName}</strong><small>{ROLES[user.role].label}</small></div><span className={`workforce-presence ${concerned ? user.presence === "absent" ? "absent" : "present" : "neutral"}`}>{user.blocked ? "Compte bloqué" : concerned ? user.presence === "absent" ? "Absent" : "Présent" : "Actif"}</span><span className={`workforce-quota ${quota.tone}`}><Gauge size={14} /> {quota.label}</span></article>; })}{!group.users.length && <p className="workforce-empty">Aucun membre dans cette catégorie.</p>}</div></section>)}</div>
+      <div className="workforce-groups">{groups.map((group) => <section className={`workforce-group ${ROLES[group.role].tone}`} key={group.role}><header><div><RoleBadge role={group.role} /><span>{roleDescriptions[group.role]}</span></div><strong>{group.users.length}</strong></header><div className="workforce-list">{group.users.map((user) => { const quota = quotaState(user); const concerned = ["senior", "officer"].includes(user.role); return <article key={user.id}><Avatar user={user} /><div className="workforce-name"><strong>{user.grade || GRADES[0]} {user.firstName} {user.lastName}</strong><small>{ROLES[user.role].label}</small></div><span className={`workforce-presence ${concerned ? user.presence === "absent" ? "absent" : "present" : "neutral"}`}>{user.blocked ? "Compte bloqué" : concerned ? user.presence === "absent" ? "Absent" : "Présent" : "Actif"}</span><span className={`workforce-quota ${quota.tone}`}><Gauge size={14} /> {quota.label}</span></article>; })}{!group.users.length && <p className="workforce-empty">Aucun membre dans cette catégorie.</p>}</div></section>)}</div>
     </div>
   );
 }
@@ -631,7 +637,7 @@ function HomePanel({ session, users, missions, chats, quotas, logs, assignments,
 
   return (
     <div className="home-dashboard">
-      <section className="home-hero"><div><span className="home-date">{today}</span><h2>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h2><p>Voici les informations importantes de votre espace Sous-Officiers.</p></div><div className={`avatar home-avatar ${ROLES[session.role].tone}`}>{initials(session)}</div></section>
+      <section className="home-hero"><div><span className="home-date">{today}</span><h2>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h2><p>Voici les informations importantes de votre espace Sous-Officiers.</p></div><Avatar user={session} className="home-avatar" /></section>
       <section className="home-stats"><article><span className="home-stat-icon blue"><UsersRound size={20} /></span><div><strong>{activeAccounts}</strong><small>Comptes actifs</small></div></article><article><span className="home-stat-icon violet"><MessageSquareText size={20} /></span><div><strong>{myChats.length}</strong><small>Mes discussions</small></div></article><article><span className="home-stat-icon gold"><FileText size={20} /></span><div><strong>{isManager ? pendingMissions.length : myMissions.length}</strong><small>{isManager ? "Missions à traiter" : "Mes missions"}</small></div></article><article><span className="home-stat-icon green"><Gauge size={20} /></span><div><strong>{isQuotaMember ? remainingTotal : team.filter((user) => user.presence !== "absent").length}</strong><small>{isQuotaMember ? "Actions restantes" : "SO présents"}</small></div></article></section>
       {isQuotaMember && <section className="home-card home-quota-card"><div className="home-card-head"><div><p className="eyebrow dark">MES OBJECTIFS</p><h2>Mes quotas</h2></div><span className={isAbsent ? "quota-status-absent" : isExempted ? "quota-status-exempt" : ""}><Gauge size={17} /> {isAbsent ? "Absent" : isExempted ? "Exempté" : `${completedQuotaCategories}/4 terminés`}</span></div><div className="home-quota-grid">{quotaItems.map((item) => {
         const target = targets[item.key] || 0;
@@ -707,7 +713,7 @@ function SummaryPanel({ session, users, logs, activityResetAt, onResetActivity }
       <div className="summary-grid">
         <section className="summary-card activity-chart-card"><div className="summary-card-head"><div><p className="eyebrow dark">ÉVOLUTION</p><h2>Activité détaillée par catégorie</h2></div><div className="chart-legend">{visibleSeries.map((series) => <span key={series.subtype}><i className={series.tone} /> {series.shortLabel}</span>)}</div></div><div className="activity-chart">{chartBins.map((bin, index) => <div className="activity-column" key={`${bin.label}-${index}`}><div className="activity-bars">{visibleSeries.map((series) => { const value = bin.counts[series.subtype]; return <span className={`series-bar ${series.tone}`} key={series.subtype} title={`${series.label} : ${value}`} style={{ height: `${value ? Math.max((value / chartMaximum) * 100, 7) : 2}%` }} />; })}</div><span>{bin.label}</span></div>)}</div><div className="chart-insight"><CalendarDays size={16} /><span>Période la plus active : <strong>{busiestBin?.label || "—"}</strong></span></div></section>
         <section className="summary-card distribution-card"><div className="summary-card-head"><div><p className="eyebrow dark">RÉPARTITION</p><h2>Volumes détaillés</h2><p>Chaque catégorie est comptée séparément.</p></div></div><div className="distribution-details detailed">{visibleSeries.map((series) => <div key={series.subtype}><span><i className={series.tone} /><span>{series.label}<small>{counts[series.subtype]} transmission{counts[series.subtype] > 1 ? "s" : ""}</small></span></span><strong>{currentActivity.length ? Math.round((counts[series.subtype] / currentActivity.length) * 100) : 0}%</strong></div>)}</div></section>
-        <section className="summary-card ranking-card"><div className="summary-card-head"><div><p className="eyebrow dark">CLASSEMENT</p><h2>Sous-Officiers les plus actifs</h2><p>Activité détaillée depuis le dernier reset.</p></div></div><div className="ranking-list">{ranking.map((item, index) => <article key={item.user.id}><span className={`rank-position rank-${index + 1}`}>{index < 3 ? <Trophy size={15} /> : index + 1}</span><div className={`avatar small ${ROLES[item.user.role].tone}`}>{initials(item.user)}</div><div className="rank-member"><strong>{item.user.grade} {item.user.firstName} {item.user.lastName}</strong><small>{visibleSeries.map((series) => `${series.shortLabel} : ${item.counts[series.subtype]}`).join(" · ")}</small><div><i style={{ width: `${(item.total / rankingMaximum) * 100}%` }} /></div></div><strong className="rank-score">{item.total}</strong></article>)}</div>{activityResetAt && <p className="ranking-reset-date">Compteurs réinitialisés le {new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(activityResetAt))}</p>}</section>
+        <section className="summary-card ranking-card"><div className="summary-card-head"><div><p className="eyebrow dark">CLASSEMENT</p><h2>Sous-Officiers les plus actifs</h2><p>Activité détaillée depuis le dernier reset.</p></div></div><div className="ranking-list">{ranking.map((item, index) => <article key={item.user.id}><span className={`rank-position rank-${index + 1}`}>{index < 3 ? <Trophy size={15} /> : index + 1}</span><Avatar user={item.user} size="small" /><div className="rank-member"><strong>{item.user.grade} {item.user.firstName} {item.user.lastName}</strong><small>{visibleSeries.map((series) => `${series.shortLabel} : ${item.counts[series.subtype]}`).join(" · ")}</small><div><i style={{ width: `${(item.total / rankingMaximum) * 100}%` }} /></div></div><strong className="rank-score">{item.total}</strong></article>)}</div>{activityResetAt && <p className="ranking-reset-date">Compteurs réinitialisés le {new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(activityResetAt))}</p>}</section>
         <section className="summary-card arrivals-card"><div className="summary-card-head"><div><p className="eyebrow dark">EFFECTIFS</p><h2>Arrivées de Sous-Officiers</h2><p>{arrivals.length} arrivée{arrivals.length > 1 ? "s" : ""} sur la période.</p></div><span><UsersRound size={17} /> {team.length} membres</span></div><div className="arrivals-chart">{arrivalBins.map((bin, index) => <div key={`${bin.label}-${index}`}><i title={`${bin.count} arrivée(s)`} style={{ height: `${bin.count ? Math.max((bin.count / arrivalMaximum) * 100, 9) : 3}%` }}><b>{bin.count || ""}</b></i><span>{bin.label}</span></div>)}</div></section>
       </div>
     </div>
@@ -763,7 +769,7 @@ function QuotaPanel({ users, quotas, onTargetChange, onReset, onToggleExemption 
             return <div className="quota-category"><div className="quota-category-top"><strong>{count}/{target}</strong><span className={done ? "done" : "pending"}>{done ? "Fait" : "Non fait"}</span></div><div className="quota-progress"><i><span style={{ width: `${percentage}%` }} /></i><small>{percentage}%</small></div>{detail && <small className="quota-detail">{detail}</small>}</div>;
           };
           const quotaStatus = isAbsent ? { tone: "absent", icon: <UserX size={15} />, label: "Absent" } : isExempted ? { tone: "exempted", icon: <ShieldCheck size={15} />, label: "Exempté" } : completed ? { tone: "done", icon: <BadgeCheck size={15} />, label: "Fait" } : { tone: "pending", icon: <X size={15} />, label: "Non fait" };
-          return <tr className={isAbsent || isExempted ? "quota-row-inactive" : ""} key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.grade || GRADES[0]}</small></div></div></td><td>{quotaCell("recommendation")}</td><td>{quotaCell("pcs_exp")}</td><td>{quotaCell("observations", `HDR : ${counts.observation_hdr || 0} • SO : ${counts.observation_so || 0}`)}</td><td>{quotaCell("mission_internal")}</td><td><span className={`quota-status ${quotaStatus.tone}`}>{quotaStatus.icon}{quotaStatus.label}</span></td><td><button className={`quota-exemption ${isExempted ? "active" : ""}`} type="button" onClick={() => onToggleExemption(user.id)}>{isExempted ? <UserCheck size={15} /> : <ShieldCheck size={15} />}{isExempted ? "Retirer l’exemption" : "Exempter"}</button></td></tr>;
+          return <tr className={isAbsent || isExempted ? "quota-row-inactive" : ""} key={user.id}><td><div className="user-cell"><Avatar user={user} size="small" /><div><strong>{user.firstName} {user.lastName}</strong><small>{user.grade || GRADES[0]}</small></div></div></td><td>{quotaCell("recommendation")}</td><td>{quotaCell("pcs_exp")}</td><td>{quotaCell("observations", `HDR : ${counts.observation_hdr || 0} • SO : ${counts.observation_so || 0}`)}</td><td>{quotaCell("mission_internal")}</td><td><span className={`quota-status ${quotaStatus.tone}`}>{quotaStatus.icon}{quotaStatus.label}</span></td><td><button className={`quota-exemption ${isExempted ? "active" : ""}`} type="button" onClick={() => onToggleExemption(user.id)}>{isExempted ? <UserCheck size={15} /> : <ShieldCheck size={15} />}{isExempted ? "Retirer l’exemption" : "Exempter"}</button></td></tr>;
         })}
         {!team.length && <tr><td colSpan="7" className="empty-presence">Aucun Sous-Officier à afficher.</td></tr>}
       </tbody></table></div>
@@ -1009,18 +1015,18 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onUpdateGrou
     <section className="chat-layout">
       <aside className="chat-contacts-card">
         <div className="chat-card-head"><p className="eyebrow dark">NOUVELLE DISCUSSION</p><h2>Messagerie</h2><p className="muted">Choisissez un membre ou créez un groupe.</p></div>
-        <div className="chat-start"><label>Contacter un membre</label><div className="chat-start-row"><select value={contactId} onChange={(event) => setContactId(event.target.value)} disabled={!availableContacts.length}>{availableContacts.map((user) => <option value={user.id} key={user.id}>{user.firstName} {user.lastName} — {ROLES[user.role].label}</option>)}</select><button className="primary" type="button" disabled={!contactId} onClick={() => openChat(contactId)}><MessageSquareText size={16} /> Ouvrir</button></div><button className="create-group-toggle" type="button" onClick={() => setGroupOpen((open) => !open)}><UsersRound size={16} /> {groupOpen ? "Fermer la création" : "Créer un groupe"}</button>{groupOpen && <form className="group-form" onSubmit={createGroup}><label>Nom du groupe</label><input value={groupName} onChange={(event) => setGroupName(event.target.value)} maxLength={60} placeholder="Ex. Équipe Alpha" required /><label>Membres du groupe <small>(au moins 2 en plus de vous)</small></label><div className="group-member-list">{availableContacts.map((user) => <label key={user.id}><input type="checkbox" checked={groupMembers.includes(user.id)} onChange={() => toggleGroupMember(user.id)} /><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><span>{user.firstName} {user.lastName}<small>{ROLES[user.role].label}</small></span></label>)}</div>{groupError && <p className="form-error">{groupError}</p>}<button className="primary wide" type="submit"><UsersRound size={16} /> Créer le groupe</button></form>}</div>
-<div className="referent-contact"><div><p className="eyebrow dark">CONTACT RAPIDE</p><strong>Contacter un Référent SO, la Gérance ou un Admin</strong></div>{supportContacts.length ? supportContacts.map((contact) => <button type="button" key={contact.id} onClick={() => openChat(contact.id)}><span className={`avatar small ${ROLES[contact.role].tone}`}>{initials(contact)}</span><span>{contact.firstName} {contact.lastName}<small>{hasAdminAccess(contact.role) ? `${ROLES[contact.role].label} · Contact Référent SO` : `${contact.grade || GRADES[0]} · Référent SO`}</small></span><Send size={15} /></button>) : <p className="chat-empty-small">{isModerator ? "Vous êtes actuellement le contact Référent SO principal." : "Aucun contact Référent SO disponible."}</p>}</div>
+        <div className="chat-start"><label>Contacter un membre</label><div className="chat-start-row"><select value={contactId} onChange={(event) => setContactId(event.target.value)} disabled={!availableContacts.length}>{availableContacts.map((user) => <option value={user.id} key={user.id}>{user.firstName} {user.lastName} — {ROLES[user.role].label}</option>)}</select><button className="primary" type="button" disabled={!contactId} onClick={() => openChat(contactId)}><MessageSquareText size={16} /> Ouvrir</button></div><button className="create-group-toggle" type="button" onClick={() => setGroupOpen((open) => !open)}><UsersRound size={16} /> {groupOpen ? "Fermer la création" : "Créer un groupe"}</button>{groupOpen && <form className="group-form" onSubmit={createGroup}><label>Nom du groupe</label><input value={groupName} onChange={(event) => setGroupName(event.target.value)} maxLength={60} placeholder="Ex. Équipe Alpha" required /><label>Membres du groupe <small>(au moins 2 en plus de vous)</small></label><div className="group-member-list">{availableContacts.map((user) => <label key={user.id}><input type="checkbox" checked={groupMembers.includes(user.id)} onChange={() => toggleGroupMember(user.id)} /><Avatar user={user} size="small" /><span>{user.firstName} {user.lastName}<small>{ROLES[user.role].label}</small></span></label>)}</div>{groupError && <p className="form-error">{groupError}</p>}<button className="primary wide" type="submit"><UsersRound size={16} /> Créer le groupe</button></form>}</div>
+<div className="referent-contact"><div><p className="eyebrow dark">CONTACT RAPIDE</p><strong>Contacter un Référent SO, la Gérance ou un Admin</strong></div>{supportContacts.length ? supportContacts.map((contact) => <button type="button" key={contact.id} onClick={() => openChat(contact.id)}><Avatar user={contact} size="small" /><span>{contact.firstName} {contact.lastName}<small>{hasAdminAccess(contact.role) ? `${ROLES[contact.role].label} · Contact Référent SO` : `${contact.grade || GRADES[0]} · Référent SO`}</small></span><Send size={15} /></button>) : <p className="chat-empty-small">{isModerator ? "Vous êtes actuellement le contact Référent SO principal." : "Aucun contact Référent SO disponible."}</p>}</div>
         <div className="conversation-picker"><div className="conversation-list-title"><p className="eyebrow dark">{isModerator ? "TOUTES LES DISCUSSIONS" : "MES DISCUSSIONS"}</p>{isModerator && <span>Modération</span>}</div><label>Accéder à une discussion</label><select value={selectedChatId} onChange={(event) => { clearEditor(); setSelectedChatId(event.target.value); }}><option value="">Choisir une discussion…</option>{visibleChats.map((chat) => <option value={chat.id} key={chat.id}>{chat.type === "group" ? "Groupe · " : "Discussion · "}{chatMeta(chat).title}</option>)}</select>{selectedChat ? <small>{selectedChat.messages.length} message{selectedChat.messages.length > 1 ? "s" : ""}{selectedChat.messages.at(-1)?.attachments?.length ? ` · ${selectedChat.messages.at(-1).attachments.length} pièce(s) jointe(s) dans le dernier message` : ""}</small> : <p className="chat-empty-small">Aucune discussion sélectionnée.</p>}</div>
       </aside>
       <div className="chat-conversation-card">
         {selectedChat ? <>
           <div className="conversation-head">
-            {selectedMeta.group ? <span className="group-avatar"><UsersRound size={19} /></span> : selectedMeta.moderated ? <span className="group-avatar"><ShieldCheck size={19} /></span> : <span className={`avatar ${selectedMeta.other ? ROLES[selectedMeta.other.role].tone : "blue"}`}>{selectedMeta.other ? initials(selectedMeta.other) : "?"}</span>}
+            {selectedMeta.group ? <span className="group-avatar"><UsersRound size={19} /></span> : selectedMeta.moderated ? <span className="group-avatar"><ShieldCheck size={19} /></span> : selectedMeta.other ? <Avatar user={selectedMeta.other} /> : <span className="avatar blue">?</span>}
             <div><strong>{selectedMeta.title}</strong><small>{selectedMeta.subtitle}</small></div>
             <div className="conversation-head-actions">{isModerator && !canParticipate && <span className="moderation-chip"><ShieldCheck size={14} /> Consultation de modération</span>}{canManageSelectedGroup && <button className="manage-group" type="button" onClick={() => setGroupManagementOpen((open) => !open)}><UsersRound size={16} /> {groupManagementOpen ? "Fermer" : "Gérer le groupe"}</button>}<button className="delete-conversation" type="button" onClick={() => onDeleteChat(selectedChat.id)}><Trash2 size={16} /> Supprimer</button></div>
           </div>
-          {canManageSelectedGroup && groupManagementOpen && <form className="group-management" onSubmit={saveManagedGroup}><div className="group-management-head"><div><strong>Gérer les membres</strong><small>Le créateur reste membre. Conservez au moins deux autres membres.</small></div><span>{managedGroupMembers.length + 1} membres</span></div><div className="group-member-list">{availableContacts.map((user) => <label key={user.id}><input type="checkbox" checked={managedGroupMembers.includes(user.id)} onChange={() => toggleManagedGroupMember(user.id)} /><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><span>{user.firstName} {user.lastName}<small>{ROLES[user.role].label}</small></span></label>)}</div>{groupManagementError && <p className="form-error">{groupManagementError}</p>}<div className="group-management-actions"><button className="secondary" type="button" onClick={() => setGroupManagementOpen(false)}>Annuler</button><button className="primary" type="submit"><BadgeCheck size={16} /> Enregistrer</button></div></form>}
+          {canManageSelectedGroup && groupManagementOpen && <form className="group-management" onSubmit={saveManagedGroup}><div className="group-management-head"><div><strong>Gérer les membres</strong><small>Le créateur reste membre. Conservez au moins deux autres membres.</small></div><span>{managedGroupMembers.length + 1} membres</span></div><div className="group-member-list">{availableContacts.map((user) => <label key={user.id}><input type="checkbox" checked={managedGroupMembers.includes(user.id)} onChange={() => toggleManagedGroupMember(user.id)} /><Avatar user={user} size="small" /><span>{user.firstName} {user.lastName}<small>{ROLES[user.role].label}</small></span></label>)}</div>{groupManagementError && <p className="form-error">{groupManagementError}</p>}<div className="group-management-actions"><button className="secondary" type="button" onClick={() => setGroupManagementOpen(false)}>Annuler</button><button className="primary" type="submit"><BadgeCheck size={16} /> Enregistrer</button></div></form>}
           <div className="chat-messages">
             {selectedChat.messages.map((item) => {
               const own = item.senderId === session.id;
@@ -1066,7 +1072,7 @@ function SergeantAssignmentPanel({ users, session, assignments, onAssign, onRemi
         const observer = users.find((user) => user.id === assignment.observerId);
         const deadline = assignment.dueDate ? new Date(`${assignment.dueDate}T23:59:59`) : null;
         const overdue = assignment.status === "active" && deadline && deadline < new Date();
-        return <article key={assignment.id}><div className="assignment-people"><div><span className={`avatar small ${sergeant ? ROLES[sergeant.role].tone : "green"}`}>{sergeant ? initials(sergeant) : "?"}</span><span><small>Nouveau Sergent</small><strong>{sergeant ? `${sergeant.grade} ${sergeant.firstName} ${sergeant.lastName}` : "Compte supprimé"}</strong></span></div><i>→</i><div><span className={`avatar small ${observer ? ROLES[observer.role].tone : "gold"}`}>{observer ? initials(observer) : "?"}</span><span><small>Référent SO Sup</small><strong>{observer ? `${observer.grade} ${observer.firstName} ${observer.lastName}` : "Compte supprimé"}</strong></span></div></div><div className="assignment-meta"><span className={`assignment-deadline ${overdue ? "overdue" : ""}`}><CalendarDays size={15} /> {deadline ? new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" }).format(deadline) : "Sans date"}</span><span className={`assignment-status ${assignment.status}`}>{assignment.status === "completed" ? "Rapport envoyé" : overdue ? "En retard" : assignment.reminderAt ? "Rappel envoyé" : "En suivi"}</span></div>{canManage && <div className="assignment-actions">{assignment.status === "active" && <button className="assignment-reminder" onClick={() => onReminder(assignment.id)}><Bell size={15} /> {assignment.reminderAt ? "Renvoyer un rappel" : "Envoyer un rappel"}</button>}<button className="icon-button danger" title="Supprimer l’assignation" onClick={() => onDelete(assignment.id)}><Trash2 size={16} /></button></div>}</article>;
+        return <article key={assignment.id}><div className="assignment-people"><div>{sergeant ? <Avatar user={sergeant} size="small" /> : <span className="avatar small green">?</span>}<span><small>Nouveau Sergent</small><strong>{sergeant ? `${sergeant.grade} ${sergeant.firstName} ${sergeant.lastName}` : "Compte supprimé"}</strong></span></div><i>→</i><div>{observer ? <Avatar user={observer} size="small" /> : <span className="avatar small gold">?</span>}<span><small>Référent SO Sup</small><strong>{observer ? `${observer.grade} ${observer.firstName} ${observer.lastName}` : "Compte supprimé"}</strong></span></div></div><div className="assignment-meta"><span className={`assignment-deadline ${overdue ? "overdue" : ""}`}><CalendarDays size={15} /> {deadline ? new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" }).format(deadline) : "Sans date"}</span><span className={`assignment-status ${assignment.status}`}>{assignment.status === "completed" ? "Rapport envoyé" : overdue ? "En retard" : assignment.reminderAt ? "Rappel envoyé" : "En suivi"}</span></div>{canManage && <div className="assignment-actions">{assignment.status === "active" && <button className="assignment-reminder" onClick={() => onReminder(assignment.id)}><Bell size={15} /> {assignment.reminderAt ? "Renvoyer un rappel" : "Envoyer un rappel"}</button>}<button className="icon-button danger" title="Supprimer l’assignation" onClick={() => onDelete(assignment.id)}><Trash2 size={16} /></button></div>}</article>;
       })}{!visibleAssignments.length && <div className="assignment-empty"><UsersRound size={27} /><strong>Aucune assignation</strong><p>{canManage ? "Commencez par attribuer un nouveau Sergent." : "Aucun Sergent ne vous a encore été confié."}</p></div>}</div></section>
     </div>
   );
@@ -1322,6 +1328,7 @@ function App() {
   const [portalNotifications, setPortalNotifications] = useState([]);
   const [portalRemote, setPortalRemote] = useState(false);
   const [loginTransition, setLoginTransition] = useState(null);
+  const [avatarSyncing, setAvatarSyncing] = useState(false);
   const audioContextRef = useRef(null);
 
   useEffect(() => {
@@ -1557,6 +1564,8 @@ function App() {
     if (Array.isArray(state?.chats)) setChats(state.chats);
     if (Array.isArray(state?.notifications)) setPortalNotifications(state.notifications);
     if (Array.isArray(state?.auditLogs)) setAuditLogs((current) => mergeAuditLogs(current, state.auditLogs));
+    if (Array.isArray(state?.submissions)) setSubmissionHistory(state.submissions);
+    if (state?.quotas && typeof state.quotas === "object") setQuotas((current) => ({ ...DEFAULT_QUOTAS, ...current, ...state.quotas }));
     setPortalRemote(true);
   }
   function syncSharedPortal(action, payload = {}) {
@@ -1624,11 +1633,18 @@ function App() {
       displayAt: new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(now),
     };
     setSubmissionHistory((current) => [entry, ...current].slice(0, 300));
+    if (portalRemote) portalRequest().then(applySharedPortalState).catch(() => {});
   }
   function resetSubmissionHistory(type) {
     if (!hasManagerAccess(session.role)) return;
     const label = type === "sergeant_report" ? "Rapports nouveau Sous-Officier" : TRANSMISSION_TYPES[type]?.title || type;
     if (!confirm(`Réinitialiser uniquement l’historique « ${label} » ?`)) return;
+    if (portalRemote) {
+      portalRequest("POST", { action: "reset_submissions", type })
+        .then((state) => { applySharedPortalState(state); flash(`L’historique « ${label} » a été réinitialisé.`); })
+        .catch((error) => flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible."));
+      return;
+    }
     setSubmissionHistory((current) => current.filter((entry) => entry.type !== type));
     addLog("form", "Historique de formulaire réinitialisé", label);
     flash(`L’historique « ${label} » a été réinitialisé.`);
@@ -1655,6 +1671,12 @@ function App() {
       ? updatedValues.sergeantName && updatedValues.positivePoints && updatedValues.negativePoints && updatedValues.globalOpinion
       : updatedValues.aitName && updatedValues.author && updatedValues.reason;
     if (!complete) { flash("Tous les champs de l’historique doivent être renseignés."); return; }
+    if (portalRemote) {
+      portalRequest("POST", { action: "update_submission", submissionId: entryId, type, values: updatedValues })
+        .then((state) => { applySharedPortalState(state); flash("L’historique a été modifié."); })
+        .catch((error) => flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible."));
+      return;
+    }
     setSubmissionHistory((current) => current.map((entry) => entry.id === entryId && entry.type === type ? { ...entry, values: updatedValues, editedAt: new Date().toISOString(), editedBy: session.id } : entry));
     const label = isReport ? "Rapport nouveau Sous-Officier" : TRANSMISSION_TYPES[type]?.title || type;
     addLog("form", "Historique de formulaire modifié", label);
@@ -1664,6 +1686,12 @@ function App() {
     if (!hasManagerAccess(session.role) || !confirm("Supprimer définitivement cet élément de l’historique public ?")) return;
     const entry = submissionHistory.find((item) => item.id === entryId && item.type === type);
     if (!entry) return;
+    if (portalRemote) {
+      portalRequest("POST", { action: "delete_submission", submissionId: entryId, type })
+        .then((state) => { applySharedPortalState(state); flash("L’élément a été supprimé de l’historique."); })
+        .catch((error) => flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible."));
+      return;
+    }
     setSubmissionHistory((current) => current.filter((item) => item.id !== entryId));
     const label = type === "sergeant_report" ? "Rapport nouveau Sous-Officier" : TRANSMISSION_TYPES[type]?.title || type;
     addLog("form", "Élément supprimé de l’historique", label);
@@ -1672,12 +1700,11 @@ function App() {
   function transmissionSuccess(message, type, values) {
     flash(message);
     recordSubmission(type, values);
-    addLog("form", "Formulaire envoyé", TRANSMISSION_TYPES[type]?.title || type);
-    addPortalNotification({
-      title: `Formulaire envoyé — ${TRANSMISSION_TYPES[type]?.title || type}`,
-      text: `${session.grade || GRADES[0]} ${session.firstName} ${session.lastName} a transmis un formulaire.`,
-      target: type,
-    });
+    if (!portalRemote) {
+      addLog("form", "Formulaire envoyé", TRANSMISSION_TYPES[type]?.title || type);
+      addPortalNotification({ recipients: [session.id], title: `Formulaire envoyé — ${TRANSMISSION_TYPES[type]?.title || type}`, text: "Votre formulaire a été transmis sur Discord.", target: type });
+    }
+    if (portalRemote) return;
     if (!QUOTA_TYPES.includes(type) || !["senior", "officer"].includes(session.role)) return;
     setQuotas((current) => {
       const userCounts = current.counts?.[session.id] || {};
@@ -1689,12 +1716,10 @@ function App() {
     recordSubmission("sergeant_report", values);
     const sergeant = users.find((user) => user.id === sergeantId);
     setSergeantAssignments((current) => current.map((assignment) => assignment.sergeantId === sergeantId && assignment.observerId === session.id && assignment.status === "active" ? { ...assignment, status: "completed", completedAt: new Date().toISOString() } : assignment));
-    addLog("form", "Rapport nouveau Sous-Officier envoyé", sergeant ? `${sergeant.grade} ${sergeant.firstName} ${sergeant.lastName}` : "Sergent assigné");
-    addPortalNotification({
-      title: "Rapport nouveau Sous-Officier envoyé",
-      text: `${session.grade || GRADES[0]} ${session.firstName} ${session.lastName} a envoyé un rapport.`,
-      target: "sergeant_report",
-    });
+    if (!portalRemote) {
+      addLog("form", "Rapport nouveau Sous-Officier envoyé", sergeant ? `${sergeant.grade} ${sergeant.firstName} ${sergeant.lastName}` : "Sergent assigné");
+      addPortalNotification({ recipients: [session.id], title: "Rapport nouveau Sous-Officier envoyé", text: "Votre rapport a été transmis sur Discord.", target: "sergeant_report" });
+    }
   }
   function assignSergeant({ sergeantId, observerId, dueDate }) {
     if (!hasManagerAccess(session.role)) return;
@@ -1732,11 +1757,23 @@ function App() {
   function changeQuotaTarget(category, value) {
     const parsedTarget = Number.parseInt(value, 10);
     const target = Math.max(0, Math.min(100, Number.isNaN(parsedTarget) ? 0 : parsedTarget));
+    if (portalRemote) {
+      portalRequest("POST", { action: "quota_set_target", category, target })
+        .then((state) => applySharedPortalState(state))
+        .catch((error) => flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible."));
+      return;
+    }
     setQuotas((current) => ({ ...current, targets: { ...current.targets, [category]: target } }));
     addLog("quota", "Objectif de quota modifié", `${category} : ${target}`);
   }
   function resetQuotas() {
     if (!confirm("Réinitialiser tous les compteurs de quotas à zéro ?")) return;
+    if (portalRemote) {
+      portalRequest("POST", { action: "quota_reset" })
+        .then((state) => { applySharedPortalState(state); flash("Les quotas ont été réinitialisés."); })
+        .catch((error) => flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible."));
+      return;
+    }
     setQuotas((current) => ({ ...current, counts: {} }));
     addLog("quota", "Compteurs de quotas réinitialisés");
     flash("Les quotas ont été réinitialisés.");
@@ -1745,6 +1782,12 @@ function App() {
     if (!hasManagerAccess(session.role)) return;
     const targetUser = users.find((user) => user.id === userId);
     const willExempt = !quotas.exemptions?.[userId];
+    if (portalRemote) {
+      portalRequest("POST", { action: "quota_toggle_exemption", userId, enabled: willExempt })
+        .then((state) => { applySharedPortalState(state); flash(willExempt ? "La personne est exemptée de quota." : "L’exemption de quota a été retirée."); })
+        .catch((error) => flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible."));
+      return;
+    }
     setQuotas((current) => {
       const isExempted = current.exemptions?.[userId] === true;
       return { ...current, exemptions: { ...current.exemptions, [userId]: !isExempted } };
@@ -1764,7 +1807,12 @@ function App() {
     const mission = missions.find((item) => item.id === missionId);
     if (!mission || mission.status !== "pending") return;
     setMissions((current) => current.map((item) => item.id === missionId ? { ...item, status: "validated", validatedBy: `${session.firstName} ${session.lastName}`, validatedAt: new Date().toISOString() } : item));
-    setQuotas((current) => {
+    if (portalRemote) {
+      portalRequest("POST", { action: "quota_add_mission", userId: mission.userId })
+        .then(applySharedPortalState)
+        .catch((error) => flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible."));
+    }
+    if (!portalRemote) setQuotas((current) => {
       const userCounts = current.counts?.[mission.userId] || {};
       return { ...current, counts: { ...current.counts, [mission.userId]: { ...userCounts, mission_internal: (userCounts.mission_internal || 0) + 1 } } };
     });
@@ -1801,18 +1849,14 @@ function App() {
     const existingChat = chats.find((chat) => chat.participants.length === 2 && chat.participants.includes(session.id) && chat.participants.includes(otherUserId));
     if (existingChat) return existingChat.id;
     const chatId = crypto.randomUUID();
-    setChats((current) => [{ id: chatId, type: "direct", participants: [session.id, otherUserId], messages: [], updatedAt: new Date().toISOString() }, ...current]);
-    if (portalRemote) syncSharedPortal("start_direct", { chatId, otherUserId });
-    addLog("chat", "Discussion privée créée", `Avec ${contact.firstName} ${contact.lastName}`);
+    setChats((current) => [{ id: chatId, type: "direct", participants: [session.id, otherUserId], messages: [], updatedAt: new Date().toISOString(), isDraft: true }, ...current]);
     return chatId;
   }
   function createChatGroup(name, memberIds) {
     const validMemberIds = [...new Set(memberIds)].filter((id) => users.some((user) => user.id === id && user.id !== session.id && user.approvalStatus === "approved" && !user.blocked));
     if (!name || validMemberIds.length < 2) return "";
     const chatId = crypto.randomUUID();
-    setChats((current) => [{ id: chatId, type: "group", name, createdBy: session.id, participants: [session.id, ...validMemberIds], messages: [], updatedAt: new Date().toISOString() }, ...current]);
-    if (portalRemote) syncSharedPortal("create_group", { chatId, name, memberIds: validMemberIds });
-    addLog("chat", "Groupe créé", `${name} · ${validMemberIds.length + 1} membres`);
+    setChats((current) => [{ id: chatId, type: "group", name, createdBy: session.id, participants: [session.id, ...validMemberIds], messages: [], updatedAt: new Date().toISOString(), isDraft: true }, ...current]);
     return chatId;
   }
   function updateChatGroup(chatId, memberIds) {
@@ -1824,7 +1868,7 @@ function App() {
       return false;
     }
     setChats((current) => current.map((item) => item.id === chatId ? { ...item, participants: [session.id, ...validMemberIds], updatedAt: new Date().toISOString() } : item));
-    if (portalRemote) syncSharedPortal("update_group", { chatId, memberIds: validMemberIds });
+    if (portalRemote && !chat.isDraft) syncSharedPortal("update_group", { chatId, memberIds: validMemberIds });
     addLog("chat", "Membres du groupe modifiés", `${chat.name || "Groupe"} · ${validMemberIds.length + 1} membres`);
     flash("Les membres du groupe ont bien été mis à jour.");
     return true;
@@ -1840,7 +1884,10 @@ function App() {
       return [updatedChat, ...current.filter((item) => item.id !== chatId)];
     });
     addLog("chat", "Message envoyé", `${attachments.length ? `${attachments.length} pièce${attachments.length > 1 ? "s" : ""} jointe${attachments.length > 1 ? "s" : ""}` : "Sans pièce jointe"}`);
-    if (portalRemote) syncSharedPortal("send_message", { chatId, html, text, attachments });
+    if (portalRemote) {
+      const draft = chat.isDraft ? { type: chat.type, name: chat.name || "", memberIds: chat.participants.filter((id) => id !== session.id) } : undefined;
+      syncSharedPortal("send_message", { chatId, html, text, attachments, draft });
+    }
     else addPortalNotification({ recipients: chat.participants.filter((id) => id !== session.id), kind: "message", title: `Nouveau message de ${session.firstName} ${session.lastName}`, text: chat.type === "group" ? `Dans le groupe « ${chat.name || "Sans nom"} »` : "Dans une discussion privée.", target: "chat" });
   }
   function editChatMessage(chatId, messageId, html, text) {
@@ -1863,7 +1910,7 @@ function App() {
     const canDelete = chat?.type === "group" ? chat.createdBy === session.id || canModerate : chat?.participants.includes(session.id) || canModerate;
     if (!chat || !canDelete || !confirm("Supprimer définitivement cette conversation et tous ses messages ?")) return;
     setChats((current) => current.filter((item) => item.id !== chatId));
-    if (portalRemote) syncSharedPortal("delete_chat", { chatId });
+    if (portalRemote && !chat.isDraft) syncSharedPortal("delete_chat", { chatId });
     addLog("chat", "Conversation supprimée", `${chat.type === "group" ? chat.name || "Groupe" : "Discussion privée"} · ${chat.messages.length} messages`);
     flash("La conversation a été supprimée.");
   }
@@ -1915,6 +1962,22 @@ function App() {
       flash(willBlock ? "Le compte a été bloqué et ses sessions sont fermées." : "Le compte a été débloqué.");
     } catch (error) { flash(error instanceof Error ? error.message : "Le blocage du compte a échoué."); }
   }
+  async function syncDiscordAvatars() {
+    if (!hasAdminAccess(session?.role) || avatarSyncing) return;
+    setAvatarSyncing(true);
+    try {
+      const result = await accountRequest("/api/auth/discord/sync-avatars", "POST", {});
+      const refreshedUsers = Array.isArray(result.users) ? result.users : [];
+      setUsers(refreshedUsers);
+      setSession(result.session || refreshedUsers.find((user) => user.id === session.id) || session);
+      addLog("profile", "Photos Discord synchronisées", `${result.updated || 0} profil${result.updated > 1 ? "s" : ""} actualisé${result.updated > 1 ? "s" : ""}`);
+      const details = [`${result.updated || 0} photo${result.updated > 1 ? "s" : ""} actualisée${result.updated > 1 ? "s" : ""}`];
+      if (result.reconnectRequired) details.push(`${result.reconnectRequired} reconnexion${result.reconnectRequired > 1 ? "s" : ""} nécessaire${result.reconnectRequired > 1 ? "s" : ""}`);
+      if (result.unavailable) details.push(`${result.unavailable} indisponible${result.unavailable > 1 ? "s" : ""}`);
+      flash(`Synchronisation terminée : ${details.join(" · ")}.`);
+    } catch (error) { flash(error instanceof Error ? error.message : "La synchronisation des photos a échoué."); }
+    finally { setAvatarSyncing(false); }
+  }
   async function saveProfile(form) {
     if (!String(form.firstName || "").trim()) {
       flash("Le prénom est obligatoire.");
@@ -1951,7 +2014,7 @@ function App() {
           <MenuGroup title="Chat" icon={MessageSquareText} open={openGroups.chat} onToggle={() => toggleGroup("chat")}><button className={`menu-item ${activeSection === "chat" ? "active" : ""}`} onClick={() => setActiveSection("chat")}><Send size={17} /> Messagerie</button></MenuGroup>
         {hasManagerAccess(session.role) && <button className={`menu-item standalone-nav logs-nav ${activeSection === "logs" ? "active" : ""}`} onClick={() => setActiveSection("logs")}><ScrollText size={18} /> Logs</button>}
         </nav>
-        <button className="profile-card" onClick={() => setProfileOpen(true)} title="Profil et paramètres"><div className={`avatar ${ROLES[session.role].tone}`}>{initials(session)}</div><div><strong>{session.firstName} {session.lastName}</strong><small>{session.grade || GRADES[0]} · {ROLES[session.role].label}</small></div><ChevronDown size={16} /></button>
+        <button className="profile-card" onClick={() => setProfileOpen(true)} title="Profil et paramètres"><Avatar user={session} /><div><strong>{session.firstName} {session.lastName}</strong><small>{session.grade || GRADES[0]} · {ROLES[session.role].label}</small></div><ChevronDown size={16} /></button>
         <div className="sidebar-actions">
           <button className="logout" onClick={logout}><LogOut size={18} /><span>Se déconnecter</span></button>
           <label className="theme-toggle" title={darkMode ? "Passer en mode clair" : "Passer en mode sombre"}>
@@ -1974,8 +2037,8 @@ function App() {
         </section>
 
         <section className="accounts-card">
-          <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
-          <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>État du compte</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><span className={`avatar small ${ROLES[user.role].tone}`}>{initials(user)}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.discordUsername ? `Discord : ${user.discordUsername}` : "Compte Discord lié"}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td>{user.approvalStatus === "pending" ? <span className="locked">À attribuer</span> : <RoleBadge role={user.role} />}</td><td>{user.approvalStatus === "pending" ? <button className="account-state pending" type="button" onClick={() => hasAdminAccess(session.role) && setModal(user)}><UserRound size={15} /> En attente</button> : user.approvalStatus === "rejected" ? <span className="account-state blocked"><UserX size={15} /> Refusé</span> : user.role === "admin" ? <span className="account-state active"><UserCheck size={15} /> Compte actif</span> : <button className={`account-state ${user.blocked ? "blocked" : "active"}`} type="button" onClick={() => toggleAccountBlock(user)}>{user.blocked ? <UserX size={15} /> : <UserCheck size={15} />}{user.blocked ? "Compte bloqué" : "Compte actif"}</button>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title={user.approvalStatus === "pending" ? "Examiner la demande" : "Modifier"} onClick={() => setModal(user)}>{user.approvalStatus === "pending" ? <BadgeCheck size={17} /> : <Pencil size={17} />}</button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
+          <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><button className="secondary avatar-sync" type="button" onClick={syncDiscordAvatars} disabled={avatarSyncing}><RotateCcw size={15} /> {avatarSyncing ? "Synchronisation…" : "Rafraîchir les photos"}</button><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
+          <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>État du compte</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><Avatar user={user} size="small" /><div><strong>{user.firstName} {user.lastName}</strong><small>{user.discordUsername ? `Discord : ${user.discordUsername}` : "Compte Discord lié"}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td>{user.approvalStatus === "pending" ? <span className="locked">À attribuer</span> : <RoleBadge role={user.role} />}</td><td>{user.approvalStatus === "pending" ? <button className="account-state pending" type="button" onClick={() => hasAdminAccess(session.role) && setModal(user)}><UserRound size={15} /> En attente</button> : user.approvalStatus === "rejected" ? <span className="account-state blocked"><UserX size={15} /> Refusé</span> : user.role === "admin" ? <span className="account-state active"><UserCheck size={15} /> Compte actif</span> : <button className={`account-state ${user.blocked ? "blocked" : "active"}`} type="button" onClick={() => toggleAccountBlock(user)}>{user.blocked ? <UserX size={15} /> : <UserCheck size={15} />}{user.blocked ? "Compte bloqué" : "Compte actif"}</button>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title={user.approvalStatus === "pending" ? "Examiner la demande" : "Modifier"} onClick={() => setModal(user)}>{user.approvalStatus === "pending" ? <BadgeCheck size={17} /> : <Pencil size={17} />}</button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
         </section>
         </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onUpdateGroup={updateChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} assignments={sergeantAssignments} onSuccess={sergeantReportSuccess} history={submissionHistory.filter((entry) => entry.type === "sergeant_report")} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} history={submissionHistory.filter((entry) => entry.type === activeSection)} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} />}
       </main>

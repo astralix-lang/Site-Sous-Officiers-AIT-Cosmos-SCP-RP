@@ -233,6 +233,13 @@ function dateLabel(value) {
   catch { return ""; }
 }
 
+function safeDiscordAvatarUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" && (url.hostname === "discordapp.com" || url.hostname.endsWith(".discordapp.com")) ? url.toString() : "";
+  } catch { return ""; }
+}
+
 export function publicUser(row) {
   return {
     id: row.id,
@@ -244,13 +251,14 @@ export function publicUser(row) {
     blocked: row.blocked === true,
     approvalStatus: cleanApprovalStatus(row.approval_status) || "approved",
     discordUsername: String(row.discord_username || "").slice(0, 100),
+    avatarUrl: safeDiscordAvatarUrl(row.discord_avatar_url),
     createdAtIso: row.created_at,
     createdAt: dateLabel(row.created_at),
   };
 }
 
 export async function listUsers() {
-  const rows = await database("portal_users?select=id,first_name,last_name,role,grade,presence,blocked,approval_status,discord_username,created_at,updated_at&order=created_at.asc");
+  const rows = await database("portal_users?select=id,first_name,last_name,role,grade,presence,blocked,approval_status,discord_username,discord_avatar_url,created_at,updated_at&order=created_at.asc");
   return Array.isArray(rows) ? rows.map(publicUser) : [];
 }
 
