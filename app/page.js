@@ -1441,7 +1441,7 @@ function App() {
   const [modal, setModal] = useState(null);
   const [notice, setNotice] = useState("");
   const [activeSection, setActiveSection] = useState("home");
-  const [openGroups, setOpenGroups] = useState({ admin: true, referent: false, global: true, senior: false, chat: true });
+  const [openGroups, setOpenGroups] = useState({ admin: true, referent: true, global: true, senior: true, chat: true });
   const [profileOpen, setProfileOpen] = useState(false);
   const [themeId, setThemeId] = useState("nuit");
   const [soundEnabled, setSoundEnabled] = useState(true);
