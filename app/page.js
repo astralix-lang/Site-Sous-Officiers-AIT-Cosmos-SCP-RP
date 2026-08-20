@@ -15,8 +15,8 @@ import {
   LogOut,
   Medal,
   MessageSquareText,
-  Moon,
   Paperclip,
+  Palette,
   Pencil,
   RotateCcw,
   Search,
@@ -24,7 +24,6 @@ import {
   Send,
   Settings2,
   ShieldCheck,
-  Sun,
   Trash2,
   TrendingUp,
   Trophy,
@@ -234,6 +233,33 @@ const TRANSMISSION_TYPES = {
   },
 };
 
+const THEME_OPTIONS = [
+  { id: "clair", label: "Clair", mode: "light", accent: "#2d66d5", deep: "#244d9c", surface: "#f5f7fa", sidebarA: "#0b1a30", sidebarB: "#0d223e" },
+  { id: "brume", label: "Brume", mode: "light", accent: "#52657d", deep: "#33465d", surface: "#eef2f5", sidebarA: "#202d3b", sidebarB: "#3a4b5f" },
+  { id: "menthe", label: "Menthe", mode: "light", accent: "#17896d", deep: "#0e5d4a", surface: "#edf8f4", sidebarA: "#0a332c", sidebarB: "#0d584a" },
+  { id: "sable", label: "Sable", mode: "light", accent: "#a96a28", deep: "#71421a", surface: "#fbf5ec", sidebarA: "#352416", sidebarB: "#604222" },
+  { id: "lavande", label: "Lavande", mode: "light", accent: "#7654bf", deep: "#4d3486", surface: "#f5f1fb", sidebarA: "#271d45", sidebarB: "#443272" },
+  { id: "rose", label: "Rose poudré", mode: "light", accent: "#bd4b78", deep: "#84304f", surface: "#fff3f6", sidebarA: "#3d1a2b", sidebarB: "#6f2949" },
+  { id: "corail", label: "Corail", mode: "light", accent: "#c85746", deep: "#8b342b", surface: "#fff3f0", sidebarA: "#3d1f1d", sidebarB: "#74352f" },
+  { id: "ocean", label: "Océan", mode: "light", accent: "#147fae", deep: "#075578", surface: "#edf8fb", sidebarA: "#082d44", sidebarB: "#07556e" },
+  { id: "ardoise", label: "Ardoise", mode: "light", accent: "#445f89", deep: "#293d5b", surface: "#f0f3f8", sidebarA: "#182538", sidebarB: "#2d435f" },
+  { id: "foret", label: "Forêt", mode: "light", accent: "#3f7d4c", deep: "#285334", surface: "#f1f7ef", sidebarA: "#173020", sidebarB: "#285436" },
+  { id: "nuit", label: "Nuit", mode: "dark", accent: "#4d82e5", deep: "#284f9c", surface: "#081421", sidebarA: "#0b1a30", sidebarB: "#0d223e" },
+  { id: "codex", label: "Codex", mode: "dark", accent: "#10a37f", deep: "#08765c", surface: "#0b1118", sidebarA: "#111827", sidebarB: "#182437" },
+  { id: "dracula", label: "Dracula", mode: "dark", accent: "#bd93f9", deep: "#7b5cb3", surface: "#282a36", sidebarA: "#1d1e28", sidebarB: "#322c46" },
+  { id: "evergreen", label: "Evergreen", mode: "dark", accent: "#5dc99b", deep: "#2c8d67", surface: "#09201a", sidebarA: "#08241d", sidebarB: "#0d4738" },
+  { id: "galaxie", label: "Galaxie", mode: "dark", accent: "#7b8cff", deep: "#4a5ab8", surface: "#11142b", sidebarA: "#15142e", sidebarB: "#29245c" },
+  { id: "ember", label: "Ember", mode: "dark", accent: "#f0785b", deep: "#b34835", surface: "#211411", sidebarA: "#2a1514", sidebarB: "#5a2822" },
+  { id: "gruvbox", label: "Gruvbox", mode: "dark", accent: "#d79921", deep: "#9b6110", surface: "#28231d", sidebarA: "#282018", sidebarB: "#4b3726" },
+  { id: "minuit", label: "Minuit", mode: "dark", accent: "#42b6cf", deep: "#247a96", surface: "#071824", sidebarA: "#061923", sidebarB: "#0b374a" },
+  { id: "obsidienne", label: "Obsidienne", mode: "dark", accent: "#d3d8e3", deep: "#7a8393", surface: "#111214", sidebarA: "#15161a", sidebarB: "#2a2c33" },
+  { id: "graphite", label: "Graphite", mode: "dark", accent: "#a8b4c7", deep: "#647086", surface: "#171a20", sidebarA: "#1b1e25", sidebarB: "#303640" },
+];
+
+function themeById(id) {
+  return THEME_OPTIONS.find((theme) => theme.id === id) || THEME_OPTIONS.find((theme) => theme.id === "nuit");
+}
+
 function readFormDraft(userId, type) {
   if (typeof window === "undefined") return null;
   const drafts = readStoredJson(DRAFTS_KEY, {});
@@ -400,6 +426,23 @@ function MenuGroup({ title, icon: Icon, open, onToggle, children }) {
     <div className="menu-group">
       <button className="menu-group-toggle" onClick={onToggle}><Icon size={18} /><span>{title}</span><ChevronDown className={open ? "rotated" : ""} size={15} /></button>
       {open && <div className="menu-group-items">{children || <span className="menu-empty">À compléter</span>}</div>}
+    </div>
+  );
+}
+
+function ThemePicker({ themeId, onChange }) {
+  const [open, setOpen] = useState(false);
+  const activeTheme = themeById(themeId);
+  return (
+    <div className="theme-picker">
+      <button className="theme-picker-trigger" type="button" onClick={() => setOpen((current) => !current)} aria-expanded={open} title="Choisir le thème de couleurs">
+        <span className="theme-swatch" style={{ "--theme-swatch": activeTheme.accent, "--theme-swatch-deep": activeTheme.deep }}><Palette size={15} /></span>
+        <span className="theme-picker-label">{activeTheme.label}</span><ChevronDown className={open ? "rotated" : ""} size={15} />
+      </button>
+      {open && <div className="theme-picker-menu" role="menu" aria-label="Thèmes de couleurs">
+        <div className="theme-picker-head"><strong>Thème de couleurs</strong><span>{THEME_OPTIONS.length} ambiances</span></div>
+        <div className="theme-options">{THEME_OPTIONS.map((theme) => <button key={theme.id} className={theme.id === themeId ? "selected" : ""} type="button" role="menuitemradio" aria-checked={theme.id === themeId} onClick={() => { onChange(theme.id); setOpen(false); }}><span className="theme-swatch" style={{ "--theme-swatch": theme.accent, "--theme-swatch-deep": theme.deep }}><i /></span><span>{theme.label}</span>{theme.id === themeId && <BadgeCheck size={15} />}</button>)}</div>
+      </div>}
     </div>
   );
 }
@@ -1410,7 +1453,7 @@ function App() {
   const [activeSection, setActiveSection] = useState("home");
   const [openGroups, setOpenGroups] = useState({ admin: true, referent: false, global: true, senior: false, chat: true });
   const [profileOpen, setProfileOpen] = useState(false);
-  const [darkMode, setDarkMode] = useState(false);
+  const [themeId, setThemeId] = useState("nuit");
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [quotas, setQuotas] = useState(DEFAULT_QUOTAS);
   const [missions, setMissions] = useState([]);
@@ -1495,11 +1538,19 @@ function App() {
       setSergeantAssignments(Array.isArray(savedAssignments) ? savedAssignments : []);
       setSubmissionHistory(Array.isArray(savedSubmissionHistory) ? savedSubmissionHistory : []);
       setPortalNotifications(Array.isArray(savedNotifications) ? savedNotifications : []);
-      const savedTheme = localStorage.getItem(THEME_KEY) === "dark";
+      const storedTheme = localStorage.getItem(THEME_KEY);
+      const savedThemeId = storedTheme === "dark" ? "nuit" : storedTheme === "light" ? "clair" : themeById(storedTheme).id;
       const savedSounds = localStorage.getItem(SOUND_KEY) !== "off";
-      setDarkMode(savedTheme);
+      setThemeId(savedThemeId);
       setSoundEnabled(savedSounds);
-      document.documentElement.dataset.theme = savedTheme ? "dark" : "light";
+      const initialTheme = themeById(savedThemeId);
+      document.documentElement.dataset.theme = initialTheme.mode;
+      document.documentElement.dataset.colorTheme = initialTheme.id;
+      document.documentElement.style.setProperty("--theme-accent", initialTheme.accent);
+      document.documentElement.style.setProperty("--theme-accent-deep", initialTheme.deep);
+      document.documentElement.style.setProperty("--theme-surface", initialTheme.surface);
+      document.documentElement.style.setProperty("--theme-sidebar-a", initialTheme.sidebarA);
+      document.documentElement.style.setProperty("--theme-sidebar-b", initialTheme.sidebarB);
       setReady(true);
     }
     initialize().catch((error) => {
@@ -1592,15 +1643,22 @@ function App() {
   }, [ready, session?.id]);
   useEffect(() => {
     if (!ready) return;
-    document.documentElement.dataset.theme = darkMode ? "dark" : "light";
-    localStorage.setItem(THEME_KEY, darkMode ? "dark" : "light");
-  }, [darkMode, ready]);
+    const selectedTheme = themeById(themeId);
+    document.documentElement.dataset.theme = selectedTheme.mode;
+    document.documentElement.dataset.colorTheme = selectedTheme.id;
+    document.documentElement.style.setProperty("--theme-accent", selectedTheme.accent);
+    document.documentElement.style.setProperty("--theme-accent-deep", selectedTheme.deep);
+    document.documentElement.style.setProperty("--theme-surface", selectedTheme.surface);
+    document.documentElement.style.setProperty("--theme-sidebar-a", selectedTheme.sidebarA);
+    document.documentElement.style.setProperty("--theme-sidebar-b", selectedTheme.sidebarB);
+    localStorage.setItem(THEME_KEY, selectedTheme.id);
+  }, [themeId, ready]);
   useEffect(() => { if (ready) localStorage.setItem(SOUND_KEY, soundEnabled ? "on" : "off"); }, [soundEnabled, ready]);
   useEffect(() => {
     if (!ready || !soundEnabled) return undefined;
     const onInterfaceClick = (event) => {
       if (!(event.target instanceof Element)) return;
-      const control = event.target.closest("button, a.primary, label.theme-toggle, label.preference-toggle");
+      const control = event.target.closest("button, a.primary, label.preference-toggle");
       if (!control || control.disabled || control.getAttribute("aria-disabled") === "true") return;
       try {
         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -2169,11 +2227,7 @@ function App() {
         <button className="profile-card" onClick={() => setProfileOpen(true)} title="Profil et paramètres"><Avatar user={session} /><div><strong>{session.firstName} {session.lastName}</strong><small>{session.grade || GRADES[0]} · {ROLES[session.role].label}</small></div><ChevronDown size={16} /></button>
         <div className="sidebar-actions">
           <button className="logout" onClick={logout}><LogOut size={18} /><span>Se déconnecter</span></button>
-          <label className="theme-toggle" title={darkMode ? "Passer en mode clair" : "Passer en mode sombre"}>
-            <input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} aria-label="Activer le mode sombre" />
-            {darkMode ? <Sun size={17} /> : <Moon size={17} />}
-            <i aria-hidden="true"><span /></i>
-          </label>
+          <ThemePicker themeId={themeId} onChange={setThemeId} />
         </div>
       </aside>
 
