@@ -8,7 +8,6 @@ const TYPE_CONFIG = {
   observation_hdr: { title: "📝 Nouvelle observation HDR", color: 0x20896b, envKey: "DISCORD_WEBHOOK_OBSERVATION_HDR", aitLabel: "AIT observé" },
   observation_so: { title: "👁️ Nouvelle observation SO", color: 0x7957c8, envKey: "DISCORD_WEBHOOK_OBSERVATION_SO", aitLabel: "Nom de l’AIT" },
   sergeant_report: { title: "📋 Rapport nouveau Sous-Officier", color: 0xb97918, envKey: "DISCORD_WEBHOOK_SERGEANT_REPORT" },
-  protocol: { title: "⚖️ Mise en protocole", color: 0x7957c8 },
 };
 
 const ROLE_LABELS = {
@@ -125,27 +124,13 @@ export async function POST(request) {
     if (current.error) return current.error;
     const actor = current.user;
     if (body.type === "sergeant_report" && actor.role !== "senior") return json({ error: "Seul le Sous-Officier Supérieur assigné peut envoyer ce rapport." }, 403);
-    if (body.type === "protocol" && actor.role !== "admin") return json({ error: "La mise en protocole est réservée à l’administrateur." }, 403);
     const webhookUrl = webhookFor(body.type);
-    if (body.type !== "protocol" && (!webhookUrl || !validWebhookUrl(webhookUrl))) return json({ error: "Le salon Discord de cette catégorie n’est pas configuré." }, 503);
+    if (!webhookUrl || !validWebhookUrl(webhookUrl)) return json({ error: "Le salon Discord de cette catégorie n’est pas configuré." }, 503);
 
     let fields;
     let embedColor = config.color;
     let storedValues;
-    if (body.type === "protocol") {
-      const recordedBy = clean(body.values?.recordedBy, 100);
-      const arrete = clean(body.values?.arrete, 100);
-      const steamId64 = clean(body.values?.steamId64, 17).replace(/\D/g, "");
-      const branch = clean(body.values?.branch, 100);
-      const protocol = clean(body.values?.protocol, 100);
-      const schedule = clean(body.values?.schedule, 100);
-      const reason = clean(body.values?.reason, 950);
-      if (!recordedBy || !arrete || !/^\d{17}$/.test(steamId64) || !branch || protocol !== "Protocole 1 (10 min)" || !schedule || !reason) {
-        return json({ error: "Veuillez renseigner tous les champs de la mise en protocole." }, 400);
-      }
-      storedValues = { recordedBy, arrete, steamId64, branch, protocol, schedule, reason };
-      fields = [];
-    } else if (body.type === "sergeant_report") {
+    if (body.type === "sergeant_report") {
       const sergeantName = clean(body.values?.sergeantName, 100);
       const positivePoints = clean(body.values?.positivePoints, 950);
       const negativePoints = clean(body.values?.negativePoints, 950);
@@ -191,7 +176,7 @@ export async function POST(request) {
     // Le rôle est une valeur technique (ex. "senior"). On privilégie le
     // grade pour Discord et, à défaut, un libellé français compréhensible.
     const senderPosition = clean(actor.grade, 60) || ROLE_LABELS[actor.role] || "";
-    const discordResponse = body.type === "protocol" ? null : await fetch(webhookUrl, {
+    const discordResponse = await fetch(webhookUrl, {
       method: "POST",
       // Cloudflare Workers n'accepte que "follow" ou "manual".
       // Le statut HTTP est déjà vérifié juste après l'appel.
@@ -212,7 +197,7 @@ export async function POST(request) {
         }],
       }),
     });
-    if (discordResponse && !discordResponse.ok) {
+    if (!discordResponse.ok) {
       console.error("Discord webhook rejected submission", discordResponse.status);
       return json({ error: "Discord n’a pas accepté le message. Réessayez dans un instant." }, 502);
     }
@@ -234,16 +219,16 @@ export async function POST(request) {
         target: `__portal_submission_${body.type}`,
       }),
     });
-    await recordAuditLog({ actor, category: "form", action: body.type === "protocol" ? "Mise en protocole enregistrée" : "Formulaire envoyé", details: config.title });
+    await recordAuditLog({ actor, category: "form", action: "Formulaire envoyé", details: config.title });
     await database("portal_notifications", {
       method: "POST",
       headers: { Prefer: "return=minimal" },
       body: JSON.stringify({
         id: crypto.randomUUID(),
         recipient_ids: [actor.id],
-        kind: body.type === "protocol" ? "info" : "form",
-        title: body.type === "protocol" ? "Mise en protocole enregistrée" : `Formulaire envoyé — ${config.title.replace(/^\S+\s+/, "")}`,
-        body: body.type === "protocol" ? "La fiche a été ajoutée à l’historique interne." : "Votre formulaire a été transmis sur Discord.",
+        kind: "form",
+        title: `Formulaire envoyé — ${config.title.replace(/^\S+\s+/, "")}`,
+        body: "Votre formulaire a été transmis sur Discord.",
         target: body.type,
       }),
     });
