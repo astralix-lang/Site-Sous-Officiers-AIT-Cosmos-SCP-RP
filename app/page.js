@@ -1573,6 +1573,8 @@ function App() {
     if (Array.isArray(state?.auditLogs)) setAuditLogs((current) => mergeAuditLogs(current, state.auditLogs));
     if (Array.isArray(state?.submissions)) setSubmissionHistory(state.submissions);
     if (state?.quotas && typeof state.quotas === "object") setQuotas((current) => ({ ...DEFAULT_QUOTAS, ...current, ...state.quotas }));
+    if (state?.summarySettings && typeof state.summarySettings === "object") setSummarySettings(state.summarySettings);
+    if (Array.isArray(state?.sergeantAssignments)) setSergeantAssignments(state.sergeantAssignments);
     setPortalRemote(true);
   }
   function syncSharedPortal(action, payload = {}) {
@@ -1620,6 +1622,12 @@ function App() {
   }
   function resetActivitySummary() {
     if (!hasAdminAccess(session.role) || !confirm("Réinitialiser les graphiques de recommandations et d’observations ? Le classement restera inchangé.")) return;
+    if (portalRemote) {
+      portalRequest("POST", { action: "reset_summary", scope: "activity" })
+        .then((state) => { applySharedPortalState(state); flash("Les graphiques sont réinitialisés pour tous les membres."); })
+        .catch((error) => flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible."));
+      return;
+    }
     const activityResetAt = new Date().toISOString();
     setSummarySettings((current) => ({ ...current, activityResetAt }));
     addLog("summary", "Graphiques d’activité réinitialisés", "Recommandations et observations remises à zéro.");
@@ -1627,6 +1635,12 @@ function App() {
   }
   function resetActivityRanking() {
     if (!hasAdminAccess(session.role) || !confirm("Réinitialiser uniquement le classement des Sous-Officiers les plus actifs ?")) return;
+    if (portalRemote) {
+      portalRequest("POST", { action: "reset_summary", scope: "ranking" })
+        .then((state) => { applySharedPortalState(state); flash("Le classement est réinitialisé pour tous les membres."); })
+        .catch((error) => flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible."));
+      return;
+    }
     const rankingResetAt = new Date().toISOString();
     setSummarySettings((current) => ({ ...current, rankingResetAt }));
     addLog("summary", "Classement d’activité réinitialisé", "Le classement repart à zéro sans modifier les graphiques.");
@@ -1728,7 +1742,12 @@ function App() {
     flash(message);
     recordSubmission("sergeant_report", values);
     const sergeant = users.find((user) => user.id === sergeantId);
-    setSergeantAssignments((current) => current.map((assignment) => assignment.sergeantId === sergeantId && assignment.observerId === session.id && assignment.status === "active" ? { ...assignment, status: "completed", completedAt: new Date().toISOString() } : assignment));
+    const assignment = sergeantAssignments.find((item) => item.sergeantId === sergeantId && item.observerId === session.id && item.status === "active");
+    if (portalRemote && assignment) {
+      portalRequest("POST", { action: "complete_sergeant_assignment", assignmentId: assignment.id })
+        .then(applySharedPortalState)
+        .catch((error) => flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible."));
+    } else setSergeantAssignments((current) => current.map((item) => item.sergeantId === sergeantId && item.observerId === session.id && item.status === "active" ? { ...item, status: "completed", completedAt: new Date().toISOString() } : item));
     if (!portalRemote) {
       addLog("form", "Rapport nouveau Sous-Officier envoyé", sergeant ? `${sergeant.grade} ${sergeant.firstName} ${sergeant.lastName}` : "Sergent assigné");
       addPortalNotification({ recipients: [session.id], title: "Rapport nouveau Sous-Officier envoyé", text: "Votre rapport a été transmis sur Discord.", target: "sergeant_report" });
@@ -1739,6 +1758,12 @@ function App() {
     const sergeant = users.find((user) => user.id === sergeantId && user.role === "officer" && user.grade === "Sergent");
     const observer = users.find((user) => user.id === observerId && user.role === "senior");
     if (!sergeant || !observer || !dueDate) return flash("L’assignation est invalide.");
+    if (portalRemote) {
+      portalRequest("POST", { action: "assign_sergeant", sergeantId, observerId, dueDate })
+        .then((state) => { applySharedPortalState(state); flash("Le Référent du nouveau Sergent a bien été enregistré."); })
+        .catch((error) => flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible."));
+      return;
+    }
     const now = new Date().toISOString();
     setSergeantAssignments((current) => {
       const existing = current.find((assignment) => assignment.sergeantId === sergeantId);
@@ -1752,6 +1777,12 @@ function App() {
     if (!hasManagerAccess(session.role)) return;
     const assignment = sergeantAssignments.find((item) => item.id === assignmentId && item.status === "active");
     if (!assignment) return;
+    if (portalRemote) {
+      portalRequest("POST", { action: "remind_sergeant_assignment", assignmentId })
+        .then((state) => { applySharedPortalState(state); flash("Le rappel a bien été envoyé au SO Sup assigné."); })
+        .catch((error) => flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible."));
+      return;
+    }
     const now = new Date().toISOString();
     setSergeantAssignments((current) => current.map((item) => item.id === assignmentId ? { ...item, reminderAt: now } : item));
     const sergeant = users.find((user) => user.id === assignment.sergeantId);
@@ -1763,6 +1794,12 @@ function App() {
     if (!hasManagerAccess(session.role)) return;
     const assignment = sergeantAssignments.find((item) => item.id === assignmentId);
     if (!assignment || !confirm("Supprimer cette assignation ?")) return;
+    if (portalRemote) {
+      portalRequest("POST", { action: "delete_sergeant_assignment", assignmentId })
+        .then((state) => { applySharedPortalState(state); flash("L’assignation a été supprimée."); })
+        .catch((error) => flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible."));
+      return;
+    }
     setSergeantAssignments((current) => current.filter((item) => item.id !== assignmentId));
     addLog("assignment", "Assignation de Sergent supprimée");
     flash("L’assignation a été supprimée.");

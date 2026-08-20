@@ -12,6 +12,10 @@ const DEFAULT_QUOTA_TARGETS = { recommendation: 1, pcs_exp: 1, observations: 1, 
 const SUBMISSION_TARGET_PREFIX = "__portal_submission_";
 const QUOTA_SETTINGS_ID = "f51a7616-15ea-40c8-aac0-7e265c913521";
 const QUOTA_SETTINGS_TARGET = "__portal_quota_settings";
+const SUMMARY_SETTINGS_ID = "a148a81a-6d81-46a4-8c82-fd09391b76cc";
+const SUMMARY_SETTINGS_TARGET = "__portal_summary_settings";
+const ASSIGNMENTS_ID = "c90a8db5-8c52-4a2b-b2a7-503c95dcb2e2";
+const ASSIGNMENTS_TARGET = "__portal_sergeant_assignments";
 const FILE_TYPES = new Set([
   "image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf", "text/plain",
   "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -29,6 +33,10 @@ function numberInRange(value, minimum = 0, maximum = 100) {
 }
 
 function objectValue(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
+
+function jsonValue(value, fallback) {
+  try { return JSON.parse(value || ""); } catch { return fallback; }
+}
 
 function isManager(user) { return ["admin", "management", "referent"].includes(user?.role); }
 function parseArray(value) { return Array.isArray(value) ? value : []; }
@@ -201,8 +209,10 @@ async function quotaState(submissions) {
 }
 
 async function stateFor(user) {
-  const [chats, notifications, auditLogs, submissions] = await Promise.all([allChats(user), notificationsFor(user), auditLogsFor(user), submissionsFor()]);
-  return { chats, notifications, auditLogs, submissions, quotas: await quotaState(submissions) };
+  const [chats, notifications, auditLogs, submissions, summarySettings, sergeantAssignments] = await Promise.all([
+    allChats(user), notificationsFor(user), auditLogsFor(user), submissionsFor(), summarySettingsFor(), assignmentsFor(),
+  ]);
+  return { chats, notifications, auditLogs, submissions, quotas: await quotaState(submissions), summarySettings, sergeantAssignments };
 }
 
 async function chatById(id) {
@@ -217,6 +227,13 @@ async function validMembers(ids, actorId) {
   const rows = await database("portal_users?select=id,blocked,approval_status");
   const active = new Set(parseArray(rows).filter((row) => !row.blocked && (!row.approval_status || row.approval_status === "approved")).map((row) => row.id));
   return allowed.filter((id) => active.has(id));
+}
+
+async function portalUser(id) {
+  if (!UUID.test(id)) return null;
+  const rows = await database(`portal_users?id=eq.${encodeURIComponent(id)}&select=id,role,grade,blocked,approval_status,first_name,last_name`);
+  const user = parseArray(rows)[0];
+  return user && !user.blocked && (!user.approval_status || user.approval_status === "approved") ? user : null;
 }
 
 async function createChatOnFirstMessage(chatId, draft, actor) {
@@ -276,6 +293,29 @@ async function updateQuotaSettings(values) {
   });
 }
 
+async function sharedRecord(id, target, title, fallback) {
+  const rows = await database(`portal_notifications?id=eq.${encodeURIComponent(id)}&select=*`);
+  const row = parseArray(rows)[0];
+  if (row) return jsonValue(row.body, fallback);
+  try {
+    await database("portal_notifications", {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({ id, recipient_ids: null, kind: "info", title, body: JSON.stringify(fallback), target }),
+    });
+  } catch { /* Création concurrente : la valeur par défaut est sûre. */ }
+  return fallback;
+}
+
+async function saveSharedRecord(id, target, title, value) {
+  await sharedRecord(id, target, title, value);
+  await database(`portal_notifications?id=eq.${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ body: JSON.stringify(value), target, title }),
+  });
+}
+
 async function currentQuotaSettings() {
   const rows = await database(`portal_notifications?id=eq.${encodeURIComponent(QUOTA_SETTINGS_ID)}&select=*`);
   const row = parseArray(rows)[0];
@@ -292,6 +332,29 @@ async function currentQuotaSettings() {
     });
   } catch { /* Une autre requête a pu créer la ligne au même instant. */ }
   return initial;
+}
+
+async function summarySettingsFor() {
+  const value = await sharedRecord(SUMMARY_SETTINGS_ID, SUMMARY_SETTINGS_TARGET, "Réglages internes du résumé", { activityResetAt: null, rankingResetAt: null });
+  return { activityResetAt: typeof value?.activityResetAt === "string" ? value.activityResetAt : null, rankingResetAt: typeof value?.rankingResetAt === "string" ? value.rankingResetAt : null };
+}
+
+async function assignmentsFor() {
+  const value = await sharedRecord(ASSIGNMENTS_ID, ASSIGNMENTS_TARGET, "Assignations internes des Sergents", []);
+  return parseArray(value).filter((assignment) => UUID.test(String(assignment?.id || "")) && UUID.test(String(assignment?.sergeantId || "")) && UUID.test(String(assignment?.observerId || ""))).map((assignment) => ({
+    id: assignment.id,
+    sergeantId: assignment.sergeantId,
+    observerId: assignment.observerId,
+    dueDate: /^\d{4}-\d{2}-\d{2}$/.test(String(assignment.dueDate || "")) ? assignment.dueDate : "",
+    status: assignment.status === "completed" ? "completed" : "active",
+    assignedAt: typeof assignment.assignedAt === "string" ? assignment.assignedAt : null,
+    reminderAt: typeof assignment.reminderAt === "string" ? assignment.reminderAt : null,
+    completedAt: typeof assignment.completedAt === "string" ? assignment.completedAt : null,
+  }));
+}
+
+async function saveAssignments(assignments) {
+  await saveSharedRecord(ASSIGNMENTS_ID, ASSIGNMENTS_TARGET, "Assignations internes des Sergents", assignments);
 }
 
 function failure(error) {
@@ -381,6 +444,59 @@ export async function POST(request) {
       if (!message || !chat || (message.sender_id !== actor.id && !isManager(actor))) return json({ error: "Vous ne pouvez pas supprimer ce message." }, 403);
       await database(`portal_chat_messages?id=eq.${encodeURIComponent(id)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
       await database(`portal_chats?id=eq.${encodeURIComponent(chat.id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ updated_at: new Date().toISOString() }) });
+    } else if (action === "reset_summary") {
+      if (!adminAccess(actor)) return json({ error: "Seul un administrateur ou la gérance peut réinitialiser le résumé." }, 403);
+      const scope = body?.scope === "ranking" ? "ranking" : "activity";
+      const settings = await summarySettingsFor();
+      const now = new Date().toISOString();
+      const next = scope === "ranking" ? { ...settings, rankingResetAt: now } : { ...settings, activityResetAt: now };
+      await saveSharedRecord(SUMMARY_SETTINGS_ID, SUMMARY_SETTINGS_TARGET, "Réglages internes du résumé", next);
+      await recordAuditLog({ actor, category: "summary", action: scope === "ranking" ? "Classement d’activité réinitialisé" : "Graphiques d’activité réinitialisés" });
+    } else if (action === "assign_sergeant") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent créer une assignation." }, 403);
+      const sergeantId = String(body?.sergeantId || "");
+      const observerId = String(body?.observerId || "");
+      const dueDate = String(body?.dueDate || "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return json({ error: "Date limite invalide." }, 400);
+      const [sergeant, observer] = await Promise.all([portalUser(sergeantId), portalUser(observerId)]);
+      if (!sergeant || sergeant.role !== "officer" || sergeant.grade !== "Sergent" || !observer || observer.role !== "senior") return json({ error: "Le Sergent ou le Sous-Officier Supérieur est invalide." }, 400);
+      const assignments = await assignmentsFor();
+      const now = new Date().toISOString();
+      const existing = assignments.find((assignment) => assignment.sergeantId === sergeantId);
+      const next = existing
+        ? assignments.map((assignment) => assignment.id === existing.id ? { ...assignment, observerId, dueDate, status: "active", assignedAt: now, reminderAt: null, completedAt: null } : assignment)
+        : [{ id: crypto.randomUUID(), sergeantId, observerId, dueDate, status: "active", assignedAt: now, reminderAt: null, completedAt: null }, ...assignments];
+      await saveAssignments(next);
+      await createNotification({ recipients: [sergeantId], kind: "info", title: "Référent de suivi attribué", text: `${observer.grade} ${observer.first_name} ${observer.last_name || ""}`.trim(), target: "home" });
+      await createNotification({ recipients: [observerId], kind: "info", title: "Nouveau Sergent assigné", text: `${sergeant.grade} ${sergeant.first_name} ${sergeant.last_name || ""}`.trim(), target: "sergeant_report" });
+      await recordAuditLog({ actor, category: "assignment", action: "Sergent assigné à un SO Sup", details: `${sergeant.first_name} ${sergeant.last_name || ""} → ${observer.first_name} ${observer.last_name || ""}`.trim() });
+    } else if (action === "remind_sergeant_assignment") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent envoyer un rappel." }, 403);
+      const assignmentId = String(body?.assignmentId || "");
+      const assignments = await assignmentsFor();
+      const assignment = assignments.find((item) => item.id === assignmentId && item.status === "active");
+      if (!assignment) return json({ error: "Assignation introuvable." }, 404);
+      const now = new Date().toISOString();
+      const next = assignments.map((item) => item.id === assignment.id ? { ...item, reminderAt: now } : item);
+      await saveAssignments(next);
+      const sergeant = await portalUser(assignment.sergeantId);
+      await createNotification({ recipients: [assignment.observerId], kind: "info", title: "Rappel : rapport de nouveau Sergent", text: sergeant ? `Rapport de ${sergeant.grade} ${sergeant.first_name} ${sergeant.last_name || ""}`.trim() : "Votre rapport assigné arrive à échéance.", target: "sergeant_report" });
+      await recordAuditLog({ actor, category: "assignment", action: "Rappel de rapport envoyé", details: assignment.observerId });
+    } else if (action === "delete_sergeant_assignment") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent supprimer une assignation." }, 403);
+      const assignmentId = String(body?.assignmentId || "");
+      const assignments = await assignmentsFor();
+      if (!assignments.some((item) => item.id === assignmentId)) return json({ error: "Assignation introuvable." }, 404);
+      await saveAssignments(assignments.filter((item) => item.id !== assignmentId));
+      await recordAuditLog({ actor, category: "assignment", action: "Assignation de Sergent supprimée" });
+    } else if (action === "complete_sergeant_assignment") {
+      const assignmentId = String(body?.assignmentId || "");
+      const assignments = await assignmentsFor();
+      const assignment = assignments.find((item) => item.id === assignmentId && item.observerId === actor.id && item.status === "active");
+      if (!assignment || actor.role !== "senior") return json({ error: "Assignation introuvable." }, 404);
+      const next = assignments.map((item) => item.id === assignment.id ? { ...item, status: "completed", completedAt: new Date().toISOString() } : item);
+      await saveAssignments(next);
+      await recordAuditLog({ actor, category: "assignment", action: "Rapport de nouveau Sergent finalisé" });
     } else if (action === "notify") {
       await createNotification({ recipients: body?.recipients === "all" ? null : body?.recipients, kind: body?.kind, title: body?.title, text: body?.text, target: body?.target });
     } else if (action === "quota_set_target") {
