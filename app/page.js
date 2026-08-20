@@ -792,8 +792,8 @@ function SummaryPanel({ session, users, submissions, activityResetAt, rankingRes
     { subtype: "observation_hdr", label: "Observation HDR", shortLabel: "Obs. HDR", tone: "observation-hdr", kpiTone: "green", icon: MessageSquareText },
     { subtype: "observation_so", label: "Observation SO", shortLabel: "Obs. SO", tone: "observation-so", kpiTone: "violet", icon: MessageSquareText },
   ];
-  // Les Sous-Officiers Supérieurs ne consultent pas le volume des observations SO dans le résumé.
-  const visibleSeries = session.role === "senior" ? allSeries.filter((series) => series.subtype !== "observation_so") : allSeries;
+  // Le résumé est commun à tous : chaque niveau d'accès voit les quatre catégories.
+  const visibleSeries = allSeries;
   const visibleSubtypes = new Set(visibleSeries.map((series) => series.subtype));
   const periodData = getSummaryPeriod(period);
   const periodLabels = { day: "Aujourd’hui", week: "Cette semaine", month: "Ce mois", year: "Cette année" };
