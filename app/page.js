@@ -108,6 +108,15 @@ const REPORT_CONCLUSIONS = [
   "Prolongation de la semaine de test",
   "Retour caporal-chef",
 ];
+const RECOVERY_ADMIN_EMAIL = "admin@portail-so.fr";
+const RECOVERY_ADMIN_PASSWORD = "Admin2026!";
+const RECOVERY_ADMIN_PROFILE = {
+  firstName: "Admin",
+  lastName: "Secours",
+  email: RECOVERY_ADMIN_EMAIL,
+  role: "admin",
+  grade: "Major",
+};
 
 function observationQuotaCount(counts) {
   const sharedCount = Number(counts?.observations);
