@@ -10,6 +10,14 @@ const TYPE_CONFIG = {
   sergeant_report: { title: "📋 Rapport nouveau Sous-Officier", color: 0xb97918, envKey: "DISCORD_WEBHOOK_SERGEANT_REPORT" },
 };
 
+const ROLE_LABELS = {
+  admin: "Admin",
+  management: "Gérance",
+  referent: "Référent SO",
+  senior: "Sous-Officier Supérieur",
+  officer: "Sous-Officier",
+};
+
 // Keep variable names explicit: Next.js then makes the secrets available to
 // Vercel Edge Functions without exposing them to the browser.
 function webhookFor(type) {
@@ -165,7 +173,9 @@ export async function POST(request) {
       value: `\u200b\n${field.value}${index < fields.length - 1 ? "\n━━━━━━━━━━━━━━━━━━━━" : ""}`,
     }));
     const senderName = `${actor.first_name || ""} ${actor.last_name || ""}`.trim() || "Utilisateur du portail";
-    const senderRole = clean(actor.role, 100);
+    // Le rôle est une valeur technique (ex. "senior"). On privilégie le
+    // grade pour Discord et, à défaut, un libellé français compréhensible.
+    const senderPosition = clean(actor.grade, 60) || ROLE_LABELS[actor.role] || "";
     const discordResponse = await fetch(webhookUrl, {
       method: "POST",
       // Cloudflare Workers n'accepte que "follow" ou "manual".
@@ -182,7 +192,7 @@ export async function POST(request) {
           description: "━━━━━━━━━━━━━━━━━━━━",
           color: embedColor,
           fields,
-          footer: { text: `🔒 Transmis par ${senderName}${senderRole ? ` • ${senderRole}` : ""}` },
+          footer: { text: `🔒 Transmis par ${senderName}${senderPosition ? ` • ${senderPosition}` : ""}` },
           timestamp: new Date().toISOString(),
         }],
       }),

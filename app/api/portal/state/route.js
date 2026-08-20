@@ -41,7 +41,15 @@ function jsonValue(value, fallback) {
 function isManager(user) { return ["admin", "management", "referent"].includes(user?.role); }
 function parseArray(value) { return Array.isArray(value) ? value : []; }
 function uniqueIds(values) { return [...new Set(parseArray(values).filter((value) => UUID.test(String(value))))]; }
-function label(date) { return new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(date)); }
+// Les routes Vercel s’exécutent en UTC. Toutes les heures affichées par le
+// portail sont donc explicitement converties à l’heure française.
+function label(date) {
+  return new Intl.DateTimeFormat("fr-FR", {
+    dateStyle: "short",
+    timeStyle: "short",
+    timeZone: "Europe/Paris",
+  }).format(new Date(date));
+}
 
 function attachmentList(value) {
   const entries = parseArray(value).slice(0, MAX_ATTACHMENTS);
