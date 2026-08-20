@@ -234,30 +234,20 @@ const TRANSMISSION_TYPES = {
 };
 
 const THEME_OPTIONS = [
-  { id: "clair", label: "Clair", mode: "light", accent: "#2d66d5", deep: "#244d9c", surface: "#f5f7fa", sidebarA: "#0b1a30", sidebarB: "#0d223e" },
-  { id: "brume", label: "Brume", mode: "light", accent: "#52657d", deep: "#33465d", surface: "#eef2f5", sidebarA: "#202d3b", sidebarB: "#3a4b5f" },
-  { id: "menthe", label: "Menthe", mode: "light", accent: "#17896d", deep: "#0e5d4a", surface: "#edf8f4", sidebarA: "#0a332c", sidebarB: "#0d584a" },
-  { id: "sable", label: "Sable", mode: "light", accent: "#a96a28", deep: "#71421a", surface: "#fbf5ec", sidebarA: "#352416", sidebarB: "#604222" },
-  { id: "lavande", label: "Lavande", mode: "light", accent: "#7654bf", deep: "#4d3486", surface: "#f5f1fb", sidebarA: "#271d45", sidebarB: "#443272" },
-  { id: "rose", label: "Rose poudré", mode: "light", accent: "#bd4b78", deep: "#84304f", surface: "#fff3f6", sidebarA: "#3d1a2b", sidebarB: "#6f2949" },
-  { id: "corail", label: "Corail", mode: "light", accent: "#c85746", deep: "#8b342b", surface: "#fff3f0", sidebarA: "#3d1f1d", sidebarB: "#74352f" },
-  { id: "ocean", label: "Océan", mode: "light", accent: "#147fae", deep: "#075578", surface: "#edf8fb", sidebarA: "#082d44", sidebarB: "#07556e" },
-  { id: "ardoise", label: "Ardoise", mode: "light", accent: "#445f89", deep: "#293d5b", surface: "#f0f3f8", sidebarA: "#182538", sidebarB: "#2d435f" },
-  { id: "foret", label: "Forêt", mode: "light", accent: "#3f7d4c", deep: "#285334", surface: "#f1f7ef", sidebarA: "#173020", sidebarB: "#285436" },
+  { id: "clair", label: "Aurore", mode: "light", accent: "#0b9078", deep: "#08625b", surface: "#e7f7f2", sidebarA: "#083c40", sidebarB: "#0b766d" },
+  { id: "sable", label: "Sable", mode: "light", accent: "#be6b2f", deep: "#7e3d14", surface: "#fff6e8", sidebarA: "#372317", sidebarB: "#72512a" },
+  { id: "rose", label: "Sakura", mode: "light", accent: "#ca4f7c", deep: "#88334f", surface: "#fff1f6", sidebarA: "#3b1b3f", sidebarB: "#742a5d" },
+  { id: "ocean", label: "Nord", mode: "light", accent: "#2475c9", deep: "#174c8a", surface: "#edf7ff", sidebarA: "#0b2d53", sidebarB: "#0b5c8e" },
   { id: "nuit", label: "Nuit", mode: "dark", accent: "#4d82e5", deep: "#284f9c", surface: "#081421", sidebarA: "#0b1a30", sidebarB: "#0d223e" },
-  { id: "codex", label: "Codex", mode: "dark", accent: "#10a37f", deep: "#08765c", surface: "#0b1118", sidebarA: "#111827", sidebarB: "#182437" },
-  { id: "dracula", label: "Dracula", mode: "dark", accent: "#bd93f9", deep: "#7b5cb3", surface: "#282a36", sidebarA: "#1d1e28", sidebarB: "#322c46" },
-  { id: "evergreen", label: "Evergreen", mode: "dark", accent: "#5dc99b", deep: "#2c8d67", surface: "#09201a", sidebarA: "#08241d", sidebarB: "#0d4738" },
-  { id: "galaxie", label: "Galaxie", mode: "dark", accent: "#7b8cff", deep: "#4a5ab8", surface: "#11142b", sidebarA: "#15142e", sidebarB: "#29245c" },
-  { id: "ember", label: "Ember", mode: "dark", accent: "#f0785b", deep: "#b34835", surface: "#211411", sidebarA: "#2a1514", sidebarB: "#5a2822" },
-  { id: "gruvbox", label: "Gruvbox", mode: "dark", accent: "#d79921", deep: "#9b6110", surface: "#28231d", sidebarA: "#282018", sidebarB: "#4b3726" },
-  { id: "minuit", label: "Minuit", mode: "dark", accent: "#42b6cf", deep: "#247a96", surface: "#071824", sidebarA: "#061923", sidebarB: "#0b374a" },
-  { id: "obsidienne", label: "Obsidienne", mode: "dark", accent: "#d3d8e3", deep: "#7a8393", surface: "#111214", sidebarA: "#15161a", sidebarB: "#2a2c33" },
-  { id: "graphite", label: "Graphite", mode: "dark", accent: "#a8b4c7", deep: "#647086", surface: "#171a20", sidebarA: "#1b1e25", sidebarB: "#303640" },
+  { id: "foret", label: "Forêt", mode: "dark", accent: "#48ba78", deep: "#237247", surface: "#071c15", sidebarA: "#0a261b", sidebarB: "#174b32" },
+  { id: "cyberpunk", label: "Cyberpunk", mode: "dark", accent: "#ff45c7", deep: "#a4198c", surface: "#160b22", sidebarA: "#210b31", sidebarB: "#5c1257" },
+  { id: "dracula", label: "Dracula", mode: "dark", accent: "#bd93f9", deep: "#7b5cb3", surface: "#282a36", sidebarA: "#1d1e28", sidebarB: "#4a3b68" },
+  { id: "volcan", label: "Volcan", mode: "dark", accent: "#ef6a40", deep: "#a83620", surface: "#24120e", sidebarA: "#301411", sidebarB: "#712318" },
+  { id: "monochrome", label: "Monochrome", mode: "dark", accent: "#e7e9ef", deep: "#858b99", surface: "#111214", sidebarA: "#17181c", sidebarB: "#383a43" },
 ];
 
 function themeById(id) {
-  return THEME_OPTIONS.find((theme) => theme.id === id) || THEME_OPTIONS.find((theme) => theme.id === "nuit");
+  return THEME_OPTIONS.find((theme) => theme.id === id) || THEME_OPTIONS.find((theme) => theme.id === "nuit") || THEME_OPTIONS[0];
 }
 
 function readFormDraft(userId, type) {
