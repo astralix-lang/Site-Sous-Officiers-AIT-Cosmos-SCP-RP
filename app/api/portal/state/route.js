@@ -676,6 +676,14 @@ export async function POST(request) {
       const notification = parseArray(rows)[0];
       if (!notification || !canSeeNotification(notification, actor)) return json({ error: "Notification introuvable." }, 404);
       await database("portal_notification_dismissals?on_conflict=notification_id,user_id", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=minimal" }, body: JSON.stringify({ notification_id: notificationId, user_id: actor.id }) });
+    } else if (action === "dismiss_all_notifications") {
+      const rows = parseArray(await database("portal_notifications?select=id,recipient_ids,kind,target"));
+      const dismissals = rows
+        .filter((notification) => UUID.test(String(notification.id)) && !String(notification.target || "").startsWith("__portal_") && canSeeNotification(notification, actor))
+        .map((notification) => ({ notification_id: notification.id, user_id: actor.id }));
+      if (dismissals.length) {
+        await database("portal_notification_dismissals?on_conflict=notification_id,user_id", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=minimal" }, body: JSON.stringify(dismissals) });
+      }
     } else if (action === "clear_audit_logs") {
       if (!adminAccess(actor)) return json({ error: "Seul un administrateur ou la g\u00e9rance peut r\u00e9initialiser les logs." }, 403);
       await database("portal_audit_logs?created_at=not.is.null", { method: "DELETE", headers: { Prefer: "return=minimal" } });
