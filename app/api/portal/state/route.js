@@ -6,7 +6,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const MAX_MESSAGE_BYTES = 4 * 1024 * 1024;
 const MAX_ATTACHMENTS = 3;
 const MAX_ATTACHMENT_SIZE = 1024 * 1024;
-const SUBMISSION_TYPES = new Set(["recommendation", "pcs_exp", "observation_hdr", "observation_so", "sergeant_report"]);
+const SUBMISSION_TYPES = new Set(["recommendation", "pcs_exp", "observation_hdr", "observation_so", "sergeant_report", "protocol"]);
 const QUOTA_CATEGORIES = new Set(["recommendation", "pcs_exp", "observations", "mission_internal"]);
 const DEFAULT_QUOTA_TARGETS = { recommendation: 1, pcs_exp: 1, observations: 1, mission_internal: 0 };
 const SUBMISSION_TARGET_PREFIX = "__portal_submission_";
@@ -217,10 +217,11 @@ async function quotaState(submissions) {
 }
 
 async function stateFor(user) {
-  const [chats, notifications, auditLogs, submissions, summarySettings, sergeantAssignments] = await Promise.all([
+  const [chats, notifications, auditLogs, allSubmissions, summarySettings, sergeantAssignments] = await Promise.all([
     allChats(user), notificationsFor(user), auditLogsFor(user), submissionsFor(), summarySettingsFor(), assignmentsFor(),
   ]);
-  return { chats, notifications, auditLogs, submissions, quotas: await quotaState(submissions), summarySettings, sergeantAssignments };
+  const submissions = user?.role === "admin" ? allSubmissions : allSubmissions.filter((entry) => entry.type !== "protocol");
+  return { chats, notifications, auditLogs, submissions, quotas: await quotaState(allSubmissions), summarySettings, sergeantAssignments };
 }
 
 async function chatById(id) {
@@ -282,6 +283,18 @@ function submissionValues(type, value) {
       conclusion: clean(values.conclusion, 100),
     };
     return Object.values(result).every(Boolean) ? result : null;
+  }
+  if (type === "protocol") {
+    const result = {
+      recordedBy: clean(values.recordedBy, 100),
+      arrete: clean(values.arrete, 100),
+      steamId64: clean(values.steamId64, 17).replace(/\D/g, ""),
+      branch: clean(values.branch, 100),
+      protocol: clean(values.protocol, 100),
+      schedule: clean(values.schedule, 100),
+      reason: clean(values.reason, 950),
+    };
+    return result.recordedBy && result.arrete && /^\d{17}$/.test(result.steamId64) && result.branch && result.protocol === "Protocole 1 (10 min)" && result.schedule && result.reason ? result : null;
   }
   const result = {
     aitName: clean(values.aitName, 100),
@@ -544,6 +557,7 @@ export async function POST(request) {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent réinitialiser cet historique." }, 403);
       const type = String(body?.type || "");
       if (!SUBMISSION_TYPES.has(type)) return json({ error: "Historique invalide." }, 400);
+      if (type === "protocol" && actor.role !== "admin") return json({ error: "La mise en protocole est réservée à l’administrateur." }, 403);
       await database(`portal_notifications?target=eq.${encodeURIComponent(`${SUBMISSION_TARGET_PREFIX}${type}`)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
       await recordAuditLog({ actor, category: "form", action: "Historique de formulaire réinitialisé", details: type });
     } else if (action === "update_submission") {
@@ -552,6 +566,7 @@ export async function POST(request) {
       const type = String(body?.type || "");
       const values = submissionValues(type, body?.values);
       if (!UUID.test(id) || !values) return json({ error: "Données de formulaire invalides." }, 400);
+      if (type === "protocol" && actor.role !== "admin") return json({ error: "La mise en protocole est réservée à l’administrateur." }, 403);
       const rows = await database(`portal_notifications?id=eq.${encodeURIComponent(id)}&target=eq.${encodeURIComponent(`${SUBMISSION_TARGET_PREFIX}${type}`)}&select=*`);
       const row = parseArray(rows)[0];
       if (!row) return json({ error: "Formulaire introuvable." }, 404);
@@ -564,6 +579,7 @@ export async function POST(request) {
       const id = String(body?.submissionId || "");
       const type = String(body?.type || "");
       if (!UUID.test(id) || !SUBMISSION_TYPES.has(type)) return json({ error: "Formulaire invalide." }, 400);
+      if (type === "protocol" && actor.role !== "admin") return json({ error: "La mise en protocole est réservée à l’administrateur." }, 403);
       await database(`portal_notifications?id=eq.${encodeURIComponent(id)}&target=eq.${encodeURIComponent(`${SUBMISSION_TARGET_PREFIX}${type}`)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
       await recordAuditLog({ actor, category: "form", action: "Élément supprimé de l’historique", details: type });
     } else if (action === "dismiss_notification") {

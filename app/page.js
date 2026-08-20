@@ -226,6 +226,12 @@ const TRANSMISSION_TYPES = {
     icon: MessageSquareText,
     tone: "violet",
   },
+  protocol: {
+    title: "Mise en protocole",
+    description: "Réservé à l’Administrateur. Enregistrer un protocole appliqué, sans incidence sur les quotas ni les statistiques.",
+    icon: ClipboardCheck,
+    tone: "violet",
+  },
 };
 
 function readFormDraft(userId, type) {
@@ -1095,7 +1101,7 @@ function SergeantAssignmentPanel({ users, session, assignments, onAssign, onRemi
 }
 
 function SubmissionHistoryPanel({ type, entries = [], canManage, onReset, onEdit, onDelete }) {
-  const historyTitles = { recommendation: "Recommandations effectuées", pcs_exp: "Recommandations PCS EXP effectuées", observation_hdr: "Observations HDR effectuées", observation_so: "Observations SO effectuées", sergeant_report: "Rapports envoyés" };
+  const historyTitles = { recommendation: "Recommandations effectuées", pcs_exp: "Recommandations PCS EXP effectuées", observation_hdr: "Observations HDR effectuées", observation_so: "Observations SO effectuées", sergeant_report: "Rapports envoyés", protocol: "Mises en protocole enregistrées" };
   const title = historyTitles[type] || "Transmissions effectuées";
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(null);
@@ -1116,25 +1122,97 @@ function SubmissionHistoryPanel({ type, entries = [], canManage, onReset, onEdit
   return (
     <aside className="submission-history-card">
       <div className="submission-history-head">
-        <div><p className="eyebrow dark">HISTORIQUE PUBLIC</p><h2>{title}</h2><p>Visible par les membres ayant accès à cette rubrique.</p></div>
+        <div><p className="eyebrow dark">{type === "protocol" ? "HISTORIQUE ADMINISTRATEUR" : "HISTORIQUE PUBLIC"}</p><h2>{title}</h2><p>{type === "protocol" ? "Conservé uniquement pour l’administrateur." : "Visible par les membres ayant accès à cette rubrique."}</p></div>
         <span><ScrollText size={16} /> {entries.length}</span>
       </div>
       {canManage && entries.length > 0 && <button className="submission-history-reset" type="button" onClick={() => onReset(type)}><RotateCcw size={15} /> Réinitialiser uniquement cet historique</button>}
       <div className="submission-history-list">
         {entries.map((entry) => {
           const values = entry.values || {};
-          const subject = type === "sergeant_report" ? values.sergeantName : values.aitName;
+          const subject = type === "sergeant_report" ? values.sergeantName : type === "protocol" ? values.arrete : values.aitName;
           const observationLabel = values.observation === "negative" ? "Négative" : "Positive";
           const HistoryIcon = type === "sergeant_report" ? FileText : TRANSMISSION_TYPES[type]?.icon || FileText;
           const editing = editingId === entry.id && form;
           return <article key={entry.id}>
             <div className="submission-history-entry-head"><div className="submission-history-title"><span className={`category-icon ${type === "sergeant_report" ? "gold" : TRANSMISSION_TYPES[type]?.tone || "blue"}`}><HistoryIcon size={17} /></span><div><strong>{subject || "Transmission"}</strong><small>{entry.displayAt}</small></div></div>{canManage && !editing && <div className="history-entry-actions"><button className="icon-button" type="button" title="Modifier cet historique" aria-label="Modifier cet historique" onClick={() => startEditing(entry)}><Pencil size={15} /></button><button className="icon-button danger" type="button" title="Supprimer cet historique" aria-label="Supprimer cet historique" onClick={() => onDelete(type, entry.id)}><Trash2 size={15} /></button></div>}</div>
-            {editing ? <form className="history-entry-editor" onSubmit={save}>{type === "sergeant_report" ? <><label>Nom du Sergent<input value={form.sergeantName || ""} onChange={(event) => change("sergeantName", event.target.value)} required /></label><label>Point positif<textarea value={form.positivePoints || ""} onChange={(event) => change("positivePoints", event.target.value)} required /></label><label>Point négatif<textarea value={form.negativePoints || ""} onChange={(event) => change("negativePoints", event.target.value)} required /></label><label>Avis global<textarea value={form.globalOpinion || ""} onChange={(event) => change("globalOpinion", event.target.value)} required /></label><label>Conclusion<select value={form.conclusion || REPORT_CONCLUSIONS[0]} onChange={(event) => change("conclusion", event.target.value)}>{REPORT_CONCLUSIONS.map((conclusion) => <option key={conclusion} value={conclusion}>{conclusion}</option>)}</select></label></> : <><label>Nom de l’AIT<input value={form.aitName || ""} onChange={(event) => change("aitName", event.target.value)} required /></label><label>S-OFF/-SUP à l’origine<input value={form.author || ""} onChange={(event) => change("author", event.target.value)} required /></label>{["observation_hdr", "observation_so"].includes(type) && <label>Nature de l’observation<select value={form.observation || "positive"} onChange={(event) => change("observation", event.target.value)}><option value="positive">Positive</option><option value="negative">Négative</option></select></label>}<label>Raison<textarea value={form.reason || ""} onChange={(event) => change("reason", event.target.value)} required /></label></>}<div className="history-entry-editor-actions"><button className="secondary" type="button" onClick={cancelEditing}>Annuler</button><button className="primary" type="submit"><BadgeCheck size={15} /> Enregistrer</button></div></form> : <><div className="submission-history-author"><span>Envoyé par</span><strong>{entry.authorGrade ? `${entry.authorGrade} ` : ""}{entry.authorName}</strong></div>{["observation_hdr", "observation_so"].includes(type) && <span className={`history-observation ${values.observation === "negative" ? "negative" : "positive"}`}>{observationLabel}</span>}{type === "sergeant_report" && <span className={`history-conclusion conclusion-${REPORT_CONCLUSIONS.indexOf(values.conclusion)}`}>{values.conclusion}</span>}{type === "sergeant_report" ? <div className="history-report-details"><p><strong>Point positif</strong>{values.positivePoints}</p><p><strong>Point négatif</strong>{values.negativePoints}</p><p><strong>Avis global</strong>{values.globalOpinion}</p></div> : <p className="submission-history-reason"><strong>Raison</strong>{values.reason}</p>}</>}
+            {editing ? <form className="history-entry-editor" onSubmit={save}>{type === "sergeant_report" ? <><label>Nom du Sergent<input value={form.sergeantName || ""} onChange={(event) => change("sergeantName", event.target.value)} required /></label><label>Point positif<textarea value={form.positivePoints || ""} onChange={(event) => change("positivePoints", event.target.value)} required /></label><label>Point négatif<textarea value={form.negativePoints || ""} onChange={(event) => change("negativePoints", event.target.value)} required /></label><label>Avis global<textarea value={form.globalOpinion || ""} onChange={(event) => change("globalOpinion", event.target.value)} required /></label><label>Conclusion<select value={form.conclusion || REPORT_CONCLUSIONS[0]} onChange={(event) => change("conclusion", event.target.value)}>{REPORT_CONCLUSIONS.map((conclusion) => <option key={conclusion} value={conclusion}>{conclusion}</option>)}</select></label></> : type === "protocol" ? <><label>Enregistré par<input value={form.recordedBy || ""} onChange={(event) => change("recordedBy", event.target.value)} required /></label><label>Arrêté<input value={form.arrete || ""} onChange={(event) => change("arrete", event.target.value)} required /></label><label>Steam ID 64<input value={form.steamId64 || ""} onChange={(event) => change("steamId64", event.target.value)} inputMode="numeric" required /></label><label>Branche<input value={form.branch || ""} onChange={(event) => change("branch", event.target.value)} required /></label><label>Protocole appliqué<select value={form.protocol || "Protocole 1 (10 min)"} onChange={(event) => change("protocol", event.target.value)}><option value="Protocole 1 (10 min)">Protocole 1 (10 min)</option></select></label><label>Horaires du protocole<input value={form.schedule || ""} onChange={(event) => change("schedule", event.target.value)} required /></label><label>Raison<textarea value={form.reason || ""} onChange={(event) => change("reason", event.target.value)} required /></label></> : <><label>Nom de l’AIT<input value={form.aitName || ""} onChange={(event) => change("aitName", event.target.value)} required /></label><label>S-OFF/-SUP à l’origine<input value={form.author || ""} onChange={(event) => change("author", event.target.value)} required /></label>{["observation_hdr", "observation_so"].includes(type) && <label>Nature de l’observation<select value={form.observation || "positive"} onChange={(event) => change("observation", event.target.value)}><option value="positive">Positive</option><option value="negative">Négative</option></select></label>}<label>Raison<textarea value={form.reason || ""} onChange={(event) => change("reason", event.target.value)} required /></label></>}<div className="history-entry-editor-actions"><button className="secondary" type="button" onClick={cancelEditing}>Annuler</button><button className="primary" type="submit"><BadgeCheck size={15} /> Enregistrer</button></div></form> : <><div className="submission-history-author"><span>Envoyé par</span><strong>{entry.authorGrade ? `${entry.authorGrade} ` : ""}{entry.authorName}</strong></div>{["observation_hdr", "observation_so"].includes(type) && <span className={`history-observation ${values.observation === "negative" ? "negative" : "positive"}`}>{observationLabel}</span>}{type === "sergeant_report" && <span className={`history-conclusion conclusion-${REPORT_CONCLUSIONS.indexOf(values.conclusion)}`}>{values.conclusion}</span>}{type === "sergeant_report" ? <div className="history-report-details"><p><strong>Point positif</strong>{values.positivePoints}</p><p><strong>Point négatif</strong>{values.negativePoints}</p><p><strong>Avis global</strong>{values.globalOpinion}</p></div> : type === "protocol" ? <div className="history-report-details"><p><strong>Enregistré par</strong>{values.recordedBy}</p><p><strong>Steam ID 64</strong>{values.steamId64}</p><p><strong>Branche</strong>{values.branch}</p><p><strong>Protocole appliqué</strong>{values.protocol}</p><p><strong>Horaires du protocole</strong>{values.schedule}</p><p><strong>Raison</strong>{values.reason}</p></div> : <p className="submission-history-reason"><strong>Raison</strong>{values.reason}</p>}</>}
           </article>;
         })}
         {!entries.length && <div className="submission-history-empty"><ScrollText size={25} /><strong>Aucun envoi</strong><p>Les prochaines transmissions apparaîtront ici.</p></div>}
       </div>
     </aside>
+  );
+}
+
+function ProtocolPanel({ session, onSuccess, history, onResetHistory, onEditHistory, onDeleteHistory }) {
+  const initialDraft = readFormDraft(session.id, "protocol");
+  const [form, setForm] = useState(() => ({ recordedBy: "", arrete: "", steamId64: "", branch: "", protocol: "Protocole 1 (10 min)", schedule: "", reason: "", ...(initialDraft?.values || {}) }));
+  const [draftSavedAt, setDraftSavedAt] = useState(initialDraft?.savedAt || "");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+
+  useEffect(() => {
+    const meaningful = Object.entries(form).some(([key, value]) => key !== "protocol" && String(value || "").trim());
+    const timer = window.setTimeout(() => {
+      if (meaningful) {
+        saveFormDraft(session.id, "protocol", form);
+        setDraftSavedAt(new Date().toISOString());
+      } else {
+        clearFormDraft(session.id, "protocol");
+        setDraftSavedAt("");
+      }
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [form, session.id]);
+
+  async function submit(event) {
+    event.preventDefault();
+    setSending(true);
+    setError("");
+    try {
+      const csrfToken = await getCsrfToken();
+      const response = await fetch("/api/submissions", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({ type: "protocol", values: form }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Enregistrement impossible.");
+      const submittedValues = { ...form };
+      clearFormDraft(session.id, "protocol");
+      setDraftSavedAt("");
+      setForm({ recordedBy: "", arrete: "", steamId64: "", branch: "", protocol: "Protocole 1 (10 min)", schedule: "", reason: "" });
+      onSuccess("La mise en protocole a été enregistrée dans l’historique.", "protocol", submittedValues);
+    } catch (submissionError) {
+      setError(submissionError.message || "Une erreur est survenue pendant l’enregistrement.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  if (session.role !== "admin") return <section className="access-denied"><ShieldCheck size={28} /><h2>Accès réservé</h2><p>La mise en protocole est actuellement réservée à l’Administrateur.</p></section>;
+
+  return (
+    <section className="transmissions-layout with-history">
+      <div className="transmission-card">
+        <div className="transmission-head"><span className="category-icon large violet"><ClipboardCheck size={25} /></span><div><p className="eyebrow dark">REGISTRE ADMINISTRATEUR</p><h2>Mise en protocole</h2><p className="muted">Cette fiche est enregistrée dans l’historique interne. Elle ne compte ni dans les quotas ni dans les statistiques.</p></div></div>
+        <form onSubmit={submit}>
+          <label>Enregistré par</label><input value={form.recordedBy} onChange={(event) => set("recordedBy", event.target.value)} required maxLength={100} placeholder="Nom du Sous-Officier" />
+          <label>Arrêté</label><input value={form.arrete} onChange={(event) => set("arrete", event.target.value)} required maxLength={100} placeholder="Nom de la personne arrêtée" />
+          <label>Steam ID 64</label><input value={form.steamId64} onChange={(event) => set("steamId64", event.target.value.replace(/\D/g, ""))} required inputMode="numeric" pattern="[0-9]{17}" minLength={17} maxLength={17} placeholder="17 chiffres" />
+          <label>Branche</label><input value={form.branch} onChange={(event) => set("branch", event.target.value)} required maxLength={100} placeholder="Branche concernée" />
+          <label>Protocole appliqué</label><select value={form.protocol} onChange={(event) => set("protocol", event.target.value)}><option value="Protocole 1 (10 min)">Protocole 1 (10 min)</option></select>
+          <label>Horaires du protocole</label><input value={form.schedule} onChange={(event) => set("schedule", event.target.value)} required maxLength={100} placeholder="Ex. 14h00 – 14h10" />
+          <label>Raison</label><textarea value={form.reason} onChange={(event) => set("reason", event.target.value)} required maxLength={1000} rows={6} placeholder="Décrivez la raison de la mise en protocole…" />
+          {draftSavedAt && <p className="draft-status"><BadgeCheck size={14} /> Brouillon sauvegardé automatiquement à {new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(new Date(draftSavedAt))}</p>}
+          {error && <p className="form-error transmission-error">{error}</p>}
+          <div className="transmission-actions"><span><ShieldCheck size={15} /> Enregistrement administratif</span><button className="primary" type="submit" disabled={sending}><ClipboardCheck size={17} />{sending ? "Enregistrement…" : "Enregistrer la fiche"}</button></div>
+        </form>
+      </div>
+      <SubmissionHistoryPanel type="protocol" entries={history} canManage={true} onReset={onResetHistory} onEdit={onEditHistory} onDelete={onDeleteHistory} />
+    </section>
   );
 }
 
@@ -1231,6 +1309,7 @@ function SergeantReportPanel({ users, session, assignments, onSuccess, history, 
 }
 
 function TransmissionPanel({ session, onSuccess, type, history, canManageHistory, onResetHistory, onEditHistory, onDeleteHistory }) {
+  if (type === "protocol") return <ProtocolPanel session={session} onSuccess={onSuccess} history={history} onResetHistory={onResetHistory} onEditHistory={onEditHistory} onDeleteHistory={onDeleteHistory} />;
   const defaultAuthor = `${session.firstName} ${session.lastName}`;
   const initialDraft = readFormDraft(session.id, type);
   const [form, setForm] = useState(() => ({ aitName: "", author: defaultAuthor, reason: "", observation: "positive", ...(initialDraft?.values || {}) }));
@@ -1673,7 +1752,7 @@ function App() {
     if (portalRemote) portalRequest().then(applySharedPortalState).catch(() => {});
   }
   function resetSubmissionHistory(type) {
-    if (!hasManagerAccess(session.role)) return;
+    if (type === "protocol" ? session.role !== "admin" : !hasManagerAccess(session.role)) return;
     const label = type === "sergeant_report" ? "Rapports nouveau Sous-Officier" : TRANSMISSION_TYPES[type]?.title || type;
     if (!confirm(`Réinitialiser uniquement l’historique « ${label} » ?`)) return;
     if (portalRemote) {
@@ -1687,9 +1766,10 @@ function App() {
     flash(`L’historique « ${label} » a été réinitialisé.`);
   }
   function updateSubmissionHistory(type, entryId, values) {
-    if (!hasManagerAccess(session.role)) return;
+    if (type === "protocol" ? session.role !== "admin" : !hasManagerAccess(session.role)) return;
     const text = (value, limit = 950) => typeof value === "string" ? value.trim().slice(0, limit) : "";
     const isReport = type === "sergeant_report";
+    const isProtocol = type === "protocol";
     const updatedValues = isReport
       ? {
           sergeantName: text(values.sergeantName, 100),
@@ -1698,6 +1778,16 @@ function App() {
           globalOpinion: text(values.globalOpinion),
           conclusion: REPORT_CONCLUSIONS.includes(values.conclusion) ? values.conclusion : REPORT_CONCLUSIONS[0],
         }
+      : isProtocol
+        ? {
+            recordedBy: text(values.recordedBy, 100),
+            arrete: text(values.arrete, 100),
+            steamId64: text(values.steamId64, 17).replace(/\D/g, ""),
+            branch: text(values.branch, 100),
+            protocol: values.protocol === "Protocole 1 (10 min)" ? values.protocol : "Protocole 1 (10 min)",
+            schedule: text(values.schedule, 100),
+            reason: text(values.reason),
+          }
       : {
           aitName: text(values.aitName, 100),
           author: text(values.author, 100),
@@ -1706,6 +1796,8 @@ function App() {
         };
     const complete = isReport
       ? updatedValues.sergeantName && updatedValues.positivePoints && updatedValues.negativePoints && updatedValues.globalOpinion
+      : isProtocol
+        ? updatedValues.recordedBy && updatedValues.arrete && /^\d{17}$/.test(updatedValues.steamId64) && updatedValues.branch && updatedValues.schedule && updatedValues.reason
       : updatedValues.aitName && updatedValues.author && updatedValues.reason;
     if (!complete) { flash("Tous les champs de l’historique doivent être renseignés."); return; }
     if (portalRemote) {
@@ -1720,7 +1812,7 @@ function App() {
     flash("L’historique a été modifié.");
   }
   function deleteSubmissionHistory(type, entryId) {
-    if (!hasManagerAccess(session.role) || !confirm("Supprimer définitivement cet élément de l’historique public ?")) return;
+    if ((type === "protocol" ? session.role !== "admin" : !hasManagerAccess(session.role)) || !confirm("Supprimer définitivement cet élément de l’historique public ?")) return;
     const entry = submissionHistory.find((item) => item.id === entryId && item.type === type);
     if (!entry) return;
     if (portalRemote) {
@@ -1738,8 +1830,9 @@ function App() {
     flash(message);
     recordSubmission(type, values);
     if (!portalRemote) {
-      addLog("form", "Formulaire envoyé", TRANSMISSION_TYPES[type]?.title || type);
-      addPortalNotification({ recipients: [session.id], title: `Formulaire envoyé — ${TRANSMISSION_TYPES[type]?.title || type}`, text: "Votre formulaire a été transmis sur Discord.", target: type });
+      const isProtocol = type === "protocol";
+      addLog("form", isProtocol ? "Mise en protocole enregistrée" : "Formulaire envoyé", TRANSMISSION_TYPES[type]?.title || type);
+      addPortalNotification({ recipients: [session.id], title: isProtocol ? "Mise en protocole enregistrée" : `Formulaire envoyé — ${TRANSMISSION_TYPES[type]?.title || type}`, text: isProtocol ? "La fiche a été ajoutée à l’historique interne." : "Votre formulaire a été transmis sur Discord.", target: type });
     }
     if (!QUOTA_TYPES.includes(type) || !["senior", "officer"].includes(session.role)) return;
     setQuotas((current) => {
@@ -2068,7 +2161,7 @@ function App() {
           <button className={`menu-item standalone-nav ${activeSection === "home" ? "active" : ""}`} onClick={() => setActiveSection("home")}><Home size={18} /> Accueil</button>
         {hasAdminAccess(session.role) && <MenuGroup title="Admin" icon={ShieldCheck} open={openGroups.admin} onToggle={() => toggleGroup("admin")}><button className={`menu-item ${activeSection === "dashboard" ? "active" : ""}`} onClick={() => setActiveSection("dashboard")}><LayoutDashboard size={17} /> Tableau de bord</button></MenuGroup>}
         {hasManagerAccess(session.role) && <MenuGroup title="Référent SO" icon={UsersRound} open={openGroups.referent} onToggle={() => toggleGroup("referent")}><button className={`menu-item ${activeSection === "workforce" ? "active" : ""}`} onClick={() => setActiveSection("workforce")}><UsersRound size={17} /> Effectif</button><button className={`menu-item ${activeSection === "presence" ? "active" : ""}`} onClick={() => setActiveSection("presence")}><UserCheck size={17} /> Présences</button><button className={`menu-item ${activeSection === "quotas" ? "active" : ""}`} onClick={() => setActiveSection("quotas")}><Gauge size={17} /> Quotas</button></MenuGroup>}
-          <MenuGroup title="Globale" icon={Send} open={openGroups.global} onToggle={() => toggleGroup("global")}><button className={`menu-item ${activeSection === "summary" ? "active" : ""}`} onClick={() => setActiveSection("summary")}><BarChart3 size={17} /> Résumé</button><button className={`menu-item ${activeSection === "recommendation" ? "active" : ""}`} onClick={() => setActiveSection("recommendation")}><Medal size={17} /> Recommandation</button><button className={`menu-item ${activeSection === "pcs_exp" ? "active" : ""}`} onClick={() => setActiveSection("pcs_exp")}><ClipboardCheck size={17} /> Recommandation PCS EXP</button><button className={`menu-item ${activeSection === "observation_hdr" ? "active" : ""}`} onClick={() => setActiveSection("observation_hdr")}><MessageSquareText size={17} /> Observation HDR</button><button className={`menu-item ${activeSection === "mission_internal" ? "active" : ""}`} onClick={() => setActiveSection("mission_internal")}><FileText size={17} /> Mission interne</button></MenuGroup>
+          <MenuGroup title="Globale" icon={Send} open={openGroups.global} onToggle={() => toggleGroup("global")}><button className={`menu-item ${activeSection === "summary" ? "active" : ""}`} onClick={() => setActiveSection("summary")}><BarChart3 size={17} /> Résumé</button><button className={`menu-item ${activeSection === "recommendation" ? "active" : ""}`} onClick={() => setActiveSection("recommendation")}><Medal size={17} /> Recommandation</button><button className={`menu-item ${activeSection === "pcs_exp" ? "active" : ""}`} onClick={() => setActiveSection("pcs_exp")}><ClipboardCheck size={17} /> Recommandation PCS EXP</button><button className={`menu-item ${activeSection === "observation_hdr" ? "active" : ""}`} onClick={() => setActiveSection("observation_hdr")}><MessageSquareText size={17} /> Observation HDR</button>{session.role === "admin" ? <button className={`menu-item ${activeSection === "protocol" ? "active" : ""}`} onClick={() => setActiveSection("protocol")}><ClipboardCheck size={17} /> Mise en protocole</button> : <button className="menu-item protocol-locked" type="button" disabled aria-label="Mise en protocole — réservé à l’administrateur"><ClipboardCheck size={17} /> Mise en protocole</button>}<button className={`menu-item ${activeSection === "mission_internal" ? "active" : ""}`} onClick={() => setActiveSection("mission_internal")}><FileText size={17} /> Mission interne</button></MenuGroup>
         {hasSeniorAccess(session.role) && <MenuGroup title="Sous-Officier Supérieur" icon={BadgeCheck} open={openGroups.senior} onToggle={() => toggleGroup("senior")}><button className={`menu-item ${activeSection === "sergeant_assignments" ? "active" : ""}`} onClick={() => setActiveSection("sergeant_assignments")}><UsersRound size={17} /> Référent</button><button className={`menu-item ${activeSection === "observation_so" ? "active" : ""}`} onClick={() => setActiveSection("observation_so")}><MessageSquareText size={17} /> Observation SO</button><button className={`menu-item ${activeSection === "sergeant_report" ? "active" : ""}`} onClick={() => setActiveSection("sergeant_report")}><FileText size={17} /> Rapport nouveau SO</button></MenuGroup>}
           <MenuGroup title="Chat" icon={MessageSquareText} open={openGroups.chat} onToggle={() => toggleGroup("chat")}><button className={`menu-item ${activeSection === "chat" ? "active" : ""}`} onClick={() => setActiveSection("chat")}><Send size={17} /> Messagerie</button></MenuGroup>
         {hasManagerAccess(session.role) && <button className={`menu-item standalone-nav logs-nav ${activeSection === "logs" ? "active" : ""}`} onClick={() => setActiveSection("logs")}><ScrollText size={18} /> Logs</button>}
@@ -2085,7 +2178,7 @@ function App() {
       </aside>
 
       <main className="content">
-        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{hasAdminAccess(session.role) && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{hasManagerAccess(session.role) && <optgroup label="Référent SO"><option value="workforce">Effectif</option><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="summary">Résumé</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{hasSeniorAccess(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="sergeant_assignments">Référent</option><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{hasManagerAccess(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
+        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{hasAdminAccess(session.role) && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{hasManagerAccess(session.role) && <optgroup label="Référent SO"><option value="workforce">Effectif</option><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="summary">Résumé</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option>{session.role === "admin" ? <option value="protocol">Mise en protocole</option> : <option disabled>Mise en protocole — réservé</option>}<option value="mission_internal">Mission interne</option></optgroup>{hasSeniorAccess(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="sergeant_assignments">Référent</option><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{hasManagerAccess(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
         {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "workforce" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Effectif</h1><p className="muted">Consultez l’organisation complète des membres par accès et par grade.</p></div><span className="referent-access"><UsersRound size={16} /> Vue des effectifs</span></header> : activeSection === "sergeant_assignments" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Référent</h1><p className="muted">Attribuez et suivez les référents des nouveaux Sergents.</p></div><span className="senior-access"><BadgeCheck size={16} /> Suivi des semaines de test</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Validez les demandes Discord et gardez une vue claire sur votre équipe.</p></div><span className="all-access"><MessageSquareText size={16} /> Connexion Discord</span></header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
         {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={setActiveSection} onDismissNotification={dismissPortalNotification} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} logs={auditLogs} activityResetAt={summarySettings.activityResetAt} rankingResetAt={summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} onResetRanking={resetActivityRanking} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
