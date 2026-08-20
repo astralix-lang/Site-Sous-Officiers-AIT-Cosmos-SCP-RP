@@ -1788,8 +1788,17 @@ function App() {
       .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
       .slice(0, 500);
   }
+  function mergeChats(current, remoteChats) {
+    const remote = Array.isArray(remoteChats) ? remoteChats : [];
+    const remoteIds = new Set(remote.map((chat) => chat.id));
+    // Une conversation est créée sur le serveur au premier message seulement.
+    // On conserve donc son brouillon local entre deux synchronisations afin que
+    // l'ouverture d'une nouvelle discussion ne se referme pas immédiatement.
+    const localDrafts = current.filter((chat) => chat?.isDraft && !remoteIds.has(chat.id));
+    return [...remote, ...localDrafts].sort((left, right) => new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime());
+  }
   function applySharedPortalState(state) {
-    if (Array.isArray(state?.chats)) setChats(state.chats);
+    if (Array.isArray(state?.chats)) setChats((current) => mergeChats(current, state.chats));
     if (Array.isArray(state?.notifications)) setPortalNotifications(state.notifications);
     if (Array.isArray(state?.auditLogs)) setAuditLogs((current) => mergeAuditLogs(current, state.auditLogs));
     if (Array.isArray(state?.submissions)) setSubmissionHistory(state.submissions);
@@ -1826,7 +1835,7 @@ function App() {
       portalRequest("POST", { action: "clear_audit_logs" })
         .then((state) => {
           setAuditLogs(Array.isArray(state?.auditLogs) ? state.auditLogs : []);
-          if (Array.isArray(state?.chats)) setChats(state.chats);
+          if (Array.isArray(state?.chats)) setChats((current) => mergeChats(current, state.chats));
           if (Array.isArray(state?.notifications)) setPortalNotifications(state.notifications);
           setPortalRemote(true);
           flash("Le journal des logs a été réinitialisé.");
