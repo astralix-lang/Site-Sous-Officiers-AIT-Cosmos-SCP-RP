@@ -229,8 +229,13 @@ async function stateFor(user) {
   const [chats, notifications, auditLogs, allSubmissions, summarySettings, sergeantAssignments, allManagementReports, managementReportSettings, soMeeting] = await Promise.all([
     allChats(user), notificationsFor(user), auditLogsFor(user), submissionsFor(), summarySettingsFor(), assignmentsFor(), managementReportsFor(), managementReportSettingsFor(), meetingFor(),
   ]);
-  const managementReports = isManager(user) ? allManagementReports : allManagementReports.filter((report) => report.authorId === user.id);
+  const assignedSergeants = new Set(sergeantAssignments.filter((assignment) => assignment.observerId === user.id).map((assignment) => assignment.sergeantId));
+  const managementReports = isManager(user) ? allManagementReports : allManagementReports.filter((report) => report.authorId === user.id || (user.role === "senior" && assignedSergeants.has(report.authorId)));
   return { chats, notifications, auditLogs, submissions: allSubmissions, quotas: await quotaState(allSubmissions), summarySettings, sergeantAssignments, managementReports, managementReportSettings, soMeeting };
+}
+
+function canReviewManagementReport(actor, report, assignments) {
+  return isManager(actor) || (actor?.role === "senior" && assignments.some((assignment) => assignment.observerId === actor.id && assignment.sergeantId === report?.authorId));
 }
 
 async function chatById(id) {
@@ -602,13 +607,14 @@ export async function POST(request) {
       await createNotification({ recipients: [actor.id], kind: "form", title: "Rapport de gérance enregistré", text: "Votre auto-évaluation a été transmise aux responsables.", target: "management_report" });
       await recordAuditLog({ actor, category: "management", action: "Rapport de gérance envoyé", details: values.managementType });
     } else if (action === "comment_management_report") {
-      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent donner un avis sur ce rapport." }, 403);
       const reportId = String(body?.reportId || "");
       const content = clean(body?.content, 1000);
       if (!UUID.test(reportId) || !content) return json({ error: "Votre avis est invalide." }, 400);
       const reports = await managementReportsFor();
       const report = reports.find((item) => item.id === reportId);
       if (!report) return json({ error: "Rapport introuvable." }, 404);
+      const assignments = await assignmentsFor();
+      if (!canReviewManagementReport(actor, report, assignments)) return json({ error: "Seuls les responsables ou le Sous-Officier Supérieur référent assigné peuvent donner un avis sur ce rapport." }, 403);
       const comment = {
         id: crypto.randomUUID(),
         authorId: actor.id,
@@ -622,7 +628,6 @@ export async function POST(request) {
       await createNotification({ recipients: [report.authorId], kind: "info", title: "Avis ajouté à votre rapport de gérance", text: `${comment.authorGrade ? `${comment.authorGrade} ` : ""}${comment.authorName} a laissé un retour.`, target: "management_report" });
       await recordAuditLog({ actor, category: "management", action: "Avis ajouté à un rapport de gérance", details: report.authorName });
     } else if (action === "update_management_comment") {
-      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent modifier un avis." }, 403);
       const reportId = String(body?.reportId || "");
       const commentId = String(body?.commentId || "");
       const content = clean(body?.content, 1000);
@@ -631,12 +636,13 @@ export async function POST(request) {
       const report = reports.find((item) => item.id === reportId);
       const comment = report?.comments?.find((item) => item.id === commentId);
       if (!report || !comment) return json({ error: "Avis introuvable." }, 404);
+      const assignments = await assignmentsFor();
+      if (!canReviewManagementReport(actor, report, assignments)) return json({ error: "Vous n’êtes pas autorisé à modifier un avis sur ce rapport." }, 403);
       if (!adminAccess(actor) && comment.authorId !== actor.id) return json({ error: "Vous ne pouvez modifier que vos propres avis." }, 403);
       const editedAt = new Date().toISOString();
       await saveManagementReports(reports.map((item) => item.id === report.id ? { ...item, comments: parseArray(item.comments).map((entry) => entry.id === comment.id ? { ...entry, content, editedAt } : entry) } : item));
       await recordAuditLog({ actor, category: "management", action: "Avis de gérance modifié", details: report.authorName });
     } else if (action === "delete_management_comment") {
-      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent supprimer un avis." }, 403);
       const reportId = String(body?.reportId || "");
       const commentId = String(body?.commentId || "");
       if (!UUID.test(reportId) || !UUID.test(commentId)) return json({ error: "Avis invalide." }, 400);
@@ -644,6 +650,8 @@ export async function POST(request) {
       const report = reports.find((item) => item.id === reportId);
       const comment = report?.comments?.find((item) => item.id === commentId);
       if (!report || !comment) return json({ error: "Avis introuvable." }, 404);
+      const assignments = await assignmentsFor();
+      if (!canReviewManagementReport(actor, report, assignments)) return json({ error: "Vous n’êtes pas autorisé à supprimer un avis sur ce rapport." }, 403);
       if (!adminAccess(actor) && comment.authorId !== actor.id) return json({ error: "Vous ne pouvez supprimer que vos propres avis." }, 403);
       await saveManagementReports(reports.map((item) => item.id === report.id ? { ...item, comments: parseArray(item.comments).filter((entry) => entry.id !== comment.id) } : item));
       await recordAuditLog({ actor, category: "management", action: "Avis de gérance supprimé", details: report.authorName });
