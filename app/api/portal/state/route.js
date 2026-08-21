@@ -228,9 +228,10 @@ async function quotaState(submissions) {
 }
 
 async function stateFor(user) {
-  const [chats, notifications, auditLogs, allSubmissions, summarySettings, sergeantAssignments, allManagementReports, managementReportSettings, soMeeting, soMeetingHistory] = await Promise.all([
+  const [chats, notifications, auditLogs, allSubmissions, summarySettings, sergeantAssignments, allManagementReports, managementReportSettings, loadedMeeting, soMeetingHistory] = await Promise.all([
     allChats(user), notificationsFor(user), auditLogsFor(user), submissionsFor(), summarySettingsFor(), assignmentsFor(), managementReportsFor(), managementReportSettingsFor(), meetingFor(), meetingHistoryFor(),
   ]);
+  const soMeeting = await resetArchivedMeetingDraft(loadedMeeting, soMeetingHistory);
   const assignedSergeants = new Set(sergeantAssignments.filter((assignment) => assignment.observerId === user.id).map((assignment) => assignment.sergeantId));
   const managementReports = isManager(user) ? allManagementReports : allManagementReports.filter((report) => report.authorId === user.id || (user.role === "senior" && assignedSergeants.has(report.authorId)));
   return { chats, notifications, auditLogs, submissions: allSubmissions, quotas: await quotaState(allSubmissions), summarySettings, sergeantAssignments, managementReports, managementReportSettings, soMeeting, soMeetingHistory };
@@ -494,6 +495,11 @@ async function saveMeeting(value) {
   await saveSharedRecord(SO_MEETING_ID, SO_MEETING_TARGET, "Réunion SO en cours", meetingFromValue(value));
 }
 
+function emptyMeeting(updatedBy = "") {
+  const now = new Date().toISOString();
+  return { occurredAt: now, attendance: [], improvementAxes: "", caporalVotes: [], suggestions: "", updatedAt: now, updatedBy };
+}
+
 function meetingHistoryFromValue(value) {
   return parseArray(value).filter((entry) => UUID.test(String(entry?.id || "")) && Number.isFinite(new Date(entry?.savedAt).getTime())).slice(0, 30).map((entry) => ({
     id: entry.id,
@@ -510,6 +516,16 @@ async function meetingHistoryFor() {
 
 async function saveMeetingHistory(history) {
   await saveSharedRecord(SO_MEETING_HISTORY_ID, SO_MEETING_HISTORY_TARGET, "Historique des réunions SO", meetingHistoryFromValue(history));
+}
+
+async function resetArchivedMeetingDraft(meeting, history) {
+  const latest = parseArray(history)[0];
+  // Migrate the meeting that was saved before automatic clearing existed.
+  // A matching current draft means it is already safely present in the archive.
+  if (!latest || !meeting?.updatedAt || meeting.updatedAt !== latest.updatedAt || meeting.updatedBy !== latest.updatedBy || meeting.occurredAt !== latest.occurredAt) return meeting;
+  const reset = emptyMeeting();
+  await saveMeeting(reset);
+  return meetingFromValue(reset);
 }
 
 function failure(error) {
@@ -704,6 +720,7 @@ export async function POST(request) {
           savedBy: actor.id,
           savedByName: `${actor.grade || ""} ${actor.first_name || ""} ${actor.last_name || ""}`.trim() || "Responsable SO",
         }, ...history].slice(0, 30));
+        await saveMeeting(emptyMeeting(actor.id));
         await recordAuditLog({ actor, category: "meeting", action: "Réunion SO enregistrée dans l’historique", details: `${meeting.attendance.length} membre(s) suivi(s)` });
       }
     } else if (action === "sync_so_meeting_presence") {
