@@ -1667,8 +1667,10 @@ function meetingLocalValue(value) {
   return date.toISOString().slice(0, 16);
 }
 
-function MeetingPanel({ session, users, meeting, onSave }) {
+function MeetingPanel({ session, users, meeting, history, onSave }) {
   const members = useMemo(() => users.filter((user) => user.approvalStatus === "approved" && ["admin", "referent", "senior", "officer"].includes(user.role)).sort(compareUsersByGrade), [users]);
+  const savedMeetings = useMemo(() => Array.isArray(history) ? history : [], [history]);
+  const usersById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
   const [form, setForm] = useState(() => ({ occurredAt: meetingLocalValue(meeting?.occurredAt), attendance: [], improvementAxes: "", caporalVotes: [], suggestions: "" }));
   const [saving, setSaving] = useState(false);
   const [syncingDraft, setSyncingDraft] = useState(false);
@@ -1679,6 +1681,15 @@ function MeetingPanel({ session, users, meeting, onSave }) {
   const lastMeetingRevisionRef = useRef("");
   const hasUnsavedChangesRef = useRef(false);
   const draftVersionRef = useRef(0);
+
+  function memberLabel(userId) {
+    const user = usersById.get(userId);
+    return user ? `${user.grade || GRADES[0]} ${user.firstName || ""} ${user.lastName || ""}`.trim() : "Membre du portail";
+  }
+
+  function historyDateLabel(value) {
+    return new Intl.DateTimeFormat("fr-FR", { dateStyle: "full", timeStyle: "short", timeZone: "Europe/Paris" }).format(new Date(value));
+  }
 
   useEffect(() => {
     const revision = `${meeting?.updatedAt || ""}:${meeting?.occurredAt || ""}`;
@@ -1857,21 +1868,30 @@ function MeetingPanel({ session, users, meeting, onSave }) {
     <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon gold"><ClipboardCheck size={20} /></span><div><h3>Votes des Caporaux-Chefs</h3><p>Ajoutez les membres éligibles puis consignez l'avis et la remarque.</p></div></div><div className="meeting-votes"><div className="meeting-votes-head"><span>Caporal-Chef</span><span>Avis</span><span>Remarque</span><span /></div>{form.caporalVotes.map((entry) => <div className="meeting-vote-row" key={entry.id}><input value={entry.name} onChange={(event) => updateCaporal(entry.id, "name", event.target.value)} maxLength={140} placeholder="Prénom et nom" /><select value={entry.vote} onChange={(event) => updateCaporal(entry.id, "vote", event.target.value)}><option value="favorable">Favorable</option><option value="mitige">Mitigé</option><option value="defavorable">Défavorable</option><option value="sanction">Sanction</option></select><textarea value={entry.note} onChange={(event) => updateCaporal(entry.id, "note", event.target.value)} maxLength={1200} placeholder="Remarque…" /><button className="icon-button danger" type="button" title="Retirer ce vote" onClick={() => removeCaporal(entry.id)}><Trash2 size={16} /></button></div>)}</div><button className="secondary meeting-add-vote" type="button" onClick={addCaporal}>Ajouter un Caporal-Chef</button></section>
     <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon violet"><MessageSquareText size={20} /></span><div><h3>Suggestions et idées</h3><p>Conservez les propositions à étudier ou à mettre en place.</p></div></div><textarea className="meeting-long-text" value={form.suggestions} onChange={(event) => updateFormField("suggestions", event.target.value)} maxLength={6000} placeholder="Ajoutez les suggestions et les idées évoquées…" /></section>
     {syncingDraft && <p className="draft-status"><BadgeCheck size={14} /> Synchronisation du brouillon partagé…</p>}{!syncingDraft && draftSavedAt && <p className="draft-status"><BadgeCheck size={14} /> Brouillon partagé synchronisé à {new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(draftSavedAt))}</p>}{error && <p className="form-error">{error}</p>}<div className="meeting-actions"><span><ShieldCheck size={15} /> Brouillon partagé avec les responsables</span><div><button className="secondary" type="button" onClick={createGoogleDocument} disabled={exporting}><Download size={17} />{exporting ? "Création…" : "Créer le Google Doc"}</button><button className="primary" type="submit" disabled={saving}><ClipboardCheck size={17} />{saving ? "Enregistrement…" : "Enregistrer la réunion"}</button></div></div>
-  </form></div>;
+  </form>
+  <section className="meeting-history-card">
+    <div className="meeting-history-head"><div><p className="eyebrow dark">ARCHIVES PARTAGÉES</p><h2>Historique des réunions SO</h2><p className="muted">Chaque enregistrement final est conservé ici. Les brouillons n’y apparaissent pas.</p></div><span className="meeting-history-count"><CalendarDays size={16} /> {savedMeetings.length}</span></div>
+    <div className="meeting-history-list">{savedMeetings.map((savedMeeting) => { const presentCount = savedMeeting.attendance.filter((entry) => entry.status === "present").length; const absentCount = savedMeeting.attendance.filter((entry) => entry.status === "absent").length; return <article key={savedMeeting.id} className="meeting-history-item"><div className="meeting-history-summary"><span className="category-icon blue"><CalendarDays size={20} /></span><div><h3>Réunion du {historyDateLabel(savedMeeting.occurredAt)}</h3><p>Enregistrée par {savedMeeting.savedByName} le {historyDateLabel(savedMeeting.savedAt)}</p></div><div className="meeting-history-stats"><span>{presentCount} présent{presentCount > 1 ? "s" : ""}</span><span>{absentCount} absent{absentCount > 1 ? "s" : ""}</span></div></div><details><summary>Voir le compte rendu</summary><div className="meeting-history-details"><section><h4>Présences et mots</h4><div className="meeting-history-attendance">{savedMeeting.attendance.map((entry) => <article key={entry.userId}><strong>{memberLabel(entry.userId)}</strong><span className={`history-status ${MEETING_STATUS_TONES[entry.status] || "green"}`}>{MEETING_STATUS_LABELS[entry.status] || "Présent"}</span><p>{entry.note || "Aucun mot renseigné."}</p></article>)}{!savedMeeting.attendance.length && <p>Aucune présence renseignée.</p>}</div></section><section><h4>Axes d’amélioration</h4><p>{savedMeeting.improvementAxes || "Aucun axe renseigné."}</p></section><section><h4>Votes des Caporaux-Chefs</h4><div className="meeting-history-votes">{savedMeeting.caporalVotes.map((entry) => <p key={entry.id}><strong>{entry.name || "Caporal-Chef"}</strong> · {entry.vote === "mitige" ? "Mitigé" : entry.vote === "defavorable" ? "Défavorable" : entry.vote === "sanction" ? "Sanction" : "Favorable"}<br />{entry.note || "Aucune remarque."}</p>)}{!savedMeeting.caporalVotes.length && <p>Aucun vote renseigné.</p>}</div></section><section><h4>Suggestions et idées</h4><p>{savedMeeting.suggestions || "Aucune suggestion renseignée."}</p></section></div></details></article>; })}{!savedMeetings.length && <p className="meeting-empty">Aucune réunion SO n’a encore été enregistrée.</p>}</div>
+  </section>
+  </div>;
 }
 
 function MeetingTransmissionPanel({ session }) {
   const [users, setUsers] = useState([]);
   const [meeting, setMeeting] = useState(DEFAULT_SO_MEETING);
+  const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     let refreshing = false;
     const applyMeeting = (state) => {
-      if (cancelled || !state?.soMeeting || typeof state.soMeeting !== "object") return;
-      const next = { ...DEFAULT_SO_MEETING, ...state.soMeeting };
-      setMeeting((current) => current.updatedAt === next.updatedAt && current.occurredAt === next.occurredAt ? current : next);
+      if (cancelled) return;
+      if (state?.soMeeting && typeof state.soMeeting === "object") {
+        const next = { ...DEFAULT_SO_MEETING, ...state.soMeeting };
+        setMeeting((current) => current.updatedAt === next.updatedAt && current.occurredAt === next.occurredAt ? current : next);
+      }
+      if (Array.isArray(state?.soMeetingHistory)) setHistory(state.soMeetingHistory);
     };
     async function loadInitial() {
       try {
@@ -1896,11 +1916,12 @@ function MeetingTransmissionPanel({ session }) {
   async function save(values, { draft = false } = {}) {
     const state = await portalRequest("POST", { action: draft ? "save_so_meeting_draft" : "save_so_meeting", meeting: { ...values, updatedAt: new Date().toISOString(), updatedBy: session.id } });
     if (state?.soMeeting && typeof state.soMeeting === "object") setMeeting({ ...DEFAULT_SO_MEETING, ...state.soMeeting });
+    if (Array.isArray(state?.soMeetingHistory)) setHistory(state.soMeetingHistory);
     return state?.soMeeting;
   }
 
   if (loading) return <div className="meeting-card"><p className="muted">Chargement de la réunion SO…</p></div>;
-  return <MeetingPanel session={session} users={users} meeting={meeting} onSave={save} />;
+  return <MeetingPanel session={session} users={users} meeting={meeting} history={history} onSave={save} />;
 }
 
 function App() {

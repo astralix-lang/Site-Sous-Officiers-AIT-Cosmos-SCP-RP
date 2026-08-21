@@ -23,6 +23,8 @@ const MANAGEMENT_SETTINGS_ID = "b8d9ba07-0f50-4558-b0af-173790f89ab4";
 const MANAGEMENT_SETTINGS_TARGET = "__portal_management_settings";
 const SO_MEETING_ID = "cb94e8d0-2fc4-40f3-8504-3e43b7c8a46b";
 const SO_MEETING_TARGET = "__portal_so_meeting";
+const SO_MEETING_HISTORY_ID = "4e59f012-30d6-4e63-8092-5d4eb2c60262";
+const SO_MEETING_HISTORY_TARGET = "__portal_so_meeting_history";
 const MEETING_ATTENDANCE_STATUSES = new Set(["present", "absent", "late"]);
 const CAPORAL_VOTE_VALUES = new Set(["favorable", "mitige", "defavorable", "sanction"]);
 const FILE_TYPES = new Set([
@@ -226,12 +228,12 @@ async function quotaState(submissions) {
 }
 
 async function stateFor(user) {
-  const [chats, notifications, auditLogs, allSubmissions, summarySettings, sergeantAssignments, allManagementReports, managementReportSettings, soMeeting] = await Promise.all([
-    allChats(user), notificationsFor(user), auditLogsFor(user), submissionsFor(), summarySettingsFor(), assignmentsFor(), managementReportsFor(), managementReportSettingsFor(), meetingFor(),
+  const [chats, notifications, auditLogs, allSubmissions, summarySettings, sergeantAssignments, allManagementReports, managementReportSettings, soMeeting, soMeetingHistory] = await Promise.all([
+    allChats(user), notificationsFor(user), auditLogsFor(user), submissionsFor(), summarySettingsFor(), assignmentsFor(), managementReportsFor(), managementReportSettingsFor(), meetingFor(), meetingHistoryFor(),
   ]);
   const assignedSergeants = new Set(sergeantAssignments.filter((assignment) => assignment.observerId === user.id).map((assignment) => assignment.sergeantId));
   const managementReports = isManager(user) ? allManagementReports : allManagementReports.filter((report) => report.authorId === user.id || (user.role === "senior" && assignedSergeants.has(report.authorId)));
-  return { chats, notifications, auditLogs, submissions: allSubmissions, quotas: await quotaState(allSubmissions), summarySettings, sergeantAssignments, managementReports, managementReportSettings, soMeeting };
+  return { chats, notifications, auditLogs, submissions: allSubmissions, quotas: await quotaState(allSubmissions), summarySettings, sergeantAssignments, managementReports, managementReportSettings, soMeeting, soMeetingHistory };
 }
 
 function canReviewManagementReport(actor, report, assignments) {
@@ -492,6 +494,24 @@ async function saveMeeting(value) {
   await saveSharedRecord(SO_MEETING_ID, SO_MEETING_TARGET, "Réunion SO en cours", meetingFromValue(value));
 }
 
+function meetingHistoryFromValue(value) {
+  return parseArray(value).filter((entry) => UUID.test(String(entry?.id || "")) && Number.isFinite(new Date(entry?.savedAt).getTime())).slice(0, 30).map((entry) => ({
+    id: entry.id,
+    savedAt: new Date(entry.savedAt).toISOString(),
+    savedBy: UUID.test(String(entry.savedBy || "")) ? entry.savedBy : "",
+    savedByName: clean(entry.savedByName, 120) || "Responsable SO",
+    ...meetingFromValue(entry),
+  }));
+}
+
+async function meetingHistoryFor() {
+  return meetingHistoryFromValue(await sharedRecord(SO_MEETING_HISTORY_ID, SO_MEETING_HISTORY_TARGET, "Historique des réunions SO", []));
+}
+
+async function saveMeetingHistory(history) {
+  await saveSharedRecord(SO_MEETING_HISTORY_ID, SO_MEETING_HISTORY_TARGET, "Historique des réunions SO", meetingHistoryFromValue(history));
+}
+
 function failure(error) {
   const message = error instanceof Error ? error.message : "";
   if (message === "INVALID_CONTENT_TYPE" || message === "INVALID_JSON") return json({ error: "Requête invalide." }, 400);
@@ -674,7 +694,18 @@ export async function POST(request) {
       const source = objectValue(body?.meeting);
       const meeting = await meetingWithPresenceSynced({ ...source, updatedAt: new Date().toISOString(), updatedBy: actor.id });
       await saveMeeting(meeting);
-      if (action === "save_so_meeting") await recordAuditLog({ actor, category: "meeting", action: "Réunion SO mise à jour", details: `${meeting.attendance.length} membre(s) suivi(s)` });
+      if (action === "save_so_meeting") {
+        const history = await meetingHistoryFor();
+        const savedAt = new Date().toISOString();
+        await saveMeetingHistory([{
+          ...meeting,
+          id: crypto.randomUUID(),
+          savedAt,
+          savedBy: actor.id,
+          savedByName: `${actor.grade || ""} ${actor.first_name || ""} ${actor.last_name || ""}`.trim() || "Responsable SO",
+        }, ...history].slice(0, 30));
+        await recordAuditLog({ actor, category: "meeting", action: "Réunion SO enregistrée dans l’historique", details: `${meeting.attendance.length} membre(s) suivi(s)` });
+      }
     } else if (action === "sync_so_meeting_presence") {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent synchroniser la réunion." }, 403);
       const userId = String(body?.userId || "");
