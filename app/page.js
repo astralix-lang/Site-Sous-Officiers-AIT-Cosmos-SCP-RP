@@ -1584,6 +1584,7 @@ const MEETING_STATUS_LABELS = { present: "Présent", absent: "Absent", late: "En
 const MEETING_STATUS_TONES = { present: "green", absent: "red", late: "gold" };
 const GOOGLE_DOCS_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+const GOOGLE_REQUEST_TIMEOUT = 45000;
 
 function loadGoogleIdentityServices() {
   return new Promise((resolve, reject) => {
@@ -1618,19 +1619,45 @@ async function requestGoogleDriveToken() {
   if (!GOOGLE_CLIENT_ID) throw new Error("La liaison Google Docs n’est pas encore configurée.");
   await loadGoogleIdentityServices();
   return new Promise((resolve, reject) => {
+    let completed = false;
+    const finish = (handler) => (value) => {
+      if (completed) return;
+      completed = true;
+      window.clearTimeout(timeout);
+      handler(value);
+    };
+    const timeout = window.setTimeout(() => finish(reject)(new Error("Google met trop de temps à répondre. Vérifiez la fenêtre d’autorisation puis réessayez.")), GOOGLE_REQUEST_TIMEOUT);
     const tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
       scope: GOOGLE_DOCS_SCOPE,
-      callback: (response) => {
+      callback: finish((response) => {
         if (response?.error || !response?.access_token) {
           reject(new Error(response?.error_description || "L’autorisation Google a été refusée."));
           return;
         }
         resolve(response.access_token);
-      },
+      }),
+      error_callback: finish(() => reject(new Error("L’autorisation Google n’a pas pu être ouverte. Autorisez les fenêtres contextuelles puis réessayez."))),
     });
-    tokenClient.requestAccessToken({ prompt: "select_account consent" });
+    try {
+      tokenClient.requestAccessToken({ prompt: "select_account consent" });
+    } catch (requestError) {
+      finish(reject)(requestError instanceof Error ? requestError : new Error("L’autorisation Google n’a pas pu démarrer."));
+    }
   });
+}
+
+async function fetchGoogleDocs(url, options) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), GOOGLE_REQUEST_TIMEOUT);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (requestError) {
+    if (requestError?.name === "AbortError") throw new Error("Google Docs met trop de temps à répondre. Réessayez dans un instant.");
+    throw requestError;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 function meetingLocalValue(value) {
@@ -1781,7 +1808,7 @@ function MeetingPanel({ session, users, meeting, onSave }) {
 
       const accessToken = await requestGoogleDriveToken();
       const docTitle = `Réunion SO — ${new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris" }).format(meetingDate)}`;
-      const createResponse = await fetch("https://docs.googleapis.com/v1/documents", {
+      const createResponse = await fetchGoogleDocs("https://docs.googleapis.com/v1/documents", {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({ title: docTitle }),
@@ -1792,7 +1819,7 @@ function MeetingPanel({ session, users, meeting, onSave }) {
       if (!documentId) throw new Error("Google Docs n’a pas renvoyé de lien de document.");
 
       const documentEndpoint = `https://docs.googleapis.com/v1/documents/${documentId}:batchUpdate`;
-      const insertResponse = await fetch(documentEndpoint, {
+      const insertResponse = await fetchGoogleDocs(documentEndpoint, {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({ requests: [{ insertText: { location: { index: 1 }, text: content } }] }),
@@ -1809,11 +1836,12 @@ function MeetingPanel({ session, users, meeting, onSave }) {
           { updateTextStyle: { range, textStyle: { bold: true, foregroundColor: { color: { rgbColor: { red: 0.06, green: 0.28, blue: 0.53 } } } }, fields: "bold,foregroundColor" } },
         ]),
       ];
-      await fetch(documentEndpoint, {
+      const styleResponse = await fetchGoogleDocs(documentEndpoint, {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({ requests: styleRequests }),
       });
+      if (!styleResponse.ok) throw new Error("La mise en forme du Google Doc a échoué.");
 
       const documentUrl = `https://docs.google.com/document/d/${documentId}/edit`;
       window.location.assign(documentUrl);
