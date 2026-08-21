@@ -8,6 +8,7 @@ const nextConfig = {
       "base-uri 'self'",
       "object-src 'none'",
       "frame-ancestors 'none'",
+      "frame-src https://accounts.google.com",
       "form-action 'self'",
       "script-src 'self' 'unsafe-inline' https://accounts.google.com",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
