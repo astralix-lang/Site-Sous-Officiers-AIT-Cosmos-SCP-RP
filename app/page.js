@@ -1576,8 +1576,16 @@ function MeetingPanel({ session, users, meeting, onSave }) {
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
+  const initializedRef = useRef(false);
+  const lastMeetingRevisionRef = useRef("");
+  const hasUnsavedChangesRef = useRef(false);
 
   useEffect(() => {
+    const revision = `${meeting?.updatedAt || ""}:${meeting?.occurredAt || ""}`;
+    // Une actualisation du portail ne doit jamais écraser une réunion en cours
+    // de saisie. La nouvelle version est chargée uniquement au premier affichage
+    // ou juste après son enregistrement.
+    if (hasUnsavedChangesRef.current || (initializedRef.current && lastMeetingRevisionRef.current === revision)) return;
     const known = new Map((Array.isArray(meeting?.attendance) ? meeting.attendance : []).map((entry) => [entry.userId, entry]));
     setForm({
       occurredAt: meetingLocalValue(meeting?.occurredAt),
@@ -1586,22 +1594,33 @@ function MeetingPanel({ session, users, meeting, onSave }) {
       caporalVotes: Array.isArray(meeting?.caporalVotes) ? meeting.caporalVotes : [],
       suggestions: meeting?.suggestions || "",
     });
+    initializedRef.current = true;
+    lastMeetingRevisionRef.current = revision;
   }, [meeting?.updatedAt, meeting?.occurredAt, users]);
 
   function updateAttendance(userId, field, value) {
+    hasUnsavedChangesRef.current = true;
     setForm((current) => ({ ...current, attendance: current.attendance.map((entry) => entry.userId === userId ? { ...entry, [field]: value } : entry) }));
   }
 
   function updateCaporal(id, field, value) {
+    hasUnsavedChangesRef.current = true;
     setForm((current) => ({ ...current, caporalVotes: current.caporalVotes.map((entry) => entry.id === id ? { ...entry, [field]: value } : entry) }));
   }
 
   function addCaporal() {
+    hasUnsavedChangesRef.current = true;
     setForm((current) => ({ ...current, caporalVotes: [...current.caporalVotes, { id: crypto.randomUUID(), name: "", vote: "favorable", note: "" }] }));
   }
 
   function removeCaporal(id) {
+    hasUnsavedChangesRef.current = true;
     setForm((current) => ({ ...current, caporalVotes: current.caporalVotes.filter((entry) => entry.id !== id) }));
+  }
+
+  function updateFormField(field, value) {
+    hasUnsavedChangesRef.current = true;
+    setForm((current) => ({ ...current, [field]: value }));
   }
 
   async function save(event) {
@@ -1609,6 +1628,7 @@ function MeetingPanel({ session, users, meeting, onSave }) {
     setSaving(true); setError("");
     try {
       await onSave({ ...form, occurredAt: new Date(form.occurredAt).toISOString() });
+      hasUnsavedChangesRef.current = false;
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "La réunion n’a pas pu être enregistrée.");
     } finally { setSaving(false); }
@@ -1711,11 +1731,11 @@ function MeetingPanel({ session, users, meeting, onSave }) {
   }
 
   return <div className="meeting-page"><form className="meeting-card" onSubmit={save}>
-    <div className="meeting-head"><div><p className="eyebrow dark">SUIVI RESPONSABLE</p><h2>Réunion SO</h2><p className="muted">Centralisez les présences, les échanges et les décisions de la réunion.</p></div><label>Date et heure<input type="datetime-local" value={form.occurredAt} onChange={(event) => setForm((current) => ({ ...current, occurredAt: event.target.value }))} required /></label></div>
+    <div className="meeting-head"><div><p className="eyebrow dark">SUIVI RESPONSABLE</p><h2>Réunion SO</h2><p className="muted">Centralisez les présences, les échanges et les décisions de la réunion.</p></div><label>Date et heure<input type="datetime-local" value={form.occurredAt} onChange={(event) => updateFormField("occurredAt", event.target.value)} required /></label></div>
     <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon green"><UserCheck size={20} /></span><div><h3>Présences et mots de l'effectif</h3><p>Indiquez le statut et notez les informations utiles pour chaque membre.</p></div></div><div className="meeting-attendance-table"><div className="meeting-attendance-head"><span>Membre</span><span>Présence</span><span>Mot / remarque</span></div>{members.map((user) => { const entry = form.attendance.find((item) => item.userId === user.id) || { status: "present", note: "" }; return <div className="meeting-attendance-row" key={user.id}><div className="meeting-member"><Avatar user={user} size="small" /><span><strong>{user.grade || GRADES[0]} {user.firstName} {user.lastName}</strong><small>{ROLES[user.role].label}</small></span></div><select className={`meeting-status ${MEETING_STATUS_TONES[entry.status] || "green"}`} value={entry.status} onChange={(event) => updateAttendance(user.id, "status", event.target.value)}><option value="present">Présent</option><option value="absent">Absent</option><option value="late">En retard</option></select><textarea value={entry.note} onChange={(event) => updateAttendance(user.id, "note", event.target.value)} maxLength={1200} placeholder="Mot, absence, point évoqué…" /></div>; })}{!members.length && <p className="meeting-empty">Aucun Sous-Officier ou Sous-Officier Supérieur validé.</p>}</div></section>
-    <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon blue"><TrendingUp size={20} /></span><div><h3>Axes d'amélioration</h3><p>Les points à travailler collectivement avant la prochaine réunion.</p></div></div><textarea className="meeting-long-text" value={form.improvementAxes} onChange={(event) => setForm((current) => ({ ...current, improvementAxes: event.target.value }))} maxLength={6000} placeholder="Décrivez les axes d'amélioration…" /></section>
+    <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon blue"><TrendingUp size={20} /></span><div><h3>Axes d'amélioration</h3><p>Les points à travailler collectivement avant la prochaine réunion.</p></div></div><textarea className="meeting-long-text" value={form.improvementAxes} onChange={(event) => updateFormField("improvementAxes", event.target.value)} maxLength={6000} placeholder="Décrivez les axes d'amélioration…" /></section>
     <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon gold"><ClipboardCheck size={20} /></span><div><h3>Votes des Caporaux-Chefs</h3><p>Ajoutez les membres éligibles puis consignez l'avis et la remarque.</p></div></div><div className="meeting-votes"><div className="meeting-votes-head"><span>Caporal-Chef</span><span>Avis</span><span>Remarque</span><span /></div>{form.caporalVotes.map((entry) => <div className="meeting-vote-row" key={entry.id}><input value={entry.name} onChange={(event) => updateCaporal(entry.id, "name", event.target.value)} maxLength={140} placeholder="Prénom et nom" /><select value={entry.vote} onChange={(event) => updateCaporal(entry.id, "vote", event.target.value)}><option value="favorable">Favorable</option><option value="mitige">Mitigé</option><option value="defavorable">Défavorable</option><option value="sanction">Sanction</option></select><textarea value={entry.note} onChange={(event) => updateCaporal(entry.id, "note", event.target.value)} maxLength={1200} placeholder="Remarque…" /><button className="icon-button danger" type="button" title="Retirer ce vote" onClick={() => removeCaporal(entry.id)}><Trash2 size={16} /></button></div>)}</div><button className="secondary meeting-add-vote" type="button" onClick={addCaporal}>Ajouter un Caporal-Chef</button></section>
-    <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon violet"><MessageSquareText size={20} /></span><div><h3>Suggestions et idées</h3><p>Conservez les propositions à étudier ou à mettre en place.</p></div></div><textarea className="meeting-long-text" value={form.suggestions} onChange={(event) => setForm((current) => ({ ...current, suggestions: event.target.value }))} maxLength={6000} placeholder="Ajoutez les suggestions et les idées évoquées…" /></section>
+    <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon violet"><MessageSquareText size={20} /></span><div><h3>Suggestions et idées</h3><p>Conservez les propositions à étudier ou à mettre en place.</p></div></div><textarea className="meeting-long-text" value={form.suggestions} onChange={(event) => updateFormField("suggestions", event.target.value)} maxLength={6000} placeholder="Ajoutez les suggestions et les idées évoquées…" /></section>
     {error && <p className="form-error">{error}</p>}<div className="meeting-actions"><span><ShieldCheck size={15} /> Réunion partagée avec les responsables</span><div><button className="secondary" type="button" onClick={exportPdf} disabled={exporting}><Download size={17} />{exporting ? "Préparation…" : "Télécharger le PDF"}</button><button className="primary" type="submit" disabled={saving}><ClipboardCheck size={17} />{saving ? "Enregistrement…" : "Enregistrer la réunion"}</button></div></div>
   </form></div>;
 }
