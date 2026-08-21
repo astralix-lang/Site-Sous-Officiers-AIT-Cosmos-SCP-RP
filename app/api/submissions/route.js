@@ -1,41 +1,7 @@
 import { database, recordAuditLog, requireSession } from "../auth/_shared";
+import { discordErrorMessage, ROLE_LABELS, REPORT_CONCLUSIONS, sendDiscordSubmission, TYPE_CONFIG } from "./discord";
 
 export const runtime = "edge";
-
-const TYPE_CONFIG = {
-  recommendation: { title: "🏅 Nouvelle recommandation", color: 0x2d66d5, envKey: "DISCORD_WEBHOOK_RECOMMENDATION", aitLabel: "AIT recommandé" },
-  pcs_exp: { title: "🎯 Nouvelle recommandation PCS EXP", color: 0xb97918, envKey: "DISCORD_WEBHOOK_PCS_EXP", aitLabel: "AIT recommandé" },
-  observation_hdr: { title: "📝 Nouvelle observation HDR", color: 0x20896b, envKey: "DISCORD_WEBHOOK_OBSERVATION_HDR", aitLabel: "AIT observé" },
-  observation_so: { title: "👁️ Nouvelle observation SO", color: 0x7957c8, envKey: "DISCORD_WEBHOOK_OBSERVATION_SO", aitLabel: "Nom de l’AIT" },
-  sergeant_report: { title: "📋 Rapport nouveau Sous-Officier", color: 0xb97918, envKey: "DISCORD_WEBHOOK_SERGEANT_REPORT" },
-};
-
-const ROLE_LABELS = {
-  admin: "Admin",
-  management: "Gérance",
-  referent: "Référent SO",
-  senior: "Sous-Officier Supérieur",
-  officer: "Sous-Officier",
-};
-
-// Keep variable names explicit: Next.js then makes the secrets available to
-// Vercel Edge Functions without exposing them to the browser.
-function webhookFor(type) {
-  switch (type) {
-    case "recommendation": return process.env.DISCORD_WEBHOOK_RECOMMENDATION;
-    case "pcs_exp": return process.env.DISCORD_WEBHOOK_PCS_EXP;
-    case "observation_hdr": return process.env.DISCORD_WEBHOOK_OBSERVATION_HDR;
-    case "observation_so": return process.env.DISCORD_WEBHOOK_OBSERVATION_SO;
-    case "sergeant_report": return process.env.DISCORD_WEBHOOK_SERGEANT_REPORT;
-    default: return "";
-  }
-}
-
-const REPORT_CONCLUSIONS = [
-  "Passage confirmé en sergent",
-  "Prolongation de la semaine de test",
-  "Retour caporal-chef",
-];
 const MAX_BODY_SIZE = 16 * 1024;
 const RATE_WINDOW_MS = 10 * 60 * 1000;
 const RATE_MAX_REQUESTS = 12;
@@ -91,15 +57,6 @@ function allowedByRateLimit(request) {
   return current.count <= RATE_MAX_REQUESTS;
 }
 
-function validWebhookUrl(value) {
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" && url.hostname === "discord.com" && !url.username && !url.password && /^\/api\/webhooks\/\d+\/[A-Za-z0-9_-]+$/.test(url.pathname);
-  } catch {
-    return false;
-  }
-}
-
 export async function POST(request) {
   try {
     if (!validRequestSource(request)) return json({ error: "Origine de la requête refusée." }, 403);
@@ -124,11 +81,7 @@ export async function POST(request) {
     if (current.error) return current.error;
     const actor = current.user;
     if (body.type === "sergeant_report" && actor.role !== "senior") return json({ error: "Seul le Sous-Officier Supérieur assigné peut envoyer ce rapport." }, 403);
-    const webhookUrl = webhookFor(body.type);
-    if (!webhookUrl || !validWebhookUrl(webhookUrl)) return json({ error: "Le salon Discord de cette catégorie n’est pas configuré." }, 503);
 
-    let fields;
-    let embedColor = config.color;
     let storedValues;
     if (body.type === "sergeant_report") {
       const sergeantName = clean(body.values?.sergeantName, 100);
@@ -139,68 +92,23 @@ export async function POST(request) {
       if (!sergeantName || !positivePoints || !negativePoints || !globalOpinion || !REPORT_CONCLUSIONS.includes(conclusion)) {
         return json({ error: "Veuillez remplir tous les champs du rapport." }, 400);
       }
-      embedColor = conclusion === "Passage confirmé en sergent" ? 0x20896b : conclusion === "Retour caporal-chef" ? 0xd64550 : 0xe0a526;
-      const conclusionIcon = conclusion === "Passage confirmé en sergent" ? "🟢" : conclusion === "Retour caporal-chef" ? "🔴" : "🟡";
-      fields = [
-        { name: "👤 Nom du Sergent", value: sergeantName, inline: false },
-        { name: "✅ Point positif", value: positivePoints, inline: false },
-        { name: "⚠️ Point négatif", value: negativePoints, inline: false },
-        { name: "🧭 Avis global", value: globalOpinion, inline: false },
-        { name: `${conclusionIcon} Conclusion`, value: `**${conclusion}**`, inline: false },
-      ];
       storedValues = { sergeantName, positivePoints, negativePoints, globalOpinion, conclusion };
     } else {
       const aitName = clean(body.values?.aitName, 100);
       const author = clean(body.values?.author, 100);
       const reason = clean(body.values?.reason, 950);
-      const negative = body.values?.observation === "negative";
       const isObservation = ["observation_hdr", "observation_so"].includes(body.type);
-      embedColor = isObservation ? (negative ? 0xd64550 : 0x20896b) : config.color;
       if (!aitName || !author || !reason) return json({ error: "Veuillez remplir tous les champs obligatoires." }, 400);
-      fields = [
-        { name: `👤 ${config.aitLabel}`, value: aitName, inline: false },
-        { name: body.type === "observation_hdr" ? "🎖️ S-OFF/-SUP faisant l’observation" : body.type === "observation_so" ? "🎖️ S-OFF SUP faisant l’observation" : "🎖️ S-OFF/-SUP à l’origine", value: author, inline: false },
-        ...(isObservation
-          ? [{ name: "📌 Nature de l’observation", value: negative ? "❌ Négative" : "✅ Positive", inline: false }, { name: "📝 Raison", value: reason, inline: false }]
-          : [{ name: "📝 Raison", value: reason, inline: false }]),
-      ];
-      storedValues = { aitName, author, reason, ...(isObservation ? { observation: negative ? "negative" : "positive" } : {}) };
+      storedValues = { aitName, author, reason, ...(isObservation ? { observation: body.values?.observation === "negative" ? "negative" : "positive" } : {}) };
     }
 
-    fields = fields.map((field, index) => ({
-      ...field,
-      name: `${field.name} :`,
-      value: `\u200b\n${field.value}${index < fields.length - 1 ? "\n━━━━━━━━━━━━━━━━━━━━" : ""}`,
-    }));
     const senderName = `${actor.first_name || ""} ${actor.last_name || ""}`.trim() || "Utilisateur du portail";
     // Le rôle est une valeur technique (ex. "senior"). On privilégie le
     // grade pour Discord et, à défaut, un libellé français compréhensible.
     const senderPosition = clean(actor.grade, 60) || ROLE_LABELS[actor.role] || "";
-    const discordResponse = await fetch(webhookUrl, {
-      method: "POST",
-      // Cloudflare Workers n'accepte que "follow" ou "manual".
-      // Le statut HTTP est déjà vérifié juste après l'appel.
-      redirect: "manual",
-      signal: AbortSignal.timeout(8000),
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username: "Portail Sous-Officiers",
-        allowed_mentions: { parse: [] },
-        embeds: [{
-          author: { name: "🛡️ Portail Sous-Officiers • Transmission officielle" },
-          title: config.title,
-          description: "━━━━━━━━━━━━━━━━━━━━",
-          color: embedColor,
-          fields,
-          footer: { text: `🔒 Transmis par ${senderName}${senderPosition ? ` • ${senderPosition}` : ""}` },
-          timestamp: new Date().toISOString(),
-        }],
-      }),
-    });
-    if (!discordResponse.ok) {
-      console.error("Discord webhook rejected submission", discordResponse.status);
-      return json({ error: "Discord n’a pas accepté le message. Réessayez dans un instant." }, 502);
-    }
+    let discordMessage;
+    try { discordMessage = await sendDiscordSubmission({ type: body.type, values: storedValues, senderName, senderPosition }); }
+    catch (error) { return json({ error: discordErrorMessage(error) }, error instanceof Error && error.message === "DISCORD_WEBHOOK_UNAVAILABLE" ? 503 : 502); }
     await database("portal_notifications", {
       method: "POST",
       headers: { Prefer: "return=minimal" },
@@ -215,6 +123,7 @@ export async function POST(request) {
           authorName: senderName,
           authorGrade: clean(actor.grade, 60),
           authorRole: clean(actor.role, 40),
+          discordMessageId: discordMessage?.messageId || "",
         }),
         target: `__portal_submission_${body.type}`,
       }),

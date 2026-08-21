@@ -1467,7 +1467,7 @@ function reportDateLabel(value) {
   catch { return "Date inconnue"; }
 }
 
-function ManagementReportPanel({ session, users, reports, settings, onSubmit, onComment, onResetRanking }) {
+function ManagementReportPanel({ session, users, reports, settings, onSubmit, onComment, onUpdateComment, onDeleteComment, onResetRanking }) {
   const isManager = hasManagerAccess(session.role);
   const isContributor = ["senior", "officer"].includes(session.role);
   const [period, setPeriod] = useState("month");
@@ -1476,6 +1476,9 @@ function ManagementReportPanel({ session, users, reports, settings, onSubmit, on
   const [error, setError] = useState("");
   const [replyDrafts, setReplyDrafts] = useState({});
   const [replying, setReplying] = useState("");
+  const [editingCommentId, setEditingCommentId] = useState("");
+  const [commentEditDrafts, setCommentEditDrafts] = useState({});
+  const [savingCommentId, setSavingCommentId] = useState("");
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const visibleReports = (isManager ? reports : reports.filter((report) => report.authorId === session.id)).slice().sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime());
   const start = managementPeriodStart(period);
@@ -1502,13 +1505,48 @@ function ManagementReportPanel({ session, users, reports, settings, onSubmit, on
     finally { setReplying(""); }
   }
 
+  function startCommentEdit(comment) {
+    setEditingCommentId(comment.id);
+    setCommentEditDrafts((current) => ({ ...current, [comment.id]: comment.content }));
+  }
+
+  async function saveComment(reportId, commentId) {
+    const content = String(commentEditDrafts[commentId] || "").trim();
+    if (!content) return;
+    setSavingCommentId(commentId);
+    try {
+      await onUpdateComment(reportId, commentId, content);
+      setEditingCommentId("");
+    } finally { setSavingCommentId(""); }
+  }
+
+  async function removeComment(reportId, commentId) {
+    if (!confirm("Supprimer définitivement cet avis de gérance ?")) return;
+    setSavingCommentId(commentId);
+    try {
+      await onDeleteComment(reportId, commentId);
+      if (editingCommentId === commentId) setEditingCommentId("");
+    } finally { setSavingCommentId(""); }
+  }
+
   return (
     <div className="management-report-page">
       {isContributor && <section className="management-report-form"><div className="management-form-head"><span className="category-icon violet"><FileText size={22} /></span><div><p className="eyebrow dark">AUTO-ÉVALUATION</p><h2>Rapport de gérance</h2><p className="muted">Décrivez votre gérance et les points à améliorer.</p></div></div><form onSubmit={submit}><div className="form-grid"><label>Date et heure<input type="datetime-local" value={form.occurredAt} onChange={(event) => set("occurredAt", event.target.value)} required /></label><label>Type de gérance<input value={form.managementType} onChange={(event) => set("managementType", event.target.value)} placeholder="Ex. Patrouille, intervention, formation…" required maxLength={100} /></label></div><label>Description<textarea value={form.description} onChange={(event) => set("description", event.target.value)} placeholder="Décrivez la gérance effectuée…" required /></label><div className="form-grid"><label>Point positif<textarea value={form.positivePoint} onChange={(event) => set("positivePoint", event.target.value)} placeholder="Ce qui a bien fonctionné…" required /></label><label>Point négatif<textarea value={form.negativePoint} onChange={(event) => set("negativePoint", event.target.value)} placeholder="Ce qui peut être amélioré…" required /></label></div>{error && <p className="form-error">{error}</p>}<div className="transmission-actions"><span><ShieldCheck size={15} /> Visible par les responsables</span><button type="submit" className="primary" disabled={sending}><Send size={17} />{sending ? "Enregistrement…" : "Envoyer le rapport"}</button></div></form></section>}
 
       {isManager && <section className="management-overview"><div className="summary-toolbar"><div><p className="eyebrow dark">SUIVI RESPONSABLE</p><h2>Classement des gérances</h2><p>Nombre de rapports réalisés par les Sous-Officiers et Sous-Officiers Supérieurs.</p></div><div className="summary-controls"><label>Période<select value={period} onChange={(event) => setPeriod(event.target.value)}><option value="day">Jour</option><option value="week">Semaine</option><option value="month">Mois</option><option value="year">Année</option></select></label>{session.role === "admin" && <button className="summary-reset-button" type="button" onClick={onResetRanking}><Trophy size={16} /> Reset classement</button>}</div></div><div className="management-ranking">{ranking.map((entry, index) => <article key={entry.user.id}><span className={`ranking-number rank-${Math.min(index + 1, 3)}`}>{index + 1}</span><Avatar user={entry.user} size="small" /><div><strong>{entry.user.grade || GRADES[0]} {entry.user.firstName} {entry.user.lastName}</strong><small>{ROLES[entry.user.role].label}</small></div><b>{entry.total}</b><small>gérance{entry.total > 1 ? "s" : ""}</small></article>)}{!ranking.length && <p className="management-empty">Aucun rapport pour cette période.</p>}</div></section>}
 
-      <section className="management-reports-list"><div className="management-list-head"><div><p className="eyebrow dark">{isManager ? "SUIVI DES ÉVALUATIONS" : "MES RAPPORTS"}</p><h2>{isManager ? "Rapports de l’effectif" : "Historique de mes gérances"}</h2><p className="muted">{isManager ? "Ajoutez un avis libre pour accompagner chaque membre." : "Les avis des responsables apparaissent sous vos rapports."}</p></div><span>{visibleReports.length} rapport{visibleReports.length > 1 ? "s" : ""}</span></div><div className="management-report-grid">{visibleReports.map((report) => <article className="management-report-card" key={report.id}><div className="management-report-card-head"><div><span className="category-icon blue"><CalendarDays size={17} /></span><div><strong>{report.managementType}</strong><small>{reportDateLabel(report.occurredAt)}</small></div></div><div className="management-report-author"><strong>{report.authorGrade ? `${report.authorGrade} ` : ""}{report.authorName}</strong><small>{ROLES[report.authorRole]?.label || "Sous-Officier"}</small></div></div><div className="management-report-details"><p><strong>Description</strong>{report.description}</p><p className="positive"><strong>Point positif</strong>{report.positivePoint}</p><p className="negative"><strong>Point négatif</strong>{report.negativePoint}</p></div>{report.comments?.length > 0 && <div className="management-comments"><p className="eyebrow dark">AVIS DES RESPONSABLES</p>{report.comments.map((comment) => <article key={comment.id}><div><strong>{comment.authorGrade ? `${comment.authorGrade} ` : ""}{comment.authorName}</strong><small>{reportDateLabel(comment.createdAt)}</small></div><p>{comment.content}</p></article>)}</div>}{isManager && <div className="management-reply"><label>Ajouter un avis<textarea value={replyDrafts[report.id] || ""} onChange={(event) => setReplyDrafts((current) => ({ ...current, [report.id]: event.target.value }))} placeholder="Votre avis ou conseil…" maxLength={1000} /></label><button className="secondary" type="button" onClick={() => reply(report.id)} disabled={replying === report.id}>{replying === report.id ? "Envoi…" : "Ajouter l’avis"}</button></div>}</article>)}{!visibleReports.length && <div className="management-empty"><FileText size={28} /><strong>Aucun rapport</strong><p>{isManager ? "Les évaluations de l’effectif apparaîtront ici." : "Vos prochains rapports apparaîtront ici."}</p></div>}</div></section>
+      <section className="management-reports-list">
+        <div className="management-list-head"><div><p className="eyebrow dark">{isManager ? "SUIVI DES ÉVALUATIONS" : "MES RAPPORTS"}</p><h2>{isManager ? "Rapports de l’effectif" : "Historique de mes gérances"}</h2><p className="muted">{isManager ? "Ajoutez un avis libre pour accompagner chaque membre." : "Les avis des responsables apparaissent sous vos rapports."}</p></div><span>{visibleReports.length} rapport{visibleReports.length > 1 ? "s" : ""}</span></div>
+        <div className="management-report-grid">{visibleReports.map((report) => <article className="management-report-card" key={report.id}>
+          <div className="management-report-card-head"><div><span className="category-icon blue"><CalendarDays size={17} /></span><div><strong>{report.managementType}</strong><small>{reportDateLabel(report.occurredAt)}</small></div></div><div className="management-report-author"><strong>{report.authorGrade ? `${report.authorGrade} ` : ""}{report.authorName}</strong><small>{ROLES[report.authorRole]?.label || "Sous-Officier"}</small></div></div>
+          <div className="management-report-details"><p><strong>Description</strong>{report.description}</p><p className="positive"><strong>Point positif</strong>{report.positivePoint}</p><p className="negative"><strong>Point négatif</strong>{report.negativePoint}</p></div>
+          {report.comments?.length > 0 && <div className="management-comments"><p className="eyebrow dark">AVIS DES RESPONSABLES</p>{report.comments.map((comment) => {
+            const editingComment = editingCommentId === comment.id;
+            return <article key={comment.id}><div className="management-comment-head"><div><strong>{comment.authorGrade ? `${comment.authorGrade} ` : ""}{comment.authorName}</strong><small>{reportDateLabel(comment.createdAt)}{comment.editedAt ? " · modifié" : ""}</small></div>{isManager && <div className="management-comment-actions"><button className="icon-button" type="button" title="Modifier cet avis" aria-label="Modifier cet avis" onClick={() => startCommentEdit(comment)} disabled={savingCommentId === comment.id}><Pencil size={14} /></button><button className="icon-button danger" type="button" title="Supprimer cet avis" aria-label="Supprimer cet avis" onClick={() => removeComment(report.id, comment.id)} disabled={savingCommentId === comment.id}><Trash2 size={14} /></button></div>}</div>{editingComment ? <div className="management-comment-editor"><textarea value={commentEditDrafts[comment.id] || ""} onChange={(event) => setCommentEditDrafts((current) => ({ ...current, [comment.id]: event.target.value }))} maxLength={1000} /><div><button className="secondary" type="button" onClick={() => setEditingCommentId("")} disabled={savingCommentId === comment.id}>Annuler</button><button className="primary" type="button" onClick={() => saveComment(report.id, comment.id)} disabled={savingCommentId === comment.id}>{savingCommentId === comment.id ? "Enregistrement…" : "Enregistrer"}</button></div></div> : <p>{comment.content}</p>}</article>;
+          })}</div>}
+          {isManager && <div className="management-reply"><label>Ajouter un avis<textarea value={replyDrafts[report.id] || ""} onChange={(event) => setReplyDrafts((current) => ({ ...current, [report.id]: event.target.value }))} placeholder="Votre avis ou conseil…" maxLength={1000} /></label><button className="secondary" type="button" onClick={() => reply(report.id)} disabled={replying === report.id}>{replying === report.id ? "Envoi…" : "Ajouter l’avis"}</button></div>}
+        </article>)}{!visibleReports.length && <div className="management-empty"><FileText size={28} /><strong>Aucun rapport</strong><p>{isManager ? "Les évaluations de l’effectif apparaîtront ici." : "Vos prochains rapports apparaîtront ici."}</p></div>}</div>
+      </section>
     </div>
   );
 }
@@ -1933,6 +1971,33 @@ function App() {
     addLog("management", "Avis ajouté à un rapport de gérance");
     flash("Votre avis a été ajouté.");
   }
+  async function updateManagementComment(reportId, commentId, content) {
+    if (!hasManagerAccess(session?.role)) throw new Error("Vous ne pouvez pas modifier cet avis.");
+    const nextContent = String(content || "").trim();
+    if (!nextContent) throw new Error("L’avis ne peut pas être vide.");
+    if (portalRemote) {
+      const state = await portalRequest("POST", { action: "update_management_comment", reportId, commentId, content: nextContent });
+      applySharedPortalState(state);
+      flash("L’avis a été modifié.");
+      return;
+    }
+    const editedAt = new Date().toISOString();
+    setManagementReports((current) => current.map((report) => report.id === reportId ? { ...report, comments: (report.comments || []).map((comment) => comment.id === commentId ? { ...comment, content: nextContent, editedAt } : comment) } : report));
+    addLog("management", "Avis de gérance modifié");
+    flash("L’avis a été modifié.");
+  }
+  async function deleteManagementComment(reportId, commentId) {
+    if (!hasManagerAccess(session?.role)) throw new Error("Vous ne pouvez pas supprimer cet avis.");
+    if (portalRemote) {
+      const state = await portalRequest("POST", { action: "delete_management_comment", reportId, commentId });
+      applySharedPortalState(state);
+      flash("L’avis a été supprimé.");
+      return;
+    }
+    setManagementReports((current) => current.map((report) => report.id === reportId ? { ...report, comments: (report.comments || []).filter((comment) => comment.id !== commentId) } : report));
+    addLog("management", "Avis de gérance supprimé");
+    flash("L’avis a été supprimé.");
+  }
   function resetManagementRanking() {
     if (session?.role !== "admin" || !confirm("Réinitialiser le classement des gérances pour tous les membres ?")) return;
     if (portalRemote) {
@@ -2000,7 +2065,7 @@ function App() {
     if (!complete) { flash("Tous les champs de l’historique doivent être renseignés."); return; }
     if (portalRemote) {
       portalRequest("POST", { action: "update_submission", submissionId: entryId, type, values: updatedValues })
-        .then((state) => { applySharedPortalState(state); flash("L’historique a été modifié."); })
+        .then((state) => { applySharedPortalState(state); flash(state?.discordUpdated === false ? "L’historique a été modifié. Cet ancien message Discord ne peut pas être mis à jour." : "L’historique et le message Discord ont été modifiés."); })
         .catch((error) => flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible."));
       return;
     }
@@ -2388,7 +2453,7 @@ function App() {
         <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{hasAdminAccess(session.role) && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{hasManagerAccess(session.role) && <optgroup label="Référent SO"><option value="workforce">Effectif</option><option value="specializations">Spécialisations</option><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="summary">Résumé</option><option value="management_report">Rapport de gérance</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{hasSeniorAccess(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="sergeant_assignments">Référent</option><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{hasManagerAccess(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
         {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "management_report" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Rapport de gérance</h1><p className="muted">Auto-évaluez vos gérances et consultez les avis des responsables.</p></div><span className={hasManagerAccess(session.role) ? "referent-access" : "all-access"}><FileText size={16} /> {hasManagerAccess(session.role) ? "Suivi responsable" : "Auto-évaluation"}</span></header> : activeSection === "workforce" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Effectif</h1><p className="muted">Consultez l’organisation complète des membres par accès et par grade.</p></div><span className="referent-access"><UsersRound size={16} /> Vue des effectifs</span></header> : activeSection === "specializations" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Spécialisations</h1><p className="muted">Consultez les spécialités, Steam ID et Discord ID de l’effectif.</p></div><span className="referent-access"><BadgeCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "sergeant_assignments" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Référent</h1><p className="muted">Attribuez et suivez les référents des nouveaux Sergents.</p></div><span className="senior-access"><BadgeCheck size={16} /> Suivi des semaines de test</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Validez les demandes Discord et gardez une vue claire sur votre équipe.</p></div><span className="all-access"><MessageSquareText size={16} /> Connexion Discord</span></header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
-        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={navigateFromHome} onDismissNotification={dismissPortalNotification} onClearNotifications={clearPortalNotifications} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} submissions={submissionHistory} activityResetAt={summarySettings.activityResetAt} rankingResetAt={summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} onResetRanking={resetActivityRanking} /> : activeSection === "management_report" ? <ManagementReportPanel session={session} users={users} reports={managementReports} settings={managementReportSettings} onSubmit={submitManagementReport} onComment={commentManagementReport} onResetRanking={resetManagementRanking} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
+        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={navigateFromHome} onDismissNotification={dismissPortalNotification} onClearNotifications={clearPortalNotifications} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} submissions={submissionHistory} activityResetAt={summarySettings.activityResetAt} rankingResetAt={summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} onResetRanking={resetActivityRanking} /> : activeSection === "management_report" ? <ManagementReportPanel session={session} users={users} reports={managementReports} settings={managementReportSettings} onSubmit={submitManagementReport} onComment={commentManagementReport} onUpdateComment={updateManagementComment} onDeleteComment={deleteManagementComment} onResetRanking={resetManagementRanking} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
         <section className="stats">
           <article><span className="stat-icon blue"><UsersRound /></span><div><strong>{users.length}</strong><small>Comptes au total</small></div><span className="trend">Tous niveaux</span></article>
           <article><span className="stat-icon gold"><UserRound /></span><div><strong>{users.filter((user) => user.approvalStatus === "pending").length}</strong><small>Demandes en attente</small></div><span className="trend">À valider</span></article>

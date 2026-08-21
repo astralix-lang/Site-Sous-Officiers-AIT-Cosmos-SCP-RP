@@ -1,4 +1,5 @@
 import { adminAccess, database, json, readJson, recordAuditLog, requireSession, validCsrfRequest } from "../../auth/_shared";
+import { discordErrorMessage, updateDiscordSubmission } from "../../submissions/discord";
 
 export const runtime = "edge";
 
@@ -405,6 +406,7 @@ function managementReportsFromValue(value) {
       authorRole: clean(comment.authorRole, 40),
       content: clean(comment.content, 1000),
       createdAt: typeof comment.createdAt === "string" ? comment.createdAt : new Date().toISOString(),
+      editedAt: typeof comment.editedAt === "string" ? comment.editedAt : null,
     })),
   })).filter((report) => report.managementType && report.description && report.positivePoint && report.negativePoint);
 }
@@ -449,6 +451,7 @@ export async function POST(request) {
     const body = await readJson(request, MAX_MESSAGE_BYTES);
     const action = String(body?.action || "");
     const actor = current.user;
+    const result = {};
 
     if (action === "start_direct") {
       const otherUserId = String(body?.otherUserId || "");
@@ -559,6 +562,32 @@ export async function POST(request) {
       await saveManagementReports(reports.map((item) => item.id === report.id ? { ...item, comments: [...parseArray(item.comments), comment].slice(-50) } : item));
       await createNotification({ recipients: [report.authorId], kind: "info", title: "Avis ajouté à votre rapport de gérance", text: `${comment.authorGrade ? `${comment.authorGrade} ` : ""}${comment.authorName} a laissé un retour.`, target: "management_report" });
       await recordAuditLog({ actor, category: "management", action: "Avis ajouté à un rapport de gérance", details: report.authorName });
+    } else if (action === "update_management_comment") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent modifier un avis." }, 403);
+      const reportId = String(body?.reportId || "");
+      const commentId = String(body?.commentId || "");
+      const content = clean(body?.content, 1000);
+      if (!UUID.test(reportId) || !UUID.test(commentId) || !content) return json({ error: "Votre avis est invalide." }, 400);
+      const reports = await managementReportsFor();
+      const report = reports.find((item) => item.id === reportId);
+      const comment = report?.comments?.find((item) => item.id === commentId);
+      if (!report || !comment) return json({ error: "Avis introuvable." }, 404);
+      if (!adminAccess(actor) && comment.authorId !== actor.id) return json({ error: "Vous ne pouvez modifier que vos propres avis." }, 403);
+      const editedAt = new Date().toISOString();
+      await saveManagementReports(reports.map((item) => item.id === report.id ? { ...item, comments: parseArray(item.comments).map((entry) => entry.id === comment.id ? { ...entry, content, editedAt } : entry) } : item));
+      await recordAuditLog({ actor, category: "management", action: "Avis de gérance modifié", details: report.authorName });
+    } else if (action === "delete_management_comment") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent supprimer un avis." }, 403);
+      const reportId = String(body?.reportId || "");
+      const commentId = String(body?.commentId || "");
+      if (!UUID.test(reportId) || !UUID.test(commentId)) return json({ error: "Avis invalide." }, 400);
+      const reports = await managementReportsFor();
+      const report = reports.find((item) => item.id === reportId);
+      const comment = report?.comments?.find((item) => item.id === commentId);
+      if (!report || !comment) return json({ error: "Avis introuvable." }, 404);
+      if (!adminAccess(actor) && comment.authorId !== actor.id) return json({ error: "Vous ne pouvez supprimer que vos propres avis." }, 403);
+      await saveManagementReports(reports.map((item) => item.id === report.id ? { ...item, comments: parseArray(item.comments).filter((entry) => entry.id !== comment.id) } : item));
+      await recordAuditLog({ actor, category: "management", action: "Avis de gérance supprimé", details: report.authorName });
     } else if (action === "reset_management_ranking") {
       if (actor.role !== "admin") return json({ error: "Seul l’Admin peut réinitialiser ce classement." }, 403);
       await saveManagementReportSettings({ rankingResetAt: new Date().toISOString() });
@@ -660,8 +689,20 @@ export async function POST(request) {
       if (!row) return json({ error: "Formulaire introuvable." }, 404);
       let payload = {};
       try { payload = objectValue(JSON.parse(row.body || "{}")); } catch { payload = {}; }
+      try {
+        const discord = await updateDiscordSubmission({
+          type,
+          values,
+          senderName: payload.authorName || "Utilisateur du portail",
+          senderPosition: payload.authorGrade || "",
+          messageId: payload.discordMessageId,
+        });
+        result.discordUpdated = discord.updated;
+      } catch (error) {
+        return json({ error: discordErrorMessage(error) }, error instanceof Error && error.message === "DISCORD_WEBHOOK_UNAVAILABLE" ? 503 : 502);
+      }
       await database(`portal_notifications?id=eq.${encodeURIComponent(id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ body: JSON.stringify({ ...payload, values, editedAt: new Date().toISOString(), editedBy: actor.id }) }) });
-      await recordAuditLog({ actor, category: "form", action: "Historique de formulaire modifié", details: type });
+      await recordAuditLog({ actor, category: "form", action: "Historique de formulaire modifié", details: result.discordUpdated ? `${type} • Discord mis à jour` : `${type} • ancien message Discord non modifiable` });
     } else if (action === "delete_submission") {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent supprimer cet historique." }, 403);
       const id = String(body?.submissionId || "");
@@ -692,6 +733,6 @@ export async function POST(request) {
       return json({ error: "Action inconnue." }, 400);
     }
 
-    return json({ ok: true, ...(await stateFor(actor)) });
+    return json({ ok: true, ...(await stateFor(actor)), ...result });
   } catch (error) { return failure(error); }
 }
