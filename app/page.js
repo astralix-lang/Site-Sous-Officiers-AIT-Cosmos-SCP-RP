@@ -1668,7 +1668,7 @@ function meetingLocalValue(value) {
 }
 
 function MeetingPanel({ session, users, meeting, onSave }) {
-  const members = useMemo(() => users.filter((user) => user.approvalStatus === "approved" && ["officer", "senior"].includes(user.role)).sort(compareUsersByGrade), [users]);
+  const members = useMemo(() => users.filter((user) => user.approvalStatus === "approved" && hasSeniorAccess(user.role)).sort(compareUsersByGrade), [users]);
   const [form, setForm] = useState(() => ({ occurredAt: meetingLocalValue(meeting?.occurredAt), attendance: [], improvementAxes: "", caporalVotes: [], suggestions: "" }));
   const [saving, setSaving] = useState(false);
   const [syncingDraft, setSyncingDraft] = useState(false);
