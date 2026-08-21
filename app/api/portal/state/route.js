@@ -446,7 +446,7 @@ function meetingCaporalVotesFromValue(value) {
     name: clean(entry?.name, 140),
     vote: CAPORAL_VOTE_VALUES.has(entry?.vote) ? entry.vote : "favorable",
     note: clean(entry?.note, 1200),
-  })).filter((entry) => entry.name || entry.note);
+  }));
 }
 
 function meetingFromValue(value) {
@@ -637,12 +637,12 @@ export async function POST(request) {
       if (actor.role !== "admin") return json({ error: "Seul l’Admin peut réinitialiser ce classement." }, 403);
       await saveManagementReportSettings({ rankingResetAt: new Date().toISOString() });
       await recordAuditLog({ actor, category: "management", action: "Classement des gérances réinitialisé" });
-    } else if (action === "save_so_meeting") {
+    } else if (action === "save_so_meeting" || action === "save_so_meeting_draft") {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent enregistrer cette réunion." }, 403);
       const source = objectValue(body?.meeting);
       const meeting = meetingFromValue({ ...source, updatedAt: new Date().toISOString(), updatedBy: actor.id });
       await saveMeeting(meeting);
-      await recordAuditLog({ actor, category: "meeting", action: "Réunion SO mise à jour", details: `${meeting.attendance.length} membre(s) suivi(s)` });
+      if (action === "save_so_meeting") await recordAuditLog({ actor, category: "meeting", action: "Réunion SO mise à jour", details: `${meeting.attendance.length} membre(s) suivi(s)` });
     } else if (action === "assign_sergeant") {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent créer une assignation." }, 403);
       const sergeantId = String(body?.sergeantId || "");

@@ -1574,11 +1574,14 @@ function MeetingPanel({ session, users, meeting, onSave }) {
   const members = useMemo(() => users.filter((user) => user.approvalStatus === "approved" && ["officer", "senior"].includes(user.role)).sort(compareUsersByGrade), [users]);
   const [form, setForm] = useState(() => ({ occurredAt: meetingLocalValue(meeting?.occurredAt), attendance: [], improvementAxes: "", caporalVotes: [], suggestions: "" }));
   const [saving, setSaving] = useState(false);
+  const [syncingDraft, setSyncingDraft] = useState(false);
+  const [draftSavedAt, setDraftSavedAt] = useState("");
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
   const initializedRef = useRef(false);
   const lastMeetingRevisionRef = useRef("");
   const hasUnsavedChangesRef = useRef(false);
+  const draftVersionRef = useRef(0);
 
   useEffect(() => {
     const revision = `${meeting?.updatedAt || ""}:${meeting?.occurredAt || ""}`;
@@ -1600,35 +1603,64 @@ function MeetingPanel({ session, users, meeting, onSave }) {
 
   function updateAttendance(userId, field, value) {
     hasUnsavedChangesRef.current = true;
+    draftVersionRef.current += 1;
     setForm((current) => ({ ...current, attendance: current.attendance.map((entry) => entry.userId === userId ? { ...entry, [field]: value } : entry) }));
   }
 
   function updateCaporal(id, field, value) {
     hasUnsavedChangesRef.current = true;
+    draftVersionRef.current += 1;
     setForm((current) => ({ ...current, caporalVotes: current.caporalVotes.map((entry) => entry.id === id ? { ...entry, [field]: value } : entry) }));
   }
 
   function addCaporal() {
     hasUnsavedChangesRef.current = true;
+    draftVersionRef.current += 1;
     setForm((current) => ({ ...current, caporalVotes: [...current.caporalVotes, { id: crypto.randomUUID(), name: "", vote: "favorable", note: "" }] }));
   }
 
   function removeCaporal(id) {
     hasUnsavedChangesRef.current = true;
+    draftVersionRef.current += 1;
     setForm((current) => ({ ...current, caporalVotes: current.caporalVotes.filter((entry) => entry.id !== id) }));
   }
 
   function updateFormField(field, value) {
     hasUnsavedChangesRef.current = true;
+    draftVersionRef.current += 1;
     setForm((current) => ({ ...current, [field]: value }));
   }
+
+  useEffect(() => {
+    if (!initializedRef.current || !hasUnsavedChangesRef.current) return undefined;
+    const version = draftVersionRef.current;
+    const timer = window.setTimeout(async () => {
+      setSyncingDraft(true);
+      try {
+        await onSave({ ...form, occurredAt: new Date(form.occurredAt).toISOString() }, { draft: true });
+        if (draftVersionRef.current === version) {
+          hasUnsavedChangesRef.current = false;
+          setDraftSavedAt(new Date().toISOString());
+        }
+      } catch (draftError) {
+        setError(draftError instanceof Error ? draftError.message : "Le brouillon partagé n’a pas pu être synchronisé.");
+      } finally {
+        setSyncingDraft(false);
+      }
+    }, 650);
+    return () => window.clearTimeout(timer);
+  }, [form, onSave]);
 
   async function save(event) {
     event.preventDefault();
     setSaving(true); setError("");
     try {
-      await onSave({ ...form, occurredAt: new Date(form.occurredAt).toISOString() });
-      hasUnsavedChangesRef.current = false;
+      const version = draftVersionRef.current;
+      await onSave({ ...form, occurredAt: new Date(form.occurredAt).toISOString() }, { draft: false });
+      if (draftVersionRef.current === version) {
+        hasUnsavedChangesRef.current = false;
+        setDraftSavedAt(new Date().toISOString());
+      }
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "La réunion n’a pas pu être enregistrée.");
     } finally { setSaving(false); }
@@ -1736,7 +1768,7 @@ function MeetingPanel({ session, users, meeting, onSave }) {
     <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon blue"><TrendingUp size={20} /></span><div><h3>Axes d'amélioration</h3><p>Les points à travailler collectivement avant la prochaine réunion.</p></div></div><textarea className="meeting-long-text" value={form.improvementAxes} onChange={(event) => updateFormField("improvementAxes", event.target.value)} maxLength={6000} placeholder="Décrivez les axes d'amélioration…" /></section>
     <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon gold"><ClipboardCheck size={20} /></span><div><h3>Votes des Caporaux-Chefs</h3><p>Ajoutez les membres éligibles puis consignez l'avis et la remarque.</p></div></div><div className="meeting-votes"><div className="meeting-votes-head"><span>Caporal-Chef</span><span>Avis</span><span>Remarque</span><span /></div>{form.caporalVotes.map((entry) => <div className="meeting-vote-row" key={entry.id}><input value={entry.name} onChange={(event) => updateCaporal(entry.id, "name", event.target.value)} maxLength={140} placeholder="Prénom et nom" /><select value={entry.vote} onChange={(event) => updateCaporal(entry.id, "vote", event.target.value)}><option value="favorable">Favorable</option><option value="mitige">Mitigé</option><option value="defavorable">Défavorable</option><option value="sanction">Sanction</option></select><textarea value={entry.note} onChange={(event) => updateCaporal(entry.id, "note", event.target.value)} maxLength={1200} placeholder="Remarque…" /><button className="icon-button danger" type="button" title="Retirer ce vote" onClick={() => removeCaporal(entry.id)}><Trash2 size={16} /></button></div>)}</div><button className="secondary meeting-add-vote" type="button" onClick={addCaporal}>Ajouter un Caporal-Chef</button></section>
     <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon violet"><MessageSquareText size={20} /></span><div><h3>Suggestions et idées</h3><p>Conservez les propositions à étudier ou à mettre en place.</p></div></div><textarea className="meeting-long-text" value={form.suggestions} onChange={(event) => updateFormField("suggestions", event.target.value)} maxLength={6000} placeholder="Ajoutez les suggestions et les idées évoquées…" /></section>
-    {error && <p className="form-error">{error}</p>}<div className="meeting-actions"><span><ShieldCheck size={15} /> Réunion partagée avec les responsables</span><div><button className="secondary" type="button" onClick={exportPdf} disabled={exporting}><Download size={17} />{exporting ? "Préparation…" : "Télécharger le PDF"}</button><button className="primary" type="submit" disabled={saving}><ClipboardCheck size={17} />{saving ? "Enregistrement…" : "Enregistrer la réunion"}</button></div></div>
+    {syncingDraft && <p className="draft-status"><BadgeCheck size={14} /> Synchronisation du brouillon partagé…</p>}{!syncingDraft && draftSavedAt && <p className="draft-status"><BadgeCheck size={14} /> Brouillon partagé synchronisé à {new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(draftSavedAt))}</p>}{error && <p className="form-error">{error}</p>}<div className="meeting-actions"><span><ShieldCheck size={15} /> Brouillon partagé avec les responsables</span><div><button className="secondary" type="button" onClick={exportPdf} disabled={exporting}><Download size={17} />{exporting ? "Préparation…" : "Télécharger le PDF"}</button><button className="primary" type="submit" disabled={saving}><ClipboardCheck size={17} />{saving ? "Enregistrement…" : "Enregistrer la réunion"}</button></div></div>
   </form></div>;
 }
 
@@ -1747,19 +1779,36 @@ function MeetingTransmissionPanel({ session }) {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([accountRequest("/api/auth/bootstrap"), portalRequest()])
-      .then(([accounts, state]) => {
+    let refreshing = false;
+    const applyMeeting = (state) => {
+      if (cancelled || !state?.soMeeting || typeof state.soMeeting !== "object") return;
+      const next = { ...DEFAULT_SO_MEETING, ...state.soMeeting };
+      setMeeting((current) => current.updatedAt === next.updatedAt && current.occurredAt === next.occurredAt ? current : next);
+    };
+    async function loadInitial() {
+      try {
+        const [accounts, state] = await Promise.all([accountRequest("/api/auth/bootstrap"), portalRequest()]);
         if (cancelled) return;
         setUsers(Array.isArray(accounts?.users) ? accounts.users : []);
-        if (state?.soMeeting && typeof state.soMeeting === "object") setMeeting({ ...DEFAULT_SO_MEETING, ...state.soMeeting });
-      })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+        applyMeeting(state);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    async function refreshMeeting() {
+      if (refreshing) return;
+      refreshing = true;
+      try { applyMeeting(await portalRequest()); } catch { /* La prochaine synchronisation réessaiera. */ } finally { refreshing = false; }
+    }
+    loadInitial();
+    const timer = window.setInterval(refreshMeeting, 2_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
 
-  async function save(values) {
-    const state = await portalRequest("POST", { action: "save_so_meeting", meeting: { ...values, updatedAt: new Date().toISOString(), updatedBy: session.id } });
+  async function save(values, { draft = false } = {}) {
+    const state = await portalRequest("POST", { action: draft ? "save_so_meeting_draft" : "save_so_meeting", meeting: { ...values, updatedAt: new Date().toISOString(), updatedBy: session.id } });
     if (state?.soMeeting && typeof state.soMeeting === "object") setMeeting({ ...DEFAULT_SO_MEETING, ...state.soMeeting });
+    return state?.soMeeting;
   }
 
   if (loading) return <div className="meeting-card"><p className="muted">Chargement de la réunion SO…</p></div>;
