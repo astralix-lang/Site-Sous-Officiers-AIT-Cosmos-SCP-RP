@@ -1582,6 +1582,56 @@ function ManagementReportPanel({ session, users, reports, assignments, settings,
 
 const MEETING_STATUS_LABELS = { present: "Présent", absent: "Absent", late: "En retard" };
 const MEETING_STATUS_TONES = { present: "green", absent: "red", late: "gold" };
+const GOOGLE_DOCS_SCOPE = "https://www.googleapis.com/auth/drive.file";
+const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+
+function loadGoogleIdentityServices() {
+  return new Promise((resolve, reject) => {
+    if (typeof window === "undefined") {
+      reject(new Error("Google Docs est disponible uniquement depuis le portail."));
+      return;
+    }
+    if (window.google?.accounts?.oauth2) {
+      resolve();
+      return;
+    }
+    const selector = 'script[data-google-identity-services="true"]';
+    const existingScript = document.querySelector(selector);
+    const onLoad = () => window.google?.accounts?.oauth2 ? resolve() : reject(new Error("Le service Google n’est pas disponible."));
+    if (existingScript) {
+      existingScript.addEventListener("load", onLoad, { once: true });
+      existingScript.addEventListener("error", () => reject(new Error("Le service Google n’a pas pu être chargé.")), { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+    script.dataset.googleIdentityServices = "true";
+    script.addEventListener("load", onLoad, { once: true });
+    script.addEventListener("error", () => reject(new Error("Le service Google n’a pas pu être chargé.")), { once: true });
+    document.head.appendChild(script);
+  });
+}
+
+async function requestGoogleDriveToken() {
+  if (!GOOGLE_CLIENT_ID) throw new Error("La liaison Google Docs n’est pas encore configurée.");
+  await loadGoogleIdentityServices();
+  return new Promise((resolve, reject) => {
+    const tokenClient = window.google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: GOOGLE_DOCS_SCOPE,
+      callback: (response) => {
+        if (response?.error || !response?.access_token) {
+          reject(new Error(response?.error_description || "L’autorisation Google a été refusée."));
+          return;
+        }
+        resolve(response.access_token);
+      },
+    });
+    tokenClient.requestAccessToken({ prompt: "select_account consent" });
+  });
+}
 
 function meetingLocalValue(value) {
   const date = new Date(value || Date.now());
@@ -1695,99 +1745,83 @@ function MeetingPanel({ session, users, meeting, onSave }) {
     } finally { setSaving(false); }
   }
 
-  async function exportPdf() {
+  async function createGoogleDocument() {
+    const documentWindow = window.open("about:blank", "_blank");
     setExporting(true); setError("");
     try {
-      const { jsPDF } = await import("jspdf");
-      const pdf = new jsPDF({ unit: "mm", format: "a4" });
-      const pageWidth = 210;
-      const pageHeight = 297;
-      const left = 18;
-      const contentWidth = 174;
-      const meetingDate = new Intl.DateTimeFormat("fr-FR", { dateStyle: "full", timeStyle: "short", timeZone: "Europe/Paris" }).format(new Date(form.occurredAt));
-      const author = `${session.grade || GRADES[0]} ${session.firstName || ""} ${session.lastName || ""}`.trim();
-      const attendance = form.attendance.map((entry) => ({ ...entry, user: members.find((user) => user.id === entry.userId) })).filter((entry) => entry.user);
-      let page = 1;
-      let y = 0;
-      const footer = () => {
-        pdf.setDrawColor(189, 204, 222); pdf.line(left, 282, 192, 282);
-        pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(99, 118, 142);
-        pdf.text("Portail Sous-Officiers AIT - Compte rendu interne", left, 288);
-        pdf.text(`Page ${page}`, 192, 288, { align: "right" });
-      };
-      const newContentPage = (title) => {
-        if (page > 1) pdf.addPage();
-        page += page === 1 ? 1 : 1;
-        pdf.setFillColor(10, 29, 49); pdf.rect(0, 0, pageWidth, 27, "F");
-        pdf.setFont("helvetica", "bold"); pdf.setFontSize(16); pdf.setTextColor(255, 255, 255); pdf.text(title, left, 17);
-        pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(174, 205, 236); pdf.text("REUNION SO", left, 22);
-        y = 40;
-      };
-      const ensure = (space) => {
-        if (y + space <= 275) return;
-        footer();
-        pdf.addPage(); page += 1;
-        pdf.setFillColor(10, 29, 49); pdf.rect(0, 0, pageWidth, 20, "F");
-        pdf.setFont("helvetica", "bold"); pdf.setFontSize(12); pdf.setTextColor(255, 255, 255); pdf.text("Réunion SO", left, 13);
-        y = 31;
-      };
-      const section = (title, text) => {
-        const lines = pdf.splitTextToSize(text || "Aucun élément renseigné.", contentWidth - 8);
-        ensure(Math.max(23, lines.length * 5 + 16));
-        pdf.setFillColor(237, 243, 251); pdf.roundedRect(left, y, contentWidth, lines.length * 5 + 14, 3, 3, "F");
-        pdf.setFont("helvetica", "bold"); pdf.setFontSize(10); pdf.setTextColor(27, 70, 113); pdf.text(title.toUpperCase(), left + 5, y + 7);
-        pdf.setFont("helvetica", "normal"); pdf.setFontSize(10); pdf.setTextColor(32, 48, 67); pdf.text(lines, left + 5, y + 13);
-        y += lines.length * 5 + 20;
-      };
-
-      pdf.setFillColor(8, 25, 44); pdf.rect(0, 0, pageWidth, pageHeight, "F");
-      pdf.setFillColor(53, 105, 197); pdf.roundedRect(left, 34, 48, 8, 3, 3, "F");
-      pdf.setFont("helvetica", "bold"); pdf.setFontSize(9); pdf.setTextColor(255, 255, 255); pdf.text("COMPTE RENDU", left + 24, 39.5, { align: "center" });
-      pdf.setFont("helvetica", "bold"); pdf.setFontSize(31); pdf.setTextColor(255, 255, 255); pdf.text(["Réunion", "Sous-Officiers"], left, 82);
-      pdf.setDrawColor(89, 148, 238); pdf.setLineWidth(1.2); pdf.line(left, 101, 94, 101);
-      pdf.setFont("helvetica", "normal"); pdf.setFontSize(13); pdf.setTextColor(194, 213, 236); pdf.text("Suivi de l'effectif, échanges et décisions", left, 116);
-      pdf.setFillColor(16, 45, 76); pdf.roundedRect(left, 160, contentWidth, 48, 5, 5, "F");
-      pdf.setFont("helvetica", "bold"); pdf.setFontSize(9); pdf.setTextColor(128, 177, 235); pdf.text("DATE ET HEURE", left + 10, 174);
-      pdf.setFont("helvetica", "normal"); pdf.setFontSize(13); pdf.setTextColor(255, 255, 255); pdf.text(meetingDate, left + 10, 184);
-      pdf.setFont("helvetica", "bold"); pdf.setFontSize(9); pdf.setTextColor(128, 177, 235); pdf.text("DOCUMENT PRÉPARÉ PAR", left + 10, 196);
-      pdf.setFont("helvetica", "normal"); pdf.setFontSize(12); pdf.setTextColor(255, 255, 255); pdf.text(author || "Responsable SO", left + 10, 205);
-      pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(150, 178, 212); pdf.text("Document interne - Portail Sous-Officiers AIT", left, 278);
-      pdf.text("Généré le " + new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short", timeZone: "Europe/Paris" }).format(new Date()), left, 284);
-
-      pdf.addPage(); page = 2;
-      pdf.setFillColor(10, 29, 49); pdf.rect(0, 0, pageWidth, 27, "F");
-      pdf.setFont("helvetica", "bold"); pdf.setFontSize(16); pdf.setTextColor(255, 255, 255); pdf.text("Présences et mots de l'effectif", left, 17);
-      pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(174, 205, 236); pdf.text("REUNION SO", left, 22);
-      y = 39;
-      attendance.forEach((entry) => {
-        const name = `${entry.user.grade || GRADES[0]} ${entry.user.firstName} ${entry.user.lastName || ""}`.trim();
-        const noteLines = pdf.splitTextToSize(entry.note || "Aucun mot renseigné.", 88);
-        const height = Math.max(15, 9 + noteLines.length * 4.3);
-        ensure(height + 5);
-        pdf.setFillColor(entry.status === "present" ? 234 : entry.status === "late" ? 255 : 253, entry.status === "present" ? 247 : entry.status === "late" ? 246 : 238, entry.status === "present" ? 239 : entry.status === "late" ? 220 : 221);
-        pdf.roundedRect(left, y, contentWidth, height, 2, 2, "F");
-        pdf.setFont("helvetica", "bold"); pdf.setFontSize(10); pdf.setTextColor(30, 46, 66); pdf.text(name, left + 5, y + 7);
-        pdf.setFont("helvetica", "bold"); pdf.setFontSize(8); pdf.setTextColor(69, 97, 125); pdf.text(MEETING_STATUS_LABELS[entry.status] || "Présent", left + 5, y + 12);
-        pdf.setFont("helvetica", "normal"); pdf.setFontSize(9); pdf.setTextColor(38, 55, 74); pdf.text(noteLines, left + 76, y + 7);
-        y += height + 5;
+      const sourceDate = new Date(form.occurredAt);
+      const meetingDate = Number.isNaN(sourceDate.getTime()) ? new Date() : sourceDate;
+      const meetingDateLabel = new Intl.DateTimeFormat("fr-FR", { dateStyle: "full", timeStyle: "short", timeZone: "Europe/Paris" }).format(meetingDate);
+      const author = `${session.grade || GRADES[0]} ${session.firstName || ""} ${session.lastName || ""}`.trim() || "Responsable SO";
+      const attendance = members.map((user) => {
+        const entry = form.attendance.find((item) => item.userId === user.id) || { status: "present", note: "" };
+        const status = user.presence === "absent" ? "absent" : entry.status;
+        return `${user.grade || GRADES[0]} ${user.firstName || ""} ${user.lastName || ""}`.trim() + ` — ${MEETING_STATUS_LABELS[status] || "Présent"}\n${entry.note || "Aucun mot renseigné."}`;
       });
-      section("Axes d'amélioration", form.improvementAxes);
-      if (form.caporalVotes.length) {
-        ensure(19); pdf.setFont("helvetica", "bold"); pdf.setFontSize(12); pdf.setTextColor(24, 64, 102); pdf.text("Votes des Caporaux-Chefs", left, y); y += 7;
-        form.caporalVotes.forEach((entry) => {
-          const noteLines = pdf.splitTextToSize(entry.note || "Aucune remarque.", 95);
-          const height = Math.max(14, 8 + noteLines.length * 4.3);
-          ensure(height + 4); pdf.setDrawColor(196, 209, 222); pdf.roundedRect(left, y, contentWidth, height, 2, 2, "S");
-          pdf.setFont("helvetica", "bold"); pdf.setFontSize(10); pdf.setTextColor(32, 48, 67); pdf.text(entry.name || "Caporal-Chef", left + 5, y + 7);
-          pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(70, 105, 143); pdf.text(entry.vote === "mitige" ? "Mitigé" : entry.vote === "defavorable" ? "Défavorable" : entry.vote === "sanction" ? "Sanction" : "Favorable", left + 5, y + 12);
-          pdf.setFontSize(9); pdf.setTextColor(38, 55, 74); pdf.text(noteLines, left + 76, y + 7); y += height + 4;
-        });
-      } else section("Votes des Caporaux-Chefs", "Aucun vote renseigné.");
-      section("Suggestions et idées", form.suggestions);
-      footer();
-      pdf.save(`reunion-so-${new Date(form.occurredAt).toISOString().slice(0, 10)}.pdf`);
-    } catch (pdfError) {
-      setError(pdfError instanceof Error ? pdfError.message : "Le PDF n’a pas pu être généré.");
+      const voteLabels = { favorable: "Favorable", mitige: "Mitigé", defavorable: "Défavorable", sanction: "Sanction" };
+      const votes = form.caporalVotes.length
+        ? form.caporalVotes.map((entry) => `${entry.name || "Caporal-Chef"} — ${voteLabels[entry.vote] || "Favorable"}\n${entry.note || "Aucune remarque."}`)
+        : ["Aucun vote renseigné."];
+      const sections = [
+        { title: "PRÉSENCES ET MOTS DE L’EFFECTIF", body: attendance.length ? attendance.join("\n\n") : "Aucun Sous-Officier ou Sous-Officier Supérieur validé." },
+        { title: "AXES D’AMÉLIORATION", body: form.improvementAxes || "Aucun axe renseigné." },
+        { title: "VOTES DES CAPORAUX-CHEFS", body: votes.join("\n\n") },
+        { title: "SUGGESTIONS ET IDÉES", body: form.suggestions || "Aucune suggestion renseignée." },
+      ];
+      const title = "COMPTE RENDU — RÉUNION SO\n";
+      const metadata = `Date et heure : ${meetingDateLabel}\nPréparé par : ${author}\nPortail Sous-Officiers AIT — Document interne\n\n`;
+      let content = title + metadata;
+      let cursor = content.length + 1;
+      const headingRanges = [];
+      sections.forEach((section) => {
+        const startIndex = cursor;
+        content += `${section.title}\n${section.body}\n\n`;
+        headingRanges.push({ startIndex, endIndex: startIndex + section.title.length });
+        cursor = content.length + 1;
+      });
+
+      const accessToken = await requestGoogleDriveToken();
+      const docTitle = `Réunion SO — ${new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris" }).format(meetingDate)}`;
+      const createResponse = await fetch("https://docs.googleapis.com/v1/documents", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ title: docTitle }),
+      });
+      if (!createResponse.ok) throw new Error("Google Docs n’a pas pu créer le document.");
+      const createdDocument = await createResponse.json();
+      const documentId = createdDocument?.documentId;
+      if (!documentId) throw new Error("Google Docs n’a pas renvoyé de lien de document.");
+
+      const documentEndpoint = `https://docs.googleapis.com/v1/documents/${documentId}:batchUpdate`;
+      const insertResponse = await fetch(documentEndpoint, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ requests: [{ insertText: { location: { index: 1 }, text: content } }] }),
+      });
+      if (!insertResponse.ok) throw new Error("Le contenu du compte rendu n’a pas pu être ajouté.");
+
+      const titleEnd = title.length + 1;
+      const metadataEnd = title.length + metadata.length + 1;
+      const styleRequests = [
+        { updateTextStyle: { range: { startIndex: 1, endIndex: titleEnd }, textStyle: { bold: true, fontSize: { magnitude: 22, unit: "PT" }, foregroundColor: { color: { rgbColor: { red: 0.04, green: 0.16, blue: 0.31 } } } }, fields: "bold,fontSize,foregroundColor" } },
+        { updateTextStyle: { range: { startIndex: titleEnd, endIndex: metadataEnd }, textStyle: { foregroundColor: { color: { rgbColor: { red: 0.25, green: 0.36, blue: 0.48 } } } }, fields: "foregroundColor" } },
+        ...headingRanges.flatMap((range) => [
+          { updateParagraphStyle: { range, paragraphStyle: { namedStyleType: "HEADING_1" }, fields: "namedStyleType" } },
+          { updateTextStyle: { range, textStyle: { bold: true, foregroundColor: { color: { rgbColor: { red: 0.06, green: 0.28, blue: 0.53 } } } }, fields: "bold,foregroundColor" } },
+        ]),
+      ];
+      await fetch(documentEndpoint, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ requests: styleRequests }),
+      });
+
+      const documentUrl = `https://docs.google.com/document/d/${documentId}/edit`;
+      if (documentWindow) documentWindow.location.replace(documentUrl);
+      else window.open(documentUrl, "_blank", "noopener,noreferrer");
+    } catch (googleError) {
+      documentWindow?.close();
+      setError(googleError instanceof Error ? googleError.message : "Le document Google Docs n’a pas pu être créé.");
     } finally { setExporting(false); }
   }
 
@@ -1797,7 +1831,7 @@ function MeetingPanel({ session, users, meeting, onSave }) {
     <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon blue"><TrendingUp size={20} /></span><div><h3>Axes d'amélioration</h3><p>Les points à travailler collectivement avant la prochaine réunion.</p></div></div><textarea className="meeting-long-text" value={form.improvementAxes} onChange={(event) => updateFormField("improvementAxes", event.target.value)} maxLength={6000} placeholder="Décrivez les axes d'amélioration…" /></section>
     <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon gold"><ClipboardCheck size={20} /></span><div><h3>Votes des Caporaux-Chefs</h3><p>Ajoutez les membres éligibles puis consignez l'avis et la remarque.</p></div></div><div className="meeting-votes"><div className="meeting-votes-head"><span>Caporal-Chef</span><span>Avis</span><span>Remarque</span><span /></div>{form.caporalVotes.map((entry) => <div className="meeting-vote-row" key={entry.id}><input value={entry.name} onChange={(event) => updateCaporal(entry.id, "name", event.target.value)} maxLength={140} placeholder="Prénom et nom" /><select value={entry.vote} onChange={(event) => updateCaporal(entry.id, "vote", event.target.value)}><option value="favorable">Favorable</option><option value="mitige">Mitigé</option><option value="defavorable">Défavorable</option><option value="sanction">Sanction</option></select><textarea value={entry.note} onChange={(event) => updateCaporal(entry.id, "note", event.target.value)} maxLength={1200} placeholder="Remarque…" /><button className="icon-button danger" type="button" title="Retirer ce vote" onClick={() => removeCaporal(entry.id)}><Trash2 size={16} /></button></div>)}</div><button className="secondary meeting-add-vote" type="button" onClick={addCaporal}>Ajouter un Caporal-Chef</button></section>
     <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon violet"><MessageSquareText size={20} /></span><div><h3>Suggestions et idées</h3><p>Conservez les propositions à étudier ou à mettre en place.</p></div></div><textarea className="meeting-long-text" value={form.suggestions} onChange={(event) => updateFormField("suggestions", event.target.value)} maxLength={6000} placeholder="Ajoutez les suggestions et les idées évoquées…" /></section>
-    {syncingDraft && <p className="draft-status"><BadgeCheck size={14} /> Synchronisation du brouillon partagé…</p>}{!syncingDraft && draftSavedAt && <p className="draft-status"><BadgeCheck size={14} /> Brouillon partagé synchronisé à {new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(draftSavedAt))}</p>}{error && <p className="form-error">{error}</p>}<div className="meeting-actions"><span><ShieldCheck size={15} /> Brouillon partagé avec les responsables</span><div><button className="secondary" type="button" onClick={exportPdf} disabled={exporting}><Download size={17} />{exporting ? "Préparation…" : "Télécharger le PDF"}</button><button className="primary" type="submit" disabled={saving}><ClipboardCheck size={17} />{saving ? "Enregistrement…" : "Enregistrer la réunion"}</button></div></div>
+    {syncingDraft && <p className="draft-status"><BadgeCheck size={14} /> Synchronisation du brouillon partagé…</p>}{!syncingDraft && draftSavedAt && <p className="draft-status"><BadgeCheck size={14} /> Brouillon partagé synchronisé à {new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(draftSavedAt))}</p>}{error && <p className="form-error">{error}</p>}<div className="meeting-actions"><span><ShieldCheck size={15} /> Brouillon partagé avec les responsables</span><div><button className="secondary" type="button" onClick={createGoogleDocument} disabled={exporting}><Download size={17} />{exporting ? "Création…" : "Créer le Google Doc"}</button><button className="primary" type="submit" disabled={saving}><ClipboardCheck size={17} />{saving ? "Enregistrement…" : "Enregistrer la réunion"}</button></div></div>
   </form></div>;
 }
 
