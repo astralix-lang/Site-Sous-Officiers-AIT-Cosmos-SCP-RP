@@ -24,7 +24,7 @@ const MANAGEMENT_SETTINGS_TARGET = "__portal_management_settings";
 const SO_MEETING_ID = "cb94e8d0-2fc4-40f3-8504-3e43b7c8a46b";
 const SO_MEETING_TARGET = "__portal_so_meeting";
 const MEETING_ATTENDANCE_STATUSES = new Set(["present", "absent", "late"]);
-const CAPORAL_VOTE_VALUES = new Set(["favorable", "mitige", "defavorable"]);
+const CAPORAL_VOTE_VALUES = new Set(["favorable", "mitige", "defavorable", "sanction"]);
 const FILE_TYPES = new Set([
   "image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf", "text/plain",
   "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
