@@ -249,7 +249,7 @@ async function validMembers(ids, actorId) {
 
 async function portalUser(id) {
   if (!UUID.test(id)) return null;
-  const rows = await database(`portal_users?id=eq.${encodeURIComponent(id)}&select=id,role,grade,blocked,approval_status,first_name,last_name`);
+  const rows = await database(`portal_users?id=eq.${encodeURIComponent(id)}&select=id,role,grade,presence,blocked,approval_status,first_name,last_name`);
   const user = parseArray(rows)[0];
   return user && !user.blocked && (!user.approval_status || user.approval_status === "approved") ? user : null;
 }
@@ -469,6 +469,20 @@ async function meetingFor() {
   }));
 }
 
+async function meetingWithPresenceSynced(value) {
+  const meeting = meetingFromValue(value);
+  const rows = await database("portal_users?select=id,role,presence,blocked,approval_status");
+  const absentIds = new Set(parseArray(rows)
+    .filter((user) => ["officer", "senior"].includes(user?.role) && user?.presence === "absent" && !user?.blocked && (!user?.approval_status || user.approval_status === "approved"))
+    .map((user) => user.id)
+    .filter((id) => UUID.test(String(id))));
+  if (!absentIds.size) return meeting;
+  const attendance = meeting.attendance.map((entry) => absentIds.has(entry.userId) ? { ...entry, status: "absent" } : entry);
+  const presentIds = new Set(attendance.map((entry) => entry.userId));
+  absentIds.forEach((userId) => { if (!presentIds.has(userId)) attendance.push({ userId, status: "absent", note: "" }); });
+  return { ...meeting, attendance };
+}
+
 async function saveMeeting(value) {
   await saveSharedRecord(SO_MEETING_ID, SO_MEETING_TARGET, "Réunion SO en cours", meetingFromValue(value));
 }
@@ -640,9 +654,16 @@ export async function POST(request) {
     } else if (action === "save_so_meeting" || action === "save_so_meeting_draft") {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent enregistrer cette réunion." }, 403);
       const source = objectValue(body?.meeting);
-      const meeting = meetingFromValue({ ...source, updatedAt: new Date().toISOString(), updatedBy: actor.id });
+      const meeting = await meetingWithPresenceSynced({ ...source, updatedAt: new Date().toISOString(), updatedBy: actor.id });
       await saveMeeting(meeting);
       if (action === "save_so_meeting") await recordAuditLog({ actor, category: "meeting", action: "Réunion SO mise à jour", details: `${meeting.attendance.length} membre(s) suivi(s)` });
+    } else if (action === "sync_so_meeting_presence") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent synchroniser la réunion." }, 403);
+      const userId = String(body?.userId || "");
+      const member = await portalUser(userId);
+      if (!member || !["officer", "senior"].includes(member.role) || member.presence !== "absent") return json({ error: "Membre ou présence invalide." }, 400);
+      const currentMeeting = await meetingFor();
+      await saveMeeting(await meetingWithPresenceSynced({ ...currentMeeting, updatedAt: new Date().toISOString(), updatedBy: actor.id }));
     } else if (action === "assign_sergeant") {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent créer une assignation." }, 403);
       const sergeantId = String(body?.sergeantId || "");

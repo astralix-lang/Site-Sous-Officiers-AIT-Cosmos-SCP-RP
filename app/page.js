@@ -1585,14 +1585,23 @@ function MeetingPanel({ session, users, meeting, onSave }) {
 
   useEffect(() => {
     const revision = `${meeting?.updatedAt || ""}:${meeting?.occurredAt || ""}`;
+    const known = new Map((Array.isArray(meeting?.attendance) ? meeting.attendance : []).map((entry) => [entry.userId, entry]));
     // Une actualisation du portail ne doit jamais écraser une réunion en cours
     // de saisie. La nouvelle version est chargée uniquement au premier affichage
     // ou juste après son enregistrement.
-    if (hasUnsavedChangesRef.current || (initializedRef.current && lastMeetingRevisionRef.current === revision)) return;
-    const known = new Map((Array.isArray(meeting?.attendance) ? meeting.attendance : []).map((entry) => [entry.userId, entry]));
+    if (hasUnsavedChangesRef.current) {
+      const absentIds = new Set([...known.values()].filter((entry) => entry.status === "absent").map((entry) => entry.userId));
+      if (absentIds.size) setForm((current) => {
+        let changed = false;
+        const attendance = current.attendance.map((entry) => absentIds.has(entry.userId) && entry.status !== "absent" ? (changed = true, { ...entry, status: "absent" }) : entry);
+        return changed ? { ...current, attendance } : current;
+      });
+      return;
+    }
+    if (initializedRef.current && lastMeetingRevisionRef.current === revision) return;
     setForm({
       occurredAt: meetingLocalValue(meeting?.occurredAt),
-      attendance: members.map((user) => ({ userId: user.id, status: known.get(user.id)?.status || "present", note: known.get(user.id)?.note || "" })),
+      attendance: members.map((user) => ({ userId: user.id, status: user.presence === "absent" ? "absent" : known.get(user.id)?.status || "present", note: known.get(user.id)?.note || "" })),
       improvementAxes: meeting?.improvementAxes || "",
       caporalVotes: Array.isArray(meeting?.caporalVotes) ? meeting.caporalVotes : [],
       suggestions: meeting?.suggestions || "",
@@ -1764,7 +1773,7 @@ function MeetingPanel({ session, users, meeting, onSave }) {
 
   return <div className="meeting-page"><form className="meeting-card" onSubmit={save}>
     <div className="meeting-head"><div><p className="eyebrow dark">SUIVI RESPONSABLE</p><h2>Réunion SO</h2><p className="muted">Centralisez les présences, les échanges et les décisions de la réunion.</p></div><label>Date et heure<input type="datetime-local" value={form.occurredAt} onChange={(event) => updateFormField("occurredAt", event.target.value)} required /></label></div>
-    <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon green"><UserCheck size={20} /></span><div><h3>Présences et mots de l'effectif</h3><p>Indiquez le statut et notez les informations utiles pour chaque membre.</p></div></div><div className="meeting-attendance-table"><div className="meeting-attendance-head"><span>Membre</span><span>Présence</span><span>Mot / remarque</span></div>{members.map((user) => { const entry = form.attendance.find((item) => item.userId === user.id) || { status: "present", note: "" }; return <div className="meeting-attendance-row" key={user.id}><div className="meeting-member"><Avatar user={user} size="small" /><span><strong>{user.grade || GRADES[0]} {user.firstName} {user.lastName}</strong><small>{ROLES[user.role].label}</small></span></div><select className={`meeting-status ${MEETING_STATUS_TONES[entry.status] || "green"}`} value={entry.status} onChange={(event) => updateAttendance(user.id, "status", event.target.value)}><option value="present">Présent</option><option value="absent">Absent</option><option value="late">En retard</option></select><textarea value={entry.note} onChange={(event) => updateAttendance(user.id, "note", event.target.value)} maxLength={1200} placeholder="Mot, absence, point évoqué…" /></div>; })}{!members.length && <p className="meeting-empty">Aucun Sous-Officier ou Sous-Officier Supérieur validé.</p>}</div></section>
+    <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon green"><UserCheck size={20} /></span><div><h3>Présences et mots de l'effectif</h3><p>Indiquez le statut et notez les informations utiles pour chaque membre.</p></div></div><div className="meeting-attendance-table"><div className="meeting-attendance-head"><span>Membre</span><span>Présence</span><span>Mot / remarque</span></div>{members.map((user) => { const entry = form.attendance.find((item) => item.userId === user.id) || { status: "present", note: "" }; const markedAbsent = user.presence === "absent"; const status = markedAbsent ? "absent" : entry.status; return <div className="meeting-attendance-row" key={user.id}><div className="meeting-member"><Avatar user={user} size="small" /><span><strong>{user.grade || GRADES[0]} {user.firstName} {user.lastName}</strong><small>{ROLES[user.role].label}</small></span></div><select className={`meeting-status ${MEETING_STATUS_TONES[status] || "green"}`} value={status} onChange={(event) => updateAttendance(user.id, "status", event.target.value)} disabled={markedAbsent} title={markedAbsent ? "Ce membre est indiqué absent dans le tableau des présences." : undefined}><option value="present">Présent</option><option value="absent">Absent</option><option value="late">En retard</option></select><textarea value={entry.note} onChange={(event) => updateAttendance(user.id, "note", event.target.value)} maxLength={1200} placeholder="Mot, absence, point évoqué…" /></div>; })}{!members.length && <p className="meeting-empty">Aucun Sous-Officier ou Sous-Officier Supérieur validé.</p>}</div></section>
     <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon blue"><TrendingUp size={20} /></span><div><h3>Axes d'amélioration</h3><p>Les points à travailler collectivement avant la prochaine réunion.</p></div></div><textarea className="meeting-long-text" value={form.improvementAxes} onChange={(event) => updateFormField("improvementAxes", event.target.value)} maxLength={6000} placeholder="Décrivez les axes d'amélioration…" /></section>
     <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon gold"><ClipboardCheck size={20} /></span><div><h3>Votes des Caporaux-Chefs</h3><p>Ajoutez les membres éligibles puis consignez l'avis et la remarque.</p></div></div><div className="meeting-votes"><div className="meeting-votes-head"><span>Caporal-Chef</span><span>Avis</span><span>Remarque</span><span /></div>{form.caporalVotes.map((entry) => <div className="meeting-vote-row" key={entry.id}><input value={entry.name} onChange={(event) => updateCaporal(entry.id, "name", event.target.value)} maxLength={140} placeholder="Prénom et nom" /><select value={entry.vote} onChange={(event) => updateCaporal(entry.id, "vote", event.target.value)}><option value="favorable">Favorable</option><option value="mitige">Mitigé</option><option value="defavorable">Défavorable</option><option value="sanction">Sanction</option></select><textarea value={entry.note} onChange={(event) => updateCaporal(entry.id, "note", event.target.value)} maxLength={1200} placeholder="Remarque…" /><button className="icon-button danger" type="button" title="Retirer ce vote" onClick={() => removeCaporal(entry.id)}><Trash2 size={16} /></button></div>)}</div><button className="secondary meeting-add-vote" type="button" onClick={addCaporal}>Ajouter un Caporal-Chef</button></section>
     <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon violet"><MessageSquareText size={20} /></span><div><h3>Suggestions et idées</h3><p>Conservez les propositions à étudier ou à mettre en place.</p></div></div><textarea className="meeting-long-text" value={form.suggestions} onChange={(event) => updateFormField("suggestions", event.target.value)} maxLength={6000} placeholder="Ajoutez les suggestions et les idées évoquées…" /></section>
@@ -2644,6 +2653,10 @@ function App() {
     try {
       const result = await accountRequest("/api/auth/users", "PATCH", { ...targetUser, id: userId, presence });
       setUsers(Array.isArray(result.users) ? result.users : []);
+      if (presence === "absent") {
+        try { applySharedPortalState(await portalRequest("POST", { action: "sync_so_meeting_presence", userId })); }
+        catch { /* La présence reste enregistrée même si la réunion se synchronise au prochain passage. */ }
+      }
       addLog("presence", "Présence modifiée", `${targetUser.firstName} ${targetUser.lastName} · ${presence === "present" ? "Présent" : "Absent"}`);
       flash(presence === "present" ? "La personne est indiquée présente." : "La personne est indiquée absente.");
     } catch (error) { flash(error instanceof Error ? error.message : "La présence n’a pas pu être modifiée."); }
