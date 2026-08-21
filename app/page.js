@@ -1746,7 +1746,6 @@ function MeetingPanel({ session, users, meeting, onSave }) {
   }
 
   async function createGoogleDocument() {
-    const documentWindow = window.open("about:blank", "_blank");
     setExporting(true); setError("");
     try {
       const sourceDate = new Date(form.occurredAt);
@@ -1817,10 +1816,8 @@ function MeetingPanel({ session, users, meeting, onSave }) {
       });
 
       const documentUrl = `https://docs.google.com/document/d/${documentId}/edit`;
-      if (documentWindow) documentWindow.location.replace(documentUrl);
-      else window.open(documentUrl, "_blank", "noopener,noreferrer");
+      window.location.assign(documentUrl);
     } catch (googleError) {
-      documentWindow?.close();
       setError(googleError instanceof Error ? googleError.message : "Le document Google Docs n’a pas pu être créé.");
     } finally { setExporting(false); }
   }
