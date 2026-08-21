@@ -53,7 +53,7 @@ const hasManagerAccess = (role) => MANAGER_ACCESS_ROLES.has(role);
 const hasSeniorAccess = (role) => SENIOR_ACCESS_ROLES.has(role);
 function canOpenPortalSection(role, section) {
   if (section === "dashboard") return hasAdminAccess(role);
-  if (["workforce", "specializations", "presence", "quotas", "logs"].includes(section)) return hasManagerAccess(role);
+  if (["workforce", "specializations", "presence", "quotas", "meeting_so", "logs"].includes(section)) return hasManagerAccess(role);
   if (["sergeant_assignments", "observation_so", "sergeant_report"].includes(section)) return hasSeniorAccess(role);
   return true;
 }
@@ -99,6 +99,7 @@ const SUBMISSION_HISTORY_KEY = "portail-so-submission-history-v1";
 const NOTIFICATION_KEY = "portail-so-notifications-v1";
 const MANAGEMENT_REPORTS_KEY = "portail-so-management-reports-v1";
 const MANAGEMENT_REPORT_SETTINGS_KEY = "portail-so-management-report-settings-v1";
+const SO_MEETING_KEY = "portail-so-meeting-v1";
 const CHAT_ATTACHMENT_MAX_SIZE = 1024 * 1024;
 const CHAT_ATTACHMENT_MAX_COUNT = 3;
 const CHAT_ATTACHMENT_TYPES = new Set([
@@ -108,8 +109,9 @@ const CHAT_ATTACHMENT_TYPES = new Set([
   "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 ]);
 const DEFAULT_QUOTAS = { targets: { recommendation: 1, pcs_exp: 1, observations: 1, mission_internal: 0 }, counts: {}, exemptions: {} };
+const DEFAULT_SO_MEETING = { occurredAt: new Date().toISOString(), attendance: [], improvementAxes: "", caporalVotes: [], suggestions: "", updatedAt: null, updatedBy: "" };
 const QUOTA_TYPES = ["recommendation", "pcs_exp", "observation_hdr", "observation_so"];
-const LOG_CATEGORY_LABELS = { auth: "Connexion", account: "Comptes", presence: "Présences", quota: "Quotas", form: "Formulaires", mission: "Missions", chat: "Chat", assignment: "Référents", profile: "Profils", summary: "Résumé", management: "Gérance", system: "Système" };
+const LOG_CATEGORY_LABELS = { auth: "Connexion", account: "Comptes", presence: "Présences", quota: "Quotas", form: "Formulaires", mission: "Missions", chat: "Chat", assignment: "Référents", profile: "Profils", summary: "Résumé", management: "Gérance", meeting: "Réunion SO", system: "Système" };
 const REPORT_CONCLUSIONS = [
   "Passage confirmé en sergent",
   "Prolongation de la semaine de test",
@@ -244,6 +246,12 @@ const TRANSMISSION_TYPES = {
     description: "Consultez les compétences et identifiants de l’effectif.",
     icon: BadgeCheck,
     tone: "blue",
+  },
+  meeting_so: {
+    title: "Réunion SO",
+    description: "Préparez le suivi de l’effectif et le compte rendu de réunion.",
+    icon: ClipboardCheck,
+    tone: "violet",
   },
 };
 
@@ -1357,6 +1365,7 @@ function SergeantReportPanel({ users, session, assignments, onSuccess, history, 
 
 function TransmissionPanel({ type, ...props }) {
   if (type === "specializations") return <SpecializationsPanel />;
+  if (type === "meeting_so") return <MeetingTransmissionPanel session={props.session} />;
   return <StandardTransmissionPanel type={type} {...props} />;
 }
 
@@ -1551,6 +1560,192 @@ function ManagementReportPanel({ session, users, reports, settings, onSubmit, on
   );
 }
 
+const MEETING_STATUS_LABELS = { present: "Présent", absent: "Absent", late: "En retard" };
+const MEETING_STATUS_TONES = { present: "green", absent: "red", late: "gold" };
+
+function meetingLocalValue(value) {
+  const date = new Date(value || Date.now());
+  if (!Number.isFinite(date.getTime())) return localDateTimeValue();
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 16);
+}
+
+function MeetingPanel({ session, users, meeting, onSave }) {
+  const members = useMemo(() => users.filter((user) => user.approvalStatus === "approved" && ["officer", "senior"].includes(user.role)).sort(compareUsersByGrade), [users]);
+  const [form, setForm] = useState(() => ({ occurredAt: meetingLocalValue(meeting?.occurredAt), attendance: [], improvementAxes: "", caporalVotes: [], suggestions: "" }));
+  const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const known = new Map((Array.isArray(meeting?.attendance) ? meeting.attendance : []).map((entry) => [entry.userId, entry]));
+    setForm({
+      occurredAt: meetingLocalValue(meeting?.occurredAt),
+      attendance: members.map((user) => ({ userId: user.id, status: known.get(user.id)?.status || "present", note: known.get(user.id)?.note || "" })),
+      improvementAxes: meeting?.improvementAxes || "",
+      caporalVotes: Array.isArray(meeting?.caporalVotes) ? meeting.caporalVotes : [],
+      suggestions: meeting?.suggestions || "",
+    });
+  }, [meeting?.updatedAt, meeting?.occurredAt, users]);
+
+  function updateAttendance(userId, field, value) {
+    setForm((current) => ({ ...current, attendance: current.attendance.map((entry) => entry.userId === userId ? { ...entry, [field]: value } : entry) }));
+  }
+
+  function updateCaporal(id, field, value) {
+    setForm((current) => ({ ...current, caporalVotes: current.caporalVotes.map((entry) => entry.id === id ? { ...entry, [field]: value } : entry) }));
+  }
+
+  function addCaporal() {
+    setForm((current) => ({ ...current, caporalVotes: [...current.caporalVotes, { id: crypto.randomUUID(), name: "", vote: "favorable", note: "" }] }));
+  }
+
+  function removeCaporal(id) {
+    setForm((current) => ({ ...current, caporalVotes: current.caporalVotes.filter((entry) => entry.id !== id) }));
+  }
+
+  async function save(event) {
+    event.preventDefault();
+    setSaving(true); setError("");
+    try {
+      await onSave({ ...form, occurredAt: new Date(form.occurredAt).toISOString() });
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "La réunion n’a pas pu être enregistrée.");
+    } finally { setSaving(false); }
+  }
+
+  async function exportPdf() {
+    setExporting(true); setError("");
+    try {
+      const { jsPDF } = await import("jspdf");
+      const pdf = new jsPDF({ unit: "mm", format: "a4" });
+      const pageWidth = 210;
+      const pageHeight = 297;
+      const left = 18;
+      const contentWidth = 174;
+      const meetingDate = new Intl.DateTimeFormat("fr-FR", { dateStyle: "full", timeStyle: "short", timeZone: "Europe/Paris" }).format(new Date(form.occurredAt));
+      const author = `${session.grade || GRADES[0]} ${session.firstName || ""} ${session.lastName || ""}`.trim();
+      const attendance = form.attendance.map((entry) => ({ ...entry, user: members.find((user) => user.id === entry.userId) })).filter((entry) => entry.user);
+      let page = 1;
+      let y = 0;
+      const footer = () => {
+        pdf.setDrawColor(189, 204, 222); pdf.line(left, 282, 192, 282);
+        pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(99, 118, 142);
+        pdf.text("Portail Sous-Officiers AIT - Compte rendu interne", left, 288);
+        pdf.text(`Page ${page}`, 192, 288, { align: "right" });
+      };
+      const newContentPage = (title) => {
+        if (page > 1) pdf.addPage();
+        page += page === 1 ? 1 : 1;
+        pdf.setFillColor(10, 29, 49); pdf.rect(0, 0, pageWidth, 27, "F");
+        pdf.setFont("helvetica", "bold"); pdf.setFontSize(16); pdf.setTextColor(255, 255, 255); pdf.text(title, left, 17);
+        pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(174, 205, 236); pdf.text("REUNION SO", left, 22);
+        y = 40;
+      };
+      const ensure = (space) => {
+        if (y + space <= 275) return;
+        footer();
+        pdf.addPage(); page += 1;
+        pdf.setFillColor(10, 29, 49); pdf.rect(0, 0, pageWidth, 20, "F");
+        pdf.setFont("helvetica", "bold"); pdf.setFontSize(12); pdf.setTextColor(255, 255, 255); pdf.text("Réunion SO", left, 13);
+        y = 31;
+      };
+      const section = (title, text) => {
+        const lines = pdf.splitTextToSize(text || "Aucun élément renseigné.", contentWidth - 8);
+        ensure(Math.max(23, lines.length * 5 + 16));
+        pdf.setFillColor(237, 243, 251); pdf.roundedRect(left, y, contentWidth, lines.length * 5 + 14, 3, 3, "F");
+        pdf.setFont("helvetica", "bold"); pdf.setFontSize(10); pdf.setTextColor(27, 70, 113); pdf.text(title.toUpperCase(), left + 5, y + 7);
+        pdf.setFont("helvetica", "normal"); pdf.setFontSize(10); pdf.setTextColor(32, 48, 67); pdf.text(lines, left + 5, y + 13);
+        y += lines.length * 5 + 20;
+      };
+
+      pdf.setFillColor(8, 25, 44); pdf.rect(0, 0, pageWidth, pageHeight, "F");
+      pdf.setFillColor(53, 105, 197); pdf.roundedRect(left, 34, 48, 8, 3, 3, "F");
+      pdf.setFont("helvetica", "bold"); pdf.setFontSize(9); pdf.setTextColor(255, 255, 255); pdf.text("COMPTE RENDU", left + 24, 39.5, { align: "center" });
+      pdf.setFont("helvetica", "bold"); pdf.setFontSize(31); pdf.setTextColor(255, 255, 255); pdf.text(["Réunion", "Sous-Officiers"], left, 82);
+      pdf.setDrawColor(89, 148, 238); pdf.setLineWidth(1.2); pdf.line(left, 101, 94, 101);
+      pdf.setFont("helvetica", "normal"); pdf.setFontSize(13); pdf.setTextColor(194, 213, 236); pdf.text("Suivi de l'effectif, échanges et décisions", left, 116);
+      pdf.setFillColor(16, 45, 76); pdf.roundedRect(left, 160, contentWidth, 48, 5, 5, "F");
+      pdf.setFont("helvetica", "bold"); pdf.setFontSize(9); pdf.setTextColor(128, 177, 235); pdf.text("DATE ET HEURE", left + 10, 174);
+      pdf.setFont("helvetica", "normal"); pdf.setFontSize(13); pdf.setTextColor(255, 255, 255); pdf.text(meetingDate, left + 10, 184);
+      pdf.setFont("helvetica", "bold"); pdf.setFontSize(9); pdf.setTextColor(128, 177, 235); pdf.text("DOCUMENT PRÉPARÉ PAR", left + 10, 196);
+      pdf.setFont("helvetica", "normal"); pdf.setFontSize(12); pdf.setTextColor(255, 255, 255); pdf.text(author || "Responsable SO", left + 10, 205);
+      pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(150, 178, 212); pdf.text("Document interne - Portail Sous-Officiers AIT", left, 278);
+      pdf.text("Généré le " + new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short", timeZone: "Europe/Paris" }).format(new Date()), left, 284);
+
+      pdf.addPage(); page = 2;
+      pdf.setFillColor(10, 29, 49); pdf.rect(0, 0, pageWidth, 27, "F");
+      pdf.setFont("helvetica", "bold"); pdf.setFontSize(16); pdf.setTextColor(255, 255, 255); pdf.text("Présences et mots de l'effectif", left, 17);
+      pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(174, 205, 236); pdf.text("REUNION SO", left, 22);
+      y = 39;
+      attendance.forEach((entry) => {
+        const name = `${entry.user.grade || GRADES[0]} ${entry.user.firstName} ${entry.user.lastName || ""}`.trim();
+        const noteLines = pdf.splitTextToSize(entry.note || "Aucun mot renseigné.", 88);
+        const height = Math.max(15, 9 + noteLines.length * 4.3);
+        ensure(height + 5);
+        pdf.setFillColor(entry.status === "present" ? 234 : entry.status === "late" ? 255 : 253, entry.status === "present" ? 247 : entry.status === "late" ? 246 : 238, entry.status === "present" ? 239 : entry.status === "late" ? 220 : 221);
+        pdf.roundedRect(left, y, contentWidth, height, 2, 2, "F");
+        pdf.setFont("helvetica", "bold"); pdf.setFontSize(10); pdf.setTextColor(30, 46, 66); pdf.text(name, left + 5, y + 7);
+        pdf.setFont("helvetica", "bold"); pdf.setFontSize(8); pdf.setTextColor(69, 97, 125); pdf.text(MEETING_STATUS_LABELS[entry.status] || "Présent", left + 5, y + 12);
+        pdf.setFont("helvetica", "normal"); pdf.setFontSize(9); pdf.setTextColor(38, 55, 74); pdf.text(noteLines, left + 76, y + 7);
+        y += height + 5;
+      });
+      section("Axes d'amélioration", form.improvementAxes);
+      if (form.caporalVotes.length) {
+        ensure(19); pdf.setFont("helvetica", "bold"); pdf.setFontSize(12); pdf.setTextColor(24, 64, 102); pdf.text("Votes des Caporaux-Chefs", left, y); y += 7;
+        form.caporalVotes.forEach((entry) => {
+          const noteLines = pdf.splitTextToSize(entry.note || "Aucune remarque.", 95);
+          const height = Math.max(14, 8 + noteLines.length * 4.3);
+          ensure(height + 4); pdf.setDrawColor(196, 209, 222); pdf.roundedRect(left, y, contentWidth, height, 2, 2, "S");
+          pdf.setFont("helvetica", "bold"); pdf.setFontSize(10); pdf.setTextColor(32, 48, 67); pdf.text(entry.name || "Caporal-Chef", left + 5, y + 7);
+          pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(70, 105, 143); pdf.text(entry.vote === "mitige" ? "Mitigé" : entry.vote === "defavorable" ? "Défavorable" : "Favorable", left + 5, y + 12);
+          pdf.setFontSize(9); pdf.setTextColor(38, 55, 74); pdf.text(noteLines, left + 76, y + 7); y += height + 4;
+        });
+      } else section("Votes des Caporaux-Chefs", "Aucun vote renseigné.");
+      section("Suggestions et idées", form.suggestions);
+      footer();
+      pdf.save(`reunion-so-${new Date(form.occurredAt).toISOString().slice(0, 10)}.pdf`);
+    } catch (pdfError) {
+      setError(pdfError instanceof Error ? pdfError.message : "Le PDF n’a pas pu être généré.");
+    } finally { setExporting(false); }
+  }
+
+  return <div className="meeting-page"><form className="meeting-card" onSubmit={save}>
+    <div className="meeting-head"><div><p className="eyebrow dark">SUIVI RESPONSABLE</p><h2>Réunion SO</h2><p className="muted">Centralisez les présences, les échanges et les décisions de la réunion.</p></div><label>Date et heure<input type="datetime-local" value={form.occurredAt} onChange={(event) => setForm((current) => ({ ...current, occurredAt: event.target.value }))} required /></label></div>
+    <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon green"><UserCheck size={20} /></span><div><h3>Présences et mots de l'effectif</h3><p>Indiquez le statut et notez les informations utiles pour chaque membre.</p></div></div><div className="meeting-attendance-table"><div className="meeting-attendance-head"><span>Membre</span><span>Présence</span><span>Mot / remarque</span></div>{members.map((user) => { const entry = form.attendance.find((item) => item.userId === user.id) || { status: "present", note: "" }; return <div className="meeting-attendance-row" key={user.id}><div className="meeting-member"><Avatar user={user} size="small" /><span><strong>{user.grade || GRADES[0]} {user.firstName} {user.lastName}</strong><small>{ROLES[user.role].label}</small></span></div><select className={`meeting-status ${MEETING_STATUS_TONES[entry.status] || "green"}`} value={entry.status} onChange={(event) => updateAttendance(user.id, "status", event.target.value)}><option value="present">Présent</option><option value="absent">Absent</option><option value="late">En retard</option></select><textarea value={entry.note} onChange={(event) => updateAttendance(user.id, "note", event.target.value)} maxLength={1200} placeholder="Mot, absence, point évoqué…" /></div>; })}{!members.length && <p className="meeting-empty">Aucun Sous-Officier ou Sous-Officier Supérieur validé.</p>}</div></section>
+    <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon blue"><TrendingUp size={20} /></span><div><h3>Axes d'amélioration</h3><p>Les points à travailler collectivement avant la prochaine réunion.</p></div></div><textarea className="meeting-long-text" value={form.improvementAxes} onChange={(event) => setForm((current) => ({ ...current, improvementAxes: event.target.value }))} maxLength={6000} placeholder="Décrivez les axes d'amélioration…" /></section>
+    <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon gold"><ClipboardCheck size={20} /></span><div><h3>Votes des Caporaux-Chefs</h3><p>Ajoutez les membres éligibles puis consignez l'avis et la remarque.</p></div></div><div className="meeting-votes"><div className="meeting-votes-head"><span>Caporal-Chef</span><span>Avis</span><span>Remarque</span><span /></div>{form.caporalVotes.map((entry) => <div className="meeting-vote-row" key={entry.id}><input value={entry.name} onChange={(event) => updateCaporal(entry.id, "name", event.target.value)} maxLength={140} placeholder="Prénom et nom" /><select value={entry.vote} onChange={(event) => updateCaporal(entry.id, "vote", event.target.value)}><option value="favorable">Favorable</option><option value="mitige">Mitigé</option><option value="defavorable">Défavorable</option></select><textarea value={entry.note} onChange={(event) => updateCaporal(entry.id, "note", event.target.value)} maxLength={1200} placeholder="Remarque…" /><button className="icon-button danger" type="button" title="Retirer ce vote" onClick={() => removeCaporal(entry.id)}><Trash2 size={16} /></button></div>)}</div><button className="secondary meeting-add-vote" type="button" onClick={addCaporal}>Ajouter un Caporal-Chef</button></section>
+    <section className="meeting-section"><div className="meeting-section-title"><span className="category-icon violet"><MessageSquareText size={20} /></span><div><h3>Suggestions et idées</h3><p>Conservez les propositions à étudier ou à mettre en place.</p></div></div><textarea className="meeting-long-text" value={form.suggestions} onChange={(event) => setForm((current) => ({ ...current, suggestions: event.target.value }))} maxLength={6000} placeholder="Ajoutez les suggestions et les idées évoquées…" /></section>
+    {error && <p className="form-error">{error}</p>}<div className="meeting-actions"><span><ShieldCheck size={15} /> Réunion partagée avec les responsables</span><div><button className="secondary" type="button" onClick={exportPdf} disabled={exporting}><Download size={17} />{exporting ? "Préparation…" : "Télécharger le PDF"}</button><button className="primary" type="submit" disabled={saving}><ClipboardCheck size={17} />{saving ? "Enregistrement…" : "Enregistrer la réunion"}</button></div></div>
+  </form></div>;
+}
+
+function MeetingTransmissionPanel({ session }) {
+  const [users, setUsers] = useState([]);
+  const [meeting, setMeeting] = useState(DEFAULT_SO_MEETING);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([accountRequest("/api/auth/bootstrap"), portalRequest()])
+      .then(([accounts, state]) => {
+        if (cancelled) return;
+        setUsers(Array.isArray(accounts?.users) ? accounts.users : []);
+        if (state?.soMeeting && typeof state.soMeeting === "object") setMeeting({ ...DEFAULT_SO_MEETING, ...state.soMeeting });
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  async function save(values) {
+    const state = await portalRequest("POST", { action: "save_so_meeting", meeting: { ...values, updatedAt: new Date().toISOString(), updatedBy: session.id } });
+    if (state?.soMeeting && typeof state.soMeeting === "object") setMeeting({ ...DEFAULT_SO_MEETING, ...state.soMeeting });
+  }
+
+  if (loading) return <div className="meeting-card"><p className="muted">Chargement de la réunion SO…</p></div>;
+  return <MeetingPanel session={session} users={users} meeting={meeting} onSave={save} />;
+}
+
 function App() {
   const [users, setUsers] = useState([]);
   const [session, setSession] = useState(null);
@@ -1577,6 +1772,7 @@ function App() {
   const [portalNotifications, setPortalNotifications] = useState([]);
   const [managementReports, setManagementReports] = useState([]);
   const [managementReportSettings, setManagementReportSettings] = useState({ rankingResetAt: null });
+  const [soMeeting, setSoMeeting] = useState(DEFAULT_SO_MEETING);
   const [portalRemote, setPortalRemote] = useState(false);
   const [loginTransition, setLoginTransition] = useState(null);
   const [avatarSyncing, setAvatarSyncing] = useState(false);
@@ -1646,6 +1842,7 @@ function App() {
       const savedNotifications = readStoredJson(NOTIFICATION_KEY, []);
       const savedManagementReports = readStoredJson(MANAGEMENT_REPORTS_KEY, []);
       const savedManagementReportSettings = readStoredJson(MANAGEMENT_REPORT_SETTINGS_KEY, { rankingResetAt: null });
+      const savedMeeting = readStoredJson(SO_MEETING_KEY, DEFAULT_SO_MEETING);
       setMissions(Array.isArray(savedMissions) ? savedMissions : []);
       setChats(Array.isArray(savedChats) ? savedChats : []);
       setAuditLogs(Array.isArray(savedLogs) ? savedLogs : []);
@@ -1656,6 +1853,7 @@ function App() {
       setPortalNotifications(Array.isArray(savedNotifications) ? savedNotifications : []);
       setManagementReports(Array.isArray(savedManagementReports) ? savedManagementReports : []);
       setManagementReportSettings(savedManagementReportSettings && typeof savedManagementReportSettings === "object" ? savedManagementReportSettings : { rankingResetAt: null });
+      setSoMeeting(savedMeeting && typeof savedMeeting === "object" ? { ...DEFAULT_SO_MEETING, ...savedMeeting } : DEFAULT_SO_MEETING);
       const storedTheme = localStorage.getItem(THEME_KEY);
       const savedThemeId = storedTheme === "dark" ? "nuit" : storedTheme === "light" ? "clair" : themeById(storedTheme).id;
       const savedSounds = localStorage.getItem(SOUND_KEY) !== "off";
@@ -1697,6 +1895,7 @@ function App() {
   useEffect(() => { if (ready) localStorage.setItem(SUBMISSION_HISTORY_KEY, JSON.stringify(submissionHistory)); }, [submissionHistory, ready]);
   useEffect(() => { if (ready) localStorage.setItem(MANAGEMENT_REPORTS_KEY, JSON.stringify(managementReports)); }, [managementReports, ready]);
   useEffect(() => { if (ready) localStorage.setItem(MANAGEMENT_REPORT_SETTINGS_KEY, JSON.stringify(managementReportSettings)); }, [managementReportSettings, ready]);
+  useEffect(() => { if (ready) localStorage.setItem(SO_MEETING_KEY, JSON.stringify(soMeeting)); }, [soMeeting, ready]);
   useEffect(() => { if (ready && !portalRemote) localStorage.setItem(NOTIFICATION_KEY, JSON.stringify(portalNotifications)); }, [portalNotifications, ready, portalRemote]);
   useEffect(() => {
     function syncAccounts(event) {
@@ -1852,6 +2051,7 @@ function App() {
     if (Array.isArray(state?.sergeantAssignments)) setSergeantAssignments(state.sergeantAssignments);
     if (Array.isArray(state?.managementReports)) setManagementReports(state.managementReports);
     if (state?.managementReportSettings && typeof state.managementReportSettings === "object") setManagementReportSettings(state.managementReportSettings);
+    if (state?.soMeeting && typeof state.soMeeting === "object") setSoMeeting({ ...DEFAULT_SO_MEETING, ...state.soMeeting });
     setPortalRemote(true);
   }
   function syncSharedPortal(action, payload = {}) {
@@ -2009,6 +2209,19 @@ function App() {
     setManagementReportSettings({ rankingResetAt: new Date().toISOString() });
     addLog("management", "Classement des gérances réinitialisé");
     flash("Le classement des gérances a été réinitialisé.");
+  }
+  async function saveSoMeeting(values) {
+    if (!hasManagerAccess(session?.role)) throw new Error("Vous ne pouvez pas modifier cette réunion.");
+    const meeting = { ...values, updatedAt: new Date().toISOString(), updatedBy: session.id };
+    if (portalRemote) {
+      const state = await portalRequest("POST", { action: "save_so_meeting", meeting });
+      applySharedPortalState(state);
+      flash("La réunion SO est enregistrée et synchronisée.");
+      return;
+    }
+    setSoMeeting(meeting);
+    addLog("meeting", "Réunion SO mise à jour", `${meeting.attendance?.length || 0} membre(s) suivi(s)`);
+    flash("La réunion SO est enregistrée.");
   }
   function flash(message) { setNotice(message); window.setTimeout(() => setNotice(""), 2500); }
   function recordSubmission(type, values) {
@@ -2436,7 +2649,7 @@ function App() {
         <nav>
           <button className={`menu-item standalone-nav ${activeSection === "home" ? "active" : ""}`} onClick={() => setActiveSection("home")}><Home size={18} /> Accueil</button>
         {hasAdminAccess(session.role) && <MenuGroup title="Admin" icon={ShieldCheck} open={openGroups.admin} onToggle={() => toggleGroup("admin")}><button className={`menu-item ${activeSection === "dashboard" ? "active" : ""}`} onClick={() => setActiveSection("dashboard")}><LayoutDashboard size={17} /> Tableau de bord</button></MenuGroup>}
-        {hasManagerAccess(session.role) && <MenuGroup title="Référent SO" icon={UsersRound} open={openGroups.referent} onToggle={() => toggleGroup("referent")}><button className={`menu-item ${activeSection === "workforce" ? "active" : ""}`} onClick={() => setActiveSection("workforce")}><UsersRound size={17} /> Effectif</button><button className={`menu-item ${activeSection === "specializations" ? "active" : ""}`} onClick={() => setActiveSection("specializations")}><BadgeCheck size={17} /> Spécialisations</button><button className={`menu-item ${activeSection === "presence" ? "active" : ""}`} onClick={() => setActiveSection("presence")}><UserCheck size={17} /> Présences</button><button className={`menu-item ${activeSection === "quotas" ? "active" : ""}`} onClick={() => setActiveSection("quotas")}><Gauge size={17} /> Quotas</button></MenuGroup>}
+        {hasManagerAccess(session.role) && <MenuGroup title="Référent SO" icon={UsersRound} open={openGroups.referent} onToggle={() => toggleGroup("referent")}><button className={`menu-item ${activeSection === "workforce" ? "active" : ""}`} onClick={() => setActiveSection("workforce")}><UsersRound size={17} /> Effectif</button><button className={`menu-item ${activeSection === "specializations" ? "active" : ""}`} onClick={() => setActiveSection("specializations")}><BadgeCheck size={17} /> Spécialisations</button><button className={`menu-item ${activeSection === "presence" ? "active" : ""}`} onClick={() => setActiveSection("presence")}><UserCheck size={17} /> Présences</button><button className={`menu-item ${activeSection === "meeting_so" ? "active" : ""}`} onClick={() => setActiveSection("meeting_so")}><ClipboardCheck size={17} /> Réunion SO</button><button className={`menu-item ${activeSection === "quotas" ? "active" : ""}`} onClick={() => setActiveSection("quotas")}><Gauge size={17} /> Quotas</button></MenuGroup>}
           <MenuGroup title="Globale" icon={Send} open={openGroups.global} onToggle={() => toggleGroup("global")}><button className={`menu-item ${activeSection === "summary" ? "active" : ""}`} onClick={() => setActiveSection("summary")}><BarChart3 size={17} /> Résumé</button><button className={`menu-item ${activeSection === "management_report" ? "active" : ""}`} onClick={() => setActiveSection("management_report")}><FileText size={17} /> Rapport de gérance</button><button className={`menu-item ${activeSection === "recommendation" ? "active" : ""}`} onClick={() => setActiveSection("recommendation")}><Medal size={17} /> Recommandation</button><button className={`menu-item ${activeSection === "pcs_exp" ? "active" : ""}`} onClick={() => setActiveSection("pcs_exp")}><ClipboardCheck size={17} /> Recommandation PCS EXP</button><button className={`menu-item ${activeSection === "observation_hdr" ? "active" : ""}`} onClick={() => setActiveSection("observation_hdr")}><MessageSquareText size={17} /> Observation HDR</button><button className={`menu-item ${activeSection === "mission_internal" ? "active" : ""}`} onClick={() => setActiveSection("mission_internal")}><FileText size={17} /> Mission interne</button></MenuGroup>
         {hasSeniorAccess(session.role) && <MenuGroup title="Sous-Officier Supérieur" icon={BadgeCheck} open={openGroups.senior} onToggle={() => toggleGroup("senior")}><button className={`menu-item ${activeSection === "sergeant_assignments" ? "active" : ""}`} onClick={() => setActiveSection("sergeant_assignments")}><UsersRound size={17} /> Référent</button><button className={`menu-item ${activeSection === "observation_so" ? "active" : ""}`} onClick={() => setActiveSection("observation_so")}><MessageSquareText size={17} /> Observation SO</button><button className={`menu-item ${activeSection === "sergeant_report" ? "active" : ""}`} onClick={() => setActiveSection("sergeant_report")}><FileText size={17} /> Rapport nouveau SO</button></MenuGroup>}
           <MenuGroup title="Chat" icon={MessageSquareText} open={openGroups.chat} onToggle={() => toggleGroup("chat")}><button className={`menu-item ${activeSection === "chat" ? "active" : ""}`} onClick={() => setActiveSection("chat")}><Send size={17} /> Messagerie</button></MenuGroup>
@@ -2450,7 +2663,7 @@ function App() {
       </aside>
 
       <main className="content">
-        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{hasAdminAccess(session.role) && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{hasManagerAccess(session.role) && <optgroup label="Référent SO"><option value="workforce">Effectif</option><option value="specializations">Spécialisations</option><option value="presence">Présences</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="summary">Résumé</option><option value="management_report">Rapport de gérance</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{hasSeniorAccess(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="sergeant_assignments">Référent</option><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{hasManagerAccess(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
+        <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{hasAdminAccess(session.role) && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{hasManagerAccess(session.role) && <optgroup label="Référent SO"><option value="workforce">Effectif</option><option value="specializations">Spécialisations</option><option value="presence">Présences</option><option value="meeting_so">Réunion SO</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="summary">Résumé</option><option value="management_report">Rapport de gérance</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{hasSeniorAccess(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="sergeant_assignments">Référent</option><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{hasManagerAccess(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
         {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "management_report" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Rapport de gérance</h1><p className="muted">Auto-évaluez vos gérances et consultez les avis des responsables.</p></div><span className={hasManagerAccess(session.role) ? "referent-access" : "all-access"}><FileText size={16} /> {hasManagerAccess(session.role) ? "Suivi responsable" : "Auto-évaluation"}</span></header> : activeSection === "workforce" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Effectif</h1><p className="muted">Consultez l’organisation complète des membres par accès et par grade.</p></div><span className="referent-access"><UsersRound size={16} /> Vue des effectifs</span></header> : activeSection === "specializations" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Spécialisations</h1><p className="muted">Consultez les spécialités, Steam ID et Discord ID de l’effectif.</p></div><span className="referent-access"><BadgeCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "sergeant_assignments" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Référent</h1><p className="muted">Attribuez et suivez les référents des nouveaux Sergents.</p></div><span className="senior-access"><BadgeCheck size={16} /> Suivi des semaines de test</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Validez les demandes Discord et gardez une vue claire sur votre équipe.</p></div><span className="all-access"><MessageSquareText size={16} /> Connexion Discord</span></header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
         {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={navigateFromHome} onDismissNotification={dismissPortalNotification} onClearNotifications={clearPortalNotifications} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} submissions={submissionHistory} activityResetAt={summarySettings.activityResetAt} rankingResetAt={summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} onResetRanking={resetActivityRanking} /> : activeSection === "management_report" ? <ManagementReportPanel session={session} users={users} reports={managementReports} settings={managementReportSettings} onSubmit={submitManagementReport} onComment={commentManagementReport} onUpdateComment={updateManagementComment} onDeleteComment={deleteManagementComment} onResetRanking={resetManagementRanking} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>

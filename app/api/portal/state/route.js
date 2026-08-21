@@ -21,6 +21,10 @@ const MANAGEMENT_REPORTS_ID = "5b5254f3-f22b-4cb4-935f-cffd73e8bba7";
 const MANAGEMENT_REPORTS_TARGET = "__portal_management_reports";
 const MANAGEMENT_SETTINGS_ID = "b8d9ba07-0f50-4558-b0af-173790f89ab4";
 const MANAGEMENT_SETTINGS_TARGET = "__portal_management_settings";
+const SO_MEETING_ID = "cb94e8d0-2fc4-40f3-8504-3e43b7c8a46b";
+const SO_MEETING_TARGET = "__portal_so_meeting";
+const MEETING_ATTENDANCE_STATUSES = new Set(["present", "absent", "late"]);
+const CAPORAL_VOTE_VALUES = new Set(["favorable", "mitige", "defavorable"]);
 const FILE_TYPES = new Set([
   "image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf", "text/plain",
   "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -222,11 +226,11 @@ async function quotaState(submissions) {
 }
 
 async function stateFor(user) {
-  const [chats, notifications, auditLogs, allSubmissions, summarySettings, sergeantAssignments, allManagementReports, managementReportSettings] = await Promise.all([
-    allChats(user), notificationsFor(user), auditLogsFor(user), submissionsFor(), summarySettingsFor(), assignmentsFor(), managementReportsFor(), managementReportSettingsFor(),
+  const [chats, notifications, auditLogs, allSubmissions, summarySettings, sergeantAssignments, allManagementReports, managementReportSettings, soMeeting] = await Promise.all([
+    allChats(user), notificationsFor(user), auditLogsFor(user), submissionsFor(), summarySettingsFor(), assignmentsFor(), managementReportsFor(), managementReportSettingsFor(), meetingFor(),
   ]);
   const managementReports = isManager(user) ? allManagementReports : allManagementReports.filter((report) => report.authorId === user.id);
-  return { chats, notifications, auditLogs, submissions: allSubmissions, quotas: await quotaState(allSubmissions), summarySettings, sergeantAssignments, managementReports, managementReportSettings };
+  return { chats, notifications, auditLogs, submissions: allSubmissions, quotas: await quotaState(allSubmissions), summarySettings, sergeantAssignments, managementReports, managementReportSettings, soMeeting };
 }
 
 async function chatById(id) {
@@ -428,6 +432,47 @@ async function saveManagementReportSettings(value) {
   await saveSharedRecord(MANAGEMENT_SETTINGS_ID, MANAGEMENT_SETTINGS_TARGET, "Réglages internes des rapports de gérance", { rankingResetAt: value?.rankingResetAt || null });
 }
 
+function meetingAttendanceFromValue(value) {
+  return parseArray(value).filter((entry) => UUID.test(String(entry?.userId || ""))).slice(0, 300).map((entry) => ({
+    userId: entry.userId,
+    status: MEETING_ATTENDANCE_STATUSES.has(entry.status) ? entry.status : "present",
+    note: clean(entry.note, 1200),
+  }));
+}
+
+function meetingCaporalVotesFromValue(value) {
+  return parseArray(value).slice(0, 100).map((entry) => ({
+    id: UUID.test(String(entry?.id || "")) ? entry.id : crypto.randomUUID(),
+    name: clean(entry?.name, 140),
+    vote: CAPORAL_VOTE_VALUES.has(entry?.vote) ? entry.vote : "favorable",
+    note: clean(entry?.note, 1200),
+  })).filter((entry) => entry.name || entry.note);
+}
+
+function meetingFromValue(value) {
+  const source = objectValue(value);
+  const occurredAt = Number.isFinite(new Date(source.occurredAt).getTime()) ? new Date(source.occurredAt).toISOString() : new Date().toISOString();
+  return {
+    occurredAt,
+    attendance: meetingAttendanceFromValue(source.attendance),
+    improvementAxes: clean(source.improvementAxes, 6000),
+    caporalVotes: meetingCaporalVotesFromValue(source.caporalVotes),
+    suggestions: clean(source.suggestions, 6000),
+    updatedAt: typeof source.updatedAt === "string" ? source.updatedAt : null,
+    updatedBy: UUID.test(String(source.updatedBy || "")) ? source.updatedBy : "",
+  };
+}
+
+async function meetingFor() {
+  return meetingFromValue(await sharedRecord(SO_MEETING_ID, SO_MEETING_TARGET, "Réunion SO en cours", {
+    occurredAt: new Date().toISOString(), attendance: [], improvementAxes: "", caporalVotes: [], suggestions: "", updatedAt: null, updatedBy: "",
+  }));
+}
+
+async function saveMeeting(value) {
+  await saveSharedRecord(SO_MEETING_ID, SO_MEETING_TARGET, "Réunion SO en cours", meetingFromValue(value));
+}
+
 function failure(error) {
   const message = error instanceof Error ? error.message : "";
   if (message === "INVALID_CONTENT_TYPE" || message === "INVALID_JSON") return json({ error: "Requête invalide." }, 400);
@@ -592,6 +637,12 @@ export async function POST(request) {
       if (actor.role !== "admin") return json({ error: "Seul l’Admin peut réinitialiser ce classement." }, 403);
       await saveManagementReportSettings({ rankingResetAt: new Date().toISOString() });
       await recordAuditLog({ actor, category: "management", action: "Classement des gérances réinitialisé" });
+    } else if (action === "save_so_meeting") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent enregistrer cette réunion." }, 403);
+      const source = objectValue(body?.meeting);
+      const meeting = meetingFromValue({ ...source, updatedAt: new Date().toISOString(), updatedBy: actor.id });
+      await saveMeeting(meeting);
+      await recordAuditLog({ actor, category: "meeting", action: "Réunion SO mise à jour", details: `${meeting.attendance.length} membre(s) suivi(s)` });
     } else if (action === "assign_sergeant") {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent créer une assignation." }, 403);
       const sergeantId = String(body?.sergeantId || "");

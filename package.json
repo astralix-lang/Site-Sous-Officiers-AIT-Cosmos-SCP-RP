@@ -11,6 +11,7 @@
     "build:sites": "vinext build && node scripts/prepare-sites.mjs"
   },
   "dependencies": {
+    "jspdf": "^4.2.1",
     "lucide-react": "0.468.0",
     "next": "15.5.20",
     "react": "19.2.7",
