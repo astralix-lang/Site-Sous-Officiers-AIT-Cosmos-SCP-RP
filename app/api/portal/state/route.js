@@ -655,6 +655,16 @@ export async function POST(request) {
       if (!adminAccess(actor) && comment.authorId !== actor.id) return json({ error: "Vous ne pouvez supprimer que vos propres avis." }, 403);
       await saveManagementReports(reports.map((item) => item.id === report.id ? { ...item, comments: parseArray(item.comments).filter((entry) => entry.id !== comment.id) } : item));
       await recordAuditLog({ actor, category: "management", action: "Avis de gérance supprimé", details: report.authorName });
+    } else if (action === "delete_management_report") {
+      if (!isManager(actor)) return json({ error: "Seuls les Référents SO et les accès supérieurs peuvent supprimer un rapport." }, 403);
+      const reportId = String(body?.reportId || "");
+      if (!UUID.test(reportId)) return json({ error: "Rapport invalide." }, 400);
+      const reports = await managementReportsFor();
+      const report = reports.find((item) => item.id === reportId);
+      if (!report) return json({ error: "Rapport introuvable." }, 404);
+      await saveManagementReports(reports.filter((item) => item.id !== report.id));
+      if (report.authorId !== actor.id) await createNotification({ recipients: [report.authorId], kind: "info", title: "Rapport de gérance supprimé", text: "Un responsable a supprimé votre rapport de gérance.", target: "management_report" });
+      await recordAuditLog({ actor, category: "management", action: "Rapport de gérance supprimé", details: `${report.managementType} · ${report.authorName}` });
     } else if (action === "reset_management_ranking") {
       if (actor.role !== "admin") return json({ error: "Seul l’Admin peut réinitialiser ce classement." }, 403);
       await saveManagementReportSettings({ rankingResetAt: new Date().toISOString() });
