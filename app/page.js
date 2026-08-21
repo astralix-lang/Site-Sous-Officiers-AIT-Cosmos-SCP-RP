@@ -1805,9 +1805,11 @@ function MeetingPanel({ session, users, meeting, history, onSave }) {
         { title: "VOTES DES CAPORAUX-CHEFS", body: votes.join("\n\n") },
         { title: "SUGGESTIONS ET IDÉES", body: form.suggestions || "Aucune suggestion renseignée." },
       ];
-      const title = "COMPTE RENDU — RÉUNION SO\n";
-      const metadata = `Date et heure : ${meetingDateLabel}\nPréparé par : ${author}\nPortail Sous-Officiers AIT — Document interne\n\n`;
-      let content = title + metadata;
+      const title = "RÉUNION SO\n";
+      const subtitle = "COMPTE RENDU OFFICIEL\n";
+      const metadata = `Réunion du ${meetingDateLabel}\nPréparé par ${author}\nPortail Sous-Officiers AIT · Document interne\n\n`;
+      const closing = "Document interne · Portail Sous-Officiers AIT\n";
+      let content = title + subtitle + metadata;
       let cursor = content.length + 1;
       const headingRanges = [];
       sections.forEach((section) => {
@@ -1816,6 +1818,8 @@ function MeetingPanel({ session, users, meeting, history, onSave }) {
         headingRanges.push({ startIndex, endIndex: startIndex + section.title.length });
         cursor = content.length + 1;
       });
+      const closingStart = cursor;
+      content += closing;
 
       const accessToken = await requestGoogleDriveToken();
       const docTitle = `Réunion SO — ${new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris" }).format(meetingDate)}`;
@@ -1838,14 +1842,24 @@ function MeetingPanel({ session, users, meeting, history, onSave }) {
       if (!insertResponse.ok) throw new Error("Le contenu du compte rendu n’a pas pu être ajouté.");
 
       const titleEnd = title.length + 1;
-      const metadataEnd = title.length + metadata.length + 1;
+      const subtitleEnd = titleEnd + subtitle.length;
+      const metadataEnd = subtitleEnd + metadata.length;
+      const documentEnd = content.length + 1;
       const styleRequests = [
-        { updateTextStyle: { range: { startIndex: 1, endIndex: titleEnd }, textStyle: { bold: true, fontSize: { magnitude: 22, unit: "PT" }, foregroundColor: { color: { rgbColor: { red: 0.04, green: 0.16, blue: 0.31 } } } }, fields: "bold,fontSize,foregroundColor" } },
-        { updateTextStyle: { range: { startIndex: titleEnd, endIndex: metadataEnd }, textStyle: { foregroundColor: { color: { rgbColor: { red: 0.25, green: 0.36, blue: 0.48 } } } }, fields: "foregroundColor" } },
+        { updateDocumentStyle: { documentStyle: { background: { color: { rgbColor: { red: 0.027, green: 0.078, blue: 0.14 } } } }, fields: "background" } },
+        { updateTextStyle: { range: { startIndex: 1, endIndex: documentEnd }, textStyle: { fontSize: { magnitude: 10.5, unit: "PT" }, foregroundColor: { color: { rgbColor: { red: 0.86, green: 0.9, blue: 0.95 } } } }, fields: "fontSize,foregroundColor" } },
+        { updateTextStyle: { range: { startIndex: 1, endIndex: titleEnd }, textStyle: { bold: true, fontSize: { magnitude: 26, unit: "PT" }, foregroundColor: { color: { rgbColor: { red: 0.63, green: 0.84, blue: 1 } } } }, fields: "bold,fontSize,foregroundColor" } },
+        { updateParagraphStyle: { range: { startIndex: 1, endIndex: titleEnd }, paragraphStyle: { alignment: "CENTER", spaceBelow: { magnitude: 4, unit: "PT" }, lineSpacing: 105 }, fields: "alignment,spaceBelow,lineSpacing" } },
+        { updateTextStyle: { range: { startIndex: titleEnd, endIndex: subtitleEnd }, textStyle: { bold: true, fontSize: { magnitude: 11, unit: "PT" }, foregroundColor: { color: { rgbColor: { red: 0.3, green: 0.69, blue: 0.96 } } } }, fields: "bold,fontSize,foregroundColor" } },
+        { updateParagraphStyle: { range: { startIndex: titleEnd, endIndex: subtitleEnd }, paragraphStyle: { alignment: "CENTER", spaceBelow: { magnitude: 16, unit: "PT" } }, fields: "alignment,spaceBelow" } },
+        { updateTextStyle: { range: { startIndex: subtitleEnd, endIndex: metadataEnd }, textStyle: { fontSize: { magnitude: 10, unit: "PT" }, foregroundColor: { color: { rgbColor: { red: 0.58, green: 0.7, blue: 0.82 } } } }, fields: "fontSize,foregroundColor" } },
+        { updateParagraphStyle: { range: { startIndex: subtitleEnd, endIndex: metadataEnd }, paragraphStyle: { alignment: "CENTER", spaceBelow: { magnitude: 12, unit: "PT" }, lineSpacing: 115 }, fields: "alignment,spaceBelow,lineSpacing" } },
         ...headingRanges.flatMap((range) => [
-          { updateParagraphStyle: { range, paragraphStyle: { namedStyleType: "HEADING_1" }, fields: "namedStyleType" } },
-          { updateTextStyle: { range, textStyle: { bold: true, foregroundColor: { color: { rgbColor: { red: 0.06, green: 0.28, blue: 0.53 } } } }, fields: "bold,foregroundColor" } },
+          { updateParagraphStyle: { range, paragraphStyle: { shading: { backgroundColor: { color: { rgbColor: { red: 0.055, green: 0.19, blue: 0.31 } } } }, spaceAbove: { magnitude: 18, unit: "PT" }, spaceBelow: { magnitude: 8, unit: "PT" }, keepWithNext: true }, fields: "shading,spaceAbove,spaceBelow,keepWithNext" } },
+          { updateTextStyle: { range, textStyle: { bold: true, fontSize: { magnitude: 12.5, unit: "PT" }, foregroundColor: { color: { rgbColor: { red: 0.74, green: 0.89, blue: 1 } } } }, fields: "bold,fontSize,foregroundColor" } },
         ]),
+        { updateTextStyle: { range: { startIndex: closingStart, endIndex: documentEnd }, textStyle: { bold: true, fontSize: { magnitude: 9, unit: "PT" }, foregroundColor: { color: { rgbColor: { red: 0.35, green: 0.58, blue: 0.76 } } } }, fields: "bold,fontSize,foregroundColor" } },
+        { updateParagraphStyle: { range: { startIndex: closingStart, endIndex: documentEnd }, paragraphStyle: { alignment: "CENTER", spaceAbove: { magnitude: 18, unit: "PT" } }, fields: "alignment,spaceAbove" } },
       ];
       const styleResponse = await fetchGoogleDocs(documentEndpoint, {
         method: "POST",
