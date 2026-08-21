@@ -1845,28 +1845,46 @@ function MeetingPanel({ session, users, meeting, history, onSave }) {
       const subtitleEnd = titleEnd + subtitle.length;
       const metadataEnd = subtitleEnd + metadata.length;
       const documentEnd = content.length + 1;
-      const styleRequests = [
+      const applyStyleRequests = async (requests) => {
+        const response = await fetchGoogleDocs(documentEndpoint, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ requests }),
+        });
+        return response.ok;
+      };
+      // The page background is kept in a dedicated request: Google can reject a visual
+      // preference on some accounts, but that must never prevent the report from opening.
+      const darkBackgroundApplied = await applyStyleRequests([
         { updateDocumentStyle: { documentStyle: { background: { color: { rgbColor: { red: 0.027, green: 0.078, blue: 0.14 } } } }, fields: "background" } },
-        { updateTextStyle: { range: { startIndex: 1, endIndex: documentEnd }, textStyle: { fontSize: { magnitude: 10.5, unit: "PT" }, foregroundColor: { color: { rgbColor: { red: 0.86, green: 0.9, blue: 0.95 } } } }, fields: "fontSize,foregroundColor" } },
-        { updateTextStyle: { range: { startIndex: 1, endIndex: titleEnd }, textStyle: { bold: true, fontSize: { magnitude: 26, unit: "PT" }, foregroundColor: { color: { rgbColor: { red: 0.63, green: 0.84, blue: 1 } } } }, fields: "bold,fontSize,foregroundColor" } },
-        { updateParagraphStyle: { range: { startIndex: 1, endIndex: titleEnd }, paragraphStyle: { alignment: "CENTER", spaceBelow: { magnitude: 4, unit: "PT" }, lineSpacing: 105 }, fields: "alignment,spaceBelow,lineSpacing" } },
-        { updateTextStyle: { range: { startIndex: titleEnd, endIndex: subtitleEnd }, textStyle: { bold: true, fontSize: { magnitude: 11, unit: "PT" }, foregroundColor: { color: { rgbColor: { red: 0.3, green: 0.69, blue: 0.96 } } } }, fields: "bold,fontSize,foregroundColor" } },
+      ]);
+      const palette = darkBackgroundApplied
+        ? { body: { red: 0.86, green: 0.9, blue: 0.95 }, title: { red: 0.63, green: 0.84, blue: 1 }, subtitle: { red: 0.3, green: 0.69, blue: 0.96 }, metadata: { red: 0.58, green: 0.7, blue: 0.82 }, heading: { red: 0.74, green: 0.89, blue: 1 }, footer: { red: 0.35, green: 0.58, blue: 0.76 } }
+        : { body: { red: 0.12, green: 0.2, blue: 0.3 }, title: { red: 0.04, green: 0.16, blue: 0.31 }, subtitle: { red: 0.06, green: 0.34, blue: 0.62 }, metadata: { red: 0.3, green: 0.41, blue: 0.52 }, heading: { red: 0.05, green: 0.29, blue: 0.54 }, footer: { red: 0.25, green: 0.46, blue: 0.65 } };
+      const styleRequests = [
+        { updateTextStyle: { range: { startIndex: 1, endIndex: documentEnd }, textStyle: { fontSize: { magnitude: 10.5, unit: "PT" }, foregroundColor: { color: { rgbColor: palette.body } } }, fields: "fontSize,foregroundColor" } },
+        { updateTextStyle: { range: { startIndex: 1, endIndex: titleEnd }, textStyle: { bold: true, fontSize: { magnitude: 26, unit: "PT" }, foregroundColor: { color: { rgbColor: palette.title } } }, fields: "bold,fontSize,foregroundColor" } },
+        { updateParagraphStyle: { range: { startIndex: 1, endIndex: titleEnd }, paragraphStyle: { alignment: "CENTER", spaceBelow: { magnitude: 4, unit: "PT" } }, fields: "alignment,spaceBelow" } },
+        { updateTextStyle: { range: { startIndex: titleEnd, endIndex: subtitleEnd }, textStyle: { bold: true, fontSize: { magnitude: 11, unit: "PT" }, foregroundColor: { color: { rgbColor: palette.subtitle } } }, fields: "bold,fontSize,foregroundColor" } },
         { updateParagraphStyle: { range: { startIndex: titleEnd, endIndex: subtitleEnd }, paragraphStyle: { alignment: "CENTER", spaceBelow: { magnitude: 16, unit: "PT" } }, fields: "alignment,spaceBelow" } },
-        { updateTextStyle: { range: { startIndex: subtitleEnd, endIndex: metadataEnd }, textStyle: { fontSize: { magnitude: 10, unit: "PT" }, foregroundColor: { color: { rgbColor: { red: 0.58, green: 0.7, blue: 0.82 } } } }, fields: "fontSize,foregroundColor" } },
-        { updateParagraphStyle: { range: { startIndex: subtitleEnd, endIndex: metadataEnd }, paragraphStyle: { alignment: "CENTER", spaceBelow: { magnitude: 12, unit: "PT" }, lineSpacing: 115 }, fields: "alignment,spaceBelow,lineSpacing" } },
+        { updateTextStyle: { range: { startIndex: subtitleEnd, endIndex: metadataEnd }, textStyle: { fontSize: { magnitude: 10, unit: "PT" }, foregroundColor: { color: { rgbColor: palette.metadata } } }, fields: "fontSize,foregroundColor" } },
+        { updateParagraphStyle: { range: { startIndex: subtitleEnd, endIndex: metadataEnd }, paragraphStyle: { alignment: "CENTER", spaceBelow: { magnitude: 12, unit: "PT" } }, fields: "alignment,spaceBelow" } },
         ...headingRanges.flatMap((range) => [
-          { updateParagraphStyle: { range, paragraphStyle: { shading: { backgroundColor: { color: { rgbColor: { red: 0.055, green: 0.19, blue: 0.31 } } } }, spaceAbove: { magnitude: 18, unit: "PT" }, spaceBelow: { magnitude: 8, unit: "PT" }, keepWithNext: true }, fields: "shading,spaceAbove,spaceBelow,keepWithNext" } },
-          { updateTextStyle: { range, textStyle: { bold: true, fontSize: { magnitude: 12.5, unit: "PT" }, foregroundColor: { color: { rgbColor: { red: 0.74, green: 0.89, blue: 1 } } } }, fields: "bold,fontSize,foregroundColor" } },
+          { updateParagraphStyle: { range, paragraphStyle: { spaceAbove: { magnitude: 18, unit: "PT" }, spaceBelow: { magnitude: 8, unit: "PT" }, keepWithNext: true }, fields: "spaceAbove,spaceBelow,keepWithNext" } },
+          { updateTextStyle: { range, textStyle: { bold: true, fontSize: { magnitude: 12.5, unit: "PT" }, foregroundColor: { color: { rgbColor: palette.heading } } }, fields: "bold,fontSize,foregroundColor" } },
         ]),
-        { updateTextStyle: { range: { startIndex: closingStart, endIndex: documentEnd }, textStyle: { bold: true, fontSize: { magnitude: 9, unit: "PT" }, foregroundColor: { color: { rgbColor: { red: 0.35, green: 0.58, blue: 0.76 } } } }, fields: "bold,fontSize,foregroundColor" } },
+        { updateTextStyle: { range: { startIndex: closingStart, endIndex: documentEnd }, textStyle: { bold: true, fontSize: { magnitude: 9, unit: "PT" }, foregroundColor: { color: { rgbColor: palette.footer } } }, fields: "bold,fontSize,foregroundColor" } },
         { updateParagraphStyle: { range: { startIndex: closingStart, endIndex: documentEnd }, paragraphStyle: { alignment: "CENTER", spaceAbove: { magnitude: 18, unit: "PT" } }, fields: "alignment,spaceAbove" } },
       ];
-      const styleResponse = await fetchGoogleDocs(documentEndpoint, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ requests: styleRequests }),
-      });
-      if (!styleResponse.ok) throw new Error("La mise en forme du Google Doc a échoué.");
+      const stylesApplied = await applyStyleRequests(styleRequests);
+      if (!stylesApplied) {
+        // Leave the user with a readable, created report even if a Google formatting rule changes.
+        await applyStyleRequests([
+          { updateTextStyle: { range: { startIndex: 1, endIndex: documentEnd }, textStyle: { foregroundColor: { color: { rgbColor: palette.body } } }, fields: "foregroundColor" } },
+          { updateTextStyle: { range: { startIndex: 1, endIndex: titleEnd }, textStyle: { bold: true, fontSize: { magnitude: 22, unit: "PT" }, foregroundColor: { color: { rgbColor: palette.title } } }, fields: "bold,fontSize,foregroundColor" } },
+          ...headingRanges.map((range) => ({ updateTextStyle: { range, textStyle: { bold: true, foregroundColor: { color: { rgbColor: palette.heading } } }, fields: "bold,foregroundColor" } })),
+        ]);
+      }
 
       const documentUrl = `https://docs.google.com/document/d/${documentId}/edit`;
       window.location.assign(documentUrl);
