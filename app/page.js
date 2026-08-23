@@ -51,6 +51,7 @@ const SENIOR_ACCESS_ROLES = new Set(["admin", "management", "referent", "senior"
 const hasAdminAccess = (role) => ADMIN_ACCESS_ROLES.has(role);
 const hasManagerAccess = (role) => MANAGER_ACCESS_ROLES.has(role);
 const hasSeniorAccess = (role) => SENIOR_ACCESS_ROLES.has(role);
+const hasChatParticipant = (chat, userId) => Array.isArray(chat?.participants) && chat.participants.some((id) => String(id) === String(userId));
 function canOpenPortalSection(role, section) {
   if (section === "dashboard") return hasAdminAccess(role);
   if (["workforce", "specializations", "presence", "quotas", "meeting_so", "logs"].includes(section)) return hasManagerAccess(role);
@@ -722,7 +723,7 @@ function HomePanel({ session, users, missions, chats, quotas, logs, assignments,
   useEffect(() => setShortcutDraft(selectedShortcutIds), [shortcutIds, session.role]);
   const team = users.filter((user) => user.approvalStatus === "approved" && ["senior", "officer"].includes(user.role));
   const activeAccounts = users.filter((user) => user.approvalStatus === "approved" && !user.blocked).length;
-  const myChats = chats.filter((chat) => chat.participants.includes(session.id));
+  const myChats = chats.filter((chat) => hasChatParticipant(chat, session.id));
   const pendingMissions = missions.filter((mission) => mission.status === "pending");
   const myMissions = missions.filter((mission) => mission.userId === session.id);
   const myReportAssignments = assignments.filter((assignment) => assignment.observerId === session.id && assignment.status === "active");
@@ -976,7 +977,7 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onUpdateGrou
   const isModerator = hasManagerAccess(session.role);
   const availableContacts = users.filter((user) => user.id !== session.id && user.approvalStatus === "approved" && !user.blocked).sort(compareUsersByGrade);
   const supportContacts = availableContacts.filter((user) => hasManagerAccess(user.role));
-  const visibleChats = useMemo(() => isModerator ? chats : chats.filter((chat) => chat.participants.includes(session.id)), [chats, isModerator, session.id]);
+  const visibleChats = useMemo(() => isModerator ? chats : chats.filter((chat) => hasChatParticipant(chat, session.id)), [chats, isModerator, session.id]);
   const [selectedChatId, setSelectedChatId] = useState("");
   const [contactId, setContactId] = useState(availableContacts[0]?.id || "");
   const [groupOpen, setGroupOpen] = useState(false);
@@ -993,7 +994,7 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onUpdateGrou
   const attachmentInputRef = useRef(null);
   const savedRangeRef = useRef(null);
   const selectedChat = visibleChats.find((chat) => chat.id === selectedChatId);
-  const canParticipate = selectedChat?.participants.includes(session.id);
+  const canParticipate = hasChatParticipant(selectedChat, session.id);
   const canManageSelectedGroup = selectedChat?.type === "group" && selectedChat.createdBy === session.id;
 
   useEffect(() => {
@@ -1020,7 +1021,7 @@ function ChatPanel({ session, users, chats, onStart, onCreateGroup, onUpdateGrou
       const names = chat.participants.map((id) => users.find((user) => user.id === id)).filter(Boolean).map((user) => user.firstName).join(", ");
       return { title: chat.name || "Groupe sans nom", subtitle: names || "Aucun membre disponible", group: true };
     }
-    if (!chat.participants.includes(session.id)) {
+    if (!hasChatParticipant(chat, session.id)) {
       const participants = chat.participants.map((id) => users.find((user) => user.id === id)).filter(Boolean);
       return { title: participants.map((user) => `${user.firstName} ${user.lastName}`).join(" ↔ ") || "Discussion privée", subtitle: `Discussion privée · ${chat.messages.length} message${chat.messages.length > 1 ? "s" : ""}`, moderated: true, group: false };
     }
@@ -2695,7 +2696,7 @@ function App() {
   function startChat(otherUserId) {
     const contact = users.find((user) => user.id === otherUserId && user.id !== session.id && user.approvalStatus === "approved" && !user.blocked);
     if (!contact) return "";
-    const existingChat = chats.find((chat) => chat.participants.length === 2 && chat.participants.includes(session.id) && chat.participants.includes(otherUserId));
+    const existingChat = chats.find((chat) => chat.participants.length === 2 && hasChatParticipant(chat, session.id) && hasChatParticipant(chat, otherUserId));
     if (existingChat) return existingChat.id;
     const chatId = crypto.randomUUID();
     setChats((current) => [{ id: chatId, type: "direct", participants: [session.id, otherUserId], messages: [], updatedAt: new Date().toISOString(), isDraft: true }, ...current]);
@@ -2723,10 +2724,10 @@ function App() {
     return true;
   }
   function sendChatMessage(chatId, html, text, attachments = []) {
-    const chat = chats.find((item) => item.id === chatId && item.participants.includes(session.id));
+    const chat = chats.find((item) => item.id === chatId && hasChatParticipant(item, session.id));
     if (!chat) return;
     setChats((current) => {
-      const currentChat = current.find((item) => item.id === chatId && item.participants.includes(session.id));
+      const currentChat = current.find((item) => item.id === chatId && hasChatParticipant(item, session.id));
       if (!currentChat) return current;
       const message = { id: crypto.randomUUID(), senderId: session.id, senderName: `${session.firstName} ${session.lastName}`, html: sanitizeChatHtml(html), text, attachments, sentAt: new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date()) };
       const updatedChat = { ...currentChat, messages: [...currentChat.messages, message], updatedAt: new Date().toISOString() };
@@ -2756,7 +2757,7 @@ function App() {
   function deleteChat(chatId) {
     const chat = chats.find((item) => item.id === chatId);
     const canModerate = hasManagerAccess(session.role);
-    const canDelete = chat?.type === "group" ? chat.createdBy === session.id || canModerate : chat?.participants.includes(session.id) || canModerate;
+    const canDelete = chat?.type === "group" ? chat.createdBy === session.id || canModerate : hasChatParticipant(chat, session.id) || canModerate;
     if (!chat || !canDelete || !confirm("Supprimer définitivement cette conversation et tous ses messages ?")) return;
     setChats((current) => current.filter((item) => item.id !== chatId));
     if (portalRemote && !chat.isDraft) syncSharedPortal("delete_chat", { chatId });

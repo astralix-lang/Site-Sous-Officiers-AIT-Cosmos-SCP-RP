@@ -50,8 +50,21 @@ function jsonValue(value, fallback) {
 }
 
 function isManager(user) { return ["admin", "management", "referent"].includes(user?.role); }
-function parseArray(value) { return Array.isArray(value) ? value : []; }
-function uniqueIds(values) { return [...new Set(parseArray(values).filter((value) => UUID.test(String(value))))]; }
+// Supabase renvoie normalement les colonnes JSON sous forme de tableaux. Des
+// anciennes discussions peuvent toutefois contenir ce même tableau encodé en
+// texte : on le normalise ici pour que tous leurs membres restent visibles.
+function parseArray(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+function uniqueIds(values) { return [...new Set(parseArray(values).map(String).filter((value) => UUID.test(value)))]; }
+function chatParticipantIds(chat) { return uniqueIds(chat?.participants); }
 // Les routes Vercel s’exécutent en UTC. Toutes les heures affichées par le
 // portail sont donc explicitement converties à l’heure française.
 function label(date) {
@@ -79,7 +92,7 @@ function attachmentList(value) {
 }
 
 function allowedChat(chat, user) {
-  return Boolean(chat && (isManager(user) || parseArray(chat.participants).includes(user.id)));
+  return Boolean(chat && (isManager(user) || chatParticipantIds(chat).includes(String(user.id))));
 }
 
 function messageFromRow(row) {
@@ -105,7 +118,7 @@ async function allChats(user) {
     type: chat.type,
     name: chat.name || "",
     createdBy: chat.created_by,
-    participants: parseArray(chat.participants),
+    participants: chatParticipantIds(chat),
     messages: messages.filter((message) => message.chat_id === chat.id).map(messageFromRow),
     updatedAt: chat.updated_at,
   }));
@@ -244,7 +257,8 @@ function canReviewManagementReport(actor, report, assignments) {
 async function chatById(id) {
   if (!UUID.test(id)) return null;
   const rows = await database(`portal_chats?id=eq.${encodeURIComponent(id)}&select=*`);
-  return parseArray(rows)[0] || null;
+  const chat = parseArray(rows)[0];
+  return chat ? { ...chat, participants: chatParticipantIds(chat) } : null;
 }
 
 async function validMembers(ids, actorId) {
@@ -559,7 +573,10 @@ export async function POST(request) {
       const members = await validMembers([otherUserId], actor.id);
       if (members.length !== 1) return json({ error: "Ce membre n’est plus disponible." }, 404);
       const existingRows = parseArray(await database("portal_chats?type=eq.direct&select=*"));
-      const existing = existingRows.find((chat) => parseArray(chat.participants).length === 2 && parseArray(chat.participants).includes(actor.id) && parseArray(chat.participants).includes(otherUserId));
+      const existing = existingRows.find((chat) => {
+        const participants = chatParticipantIds(chat);
+        return participants.length === 2 && participants.includes(actor.id) && participants.includes(otherUserId);
+      });
       if (!existing) {
         const id = UUID.test(String(body?.chatId || "")) ? String(body.chatId) : crypto.randomUUID();
         await database("portal_chats", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ id, type: "direct", name: null, created_by: actor.id, participants: [actor.id, otherUserId] }) });
@@ -578,14 +595,14 @@ export async function POST(request) {
       await database(`portal_chats?id=eq.${encodeURIComponent(chat.id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ participants: [actor.id, ...members], updated_at: new Date().toISOString() }) });
     } else if (action === "delete_chat") {
       const chat = await chatById(String(body?.chatId || ""));
-      const canDelete = chat && (isManager(actor) || (chat.type === "group" ? chat.created_by === actor.id : parseArray(chat.participants).includes(actor.id)));
+      const canDelete = chat && (isManager(actor) || (chat.type === "group" ? chat.created_by === actor.id : chatParticipantIds(chat).includes(actor.id)));
       if (!canDelete) return json({ error: "Vous ne pouvez pas supprimer cette discussion." }, 403);
       await database(`portal_chats?id=eq.${encodeURIComponent(chat.id)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
     } else if (action === "send_message") {
       const chatId = String(body?.chatId || "");
       let chat = await chatById(chatId);
       if (!chat) chat = await createChatOnFirstMessage(chatId, body?.draft, actor);
-      if (!chat || !parseArray(chat.participants).includes(actor.id)) return json({ error: "Discussion introuvable ou destinataire indisponible." }, 404);
+      if (!chat || !chatParticipantIds(chat).includes(actor.id)) return json({ error: "Discussion introuvable ou destinataire indisponible." }, 404);
       const html = clean(body?.html, 10000);
       const text = clean(body?.text, 10000);
       const attachments = attachmentList(body?.attachments);
@@ -593,14 +610,14 @@ export async function POST(request) {
       const now = new Date().toISOString();
       await database("portal_chat_messages", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ id: crypto.randomUUID(), chat_id: chat.id, sender_id: actor.id, sender_name: `${actor.first_name} ${actor.last_name || ""}`.trim(), html, text_content: text, attachments, created_at: now }) });
       await database(`portal_chats?id=eq.${encodeURIComponent(chat.id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ updated_at: now }) });
-      await createNotification({ recipients: parseArray(chat.participants).filter((id) => id !== actor.id), kind: "message", title: `Nouveau message de ${actor.first_name} ${actor.last_name || ""}`.trim(), text: chat.type === "group" ? `Dans le groupe « ${chat.name || "Sans nom"} »` : "Dans une discussion privée.", target: "chat" });
+      await createNotification({ recipients: chatParticipantIds(chat).filter((id) => id !== actor.id), kind: "message", title: `Nouveau message de ${actor.first_name} ${actor.last_name || ""}`.trim(), text: chat.type === "group" ? `Dans le groupe « ${chat.name || "Sans nom"} »` : "Dans une discussion privée.", target: "chat" });
     } else if (action === "edit_message") {
       const id = String(body?.messageId || "");
       if (!UUID.test(id)) return json({ error: "Message invalide." }, 400);
       const rows = await database(`portal_chat_messages?id=eq.${encodeURIComponent(id)}&select=*`);
       const message = parseArray(rows)[0];
       const chat = message ? await chatById(message.chat_id) : null;
-      if (!message || !chat || message.sender_id !== actor.id || !parseArray(chat.participants).includes(actor.id)) return json({ error: "Vous ne pouvez pas modifier ce message." }, 403);
+      if (!message || !chat || message.sender_id !== actor.id || !chatParticipantIds(chat).includes(actor.id)) return json({ error: "Vous ne pouvez pas modifier ce message." }, 403);
       const html = clean(body?.html, 10000);
       const text = clean(body?.text, 10000);
       if (!text && !html) return json({ error: "Le message est vide." }, 400);
