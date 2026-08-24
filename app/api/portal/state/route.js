@@ -39,6 +39,15 @@ function clean(value, max = 1000) {
   return typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, max) : "";
 }
 
+// Les annonces sont des messages de lecture : contrairement aux champs courts,
+// elles conservent volontairement les paragraphes et les listes écrits par le
+// responsable. On ne retire que les caractères de contrôle dangereux.
+function cleanMultiline(value, max = 1000) {
+  return typeof value === "string"
+    ? value.replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trim().slice(0, max)
+    : "";
+}
+
 function numberInRange(value, minimum = 0, maximum = 100) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? Math.min(maximum, Math.max(minimum, parsed)) : minimum;
@@ -146,7 +155,7 @@ function announcementFromRow(row, acknowledgedBy, activeMemberIds, userId) {
   return {
     id: row.id,
     title: String(row.title || "Annonce sans titre").slice(0, 140),
-    content: clean(payload.content, 2_400),
+    content: cleanMultiline(payload.content, 2_400),
     pinned: payload.pinned === true,
     publishedBy: clean(payload.publishedBy, 120) || "Responsable du portail",
     publishedAt: row.created_at,
@@ -908,7 +917,7 @@ export async function POST(request) {
     } else if (action === "create_announcement") {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent publier une annonce." }, 403);
       const title = clean(body?.title, 140);
-      const content = clean(body?.content, 2_400);
+      const content = cleanMultiline(body?.content, 2_400);
       if (!title || !content) return json({ error: "Le titre et le message de l’annonce sont obligatoires." }, 400);
       const id = crypto.randomUUID();
       await database("portal_notifications", {
@@ -932,7 +941,7 @@ export async function POST(request) {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent modifier une annonce." }, 403);
       const id = String(body?.announcementId || "");
       const title = clean(body?.title, 140);
-      const content = clean(body?.content, 2_400);
+      const content = cleanMultiline(body?.content, 2_400);
       if (!UUID.test(id) || !title || !content) return json({ error: "Annonce invalide." }, 400);
       const rows = await database(`portal_notifications?id=eq.${encodeURIComponent(id)}&select=*`);
       const announcement = parseArray(rows)[0];
