@@ -11,6 +11,7 @@ const SUBMISSION_TYPES = new Set(["recommendation", "pcs_exp", "observation_hdr"
 const QUOTA_CATEGORIES = new Set(["recommendation", "pcs_exp", "observations", "mission_internal"]);
 const DEFAULT_QUOTA_TARGETS = { recommendation: 1, pcs_exp: 1, observations: 1, mission_internal: 0 };
 const SUBMISSION_TARGET_PREFIX = "__portal_submission_";
+const ANNOUNCEMENT_TARGET_PREFIX = "__portal_announcement_";
 const QUOTA_SETTINGS_ID = "f51a7616-15ea-40c8-aac0-7e265c913521";
 const QUOTA_SETTINGS_TARGET = "__portal_quota_settings";
 const SUMMARY_SETTINGS_ID = "a148a81a-6d81-46a4-8c82-fd09391b76cc";
@@ -139,6 +140,45 @@ function canSeeNotification(row, user) {
   return canReceive(row, user.id);
 }
 
+function announcementFromRow(row, acknowledgedBy, activeMemberIds, userId) {
+  const payload = objectValue(jsonValue(row.body, {}));
+  const readers = new Set(parseArray(acknowledgedBy).filter((id) => activeMemberIds.has(id)));
+  return {
+    id: row.id,
+    title: String(row.title || "Annonce sans titre").slice(0, 140),
+    content: clean(payload.content, 2_400),
+    pinned: payload.pinned === true,
+    publishedBy: clean(payload.publishedBy, 120) || "Responsable du portail",
+    publishedAt: row.created_at,
+    updatedAt: payload.updatedAt || null,
+    read: readers.has(String(userId)),
+    readCount: readers.size,
+    audienceCount: activeMemberIds.size,
+  };
+}
+
+async function announcementsFor(user) {
+  const [rows, receipts, users] = await Promise.all([
+    database("portal_notifications?select=*&order=created_at.desc&limit=200"),
+    database("portal_notification_dismissals?select=notification_id,user_id"),
+    database("portal_users?select=id,blocked,approval_status"),
+  ]);
+  const activeMemberIds = new Set(parseArray(users)
+    .filter((member) => !member.blocked && (!member.approval_status || member.approval_status === "approved"))
+    .map((member) => String(member.id)));
+  const receiptMap = new Map();
+  for (const receipt of parseArray(receipts)) {
+    const announcementId = String(receipt.notification_id || "");
+    if (!announcementId || !activeMemberIds.has(String(receipt.user_id || ""))) continue;
+    if (!receiptMap.has(announcementId)) receiptMap.set(announcementId, []);
+    receiptMap.get(announcementId).push(String(receipt.user_id));
+  }
+  return parseArray(rows)
+    .filter((row) => String(row.target || "").startsWith(ANNOUNCEMENT_TARGET_PREFIX))
+    .map((row) => announcementFromRow(row, receiptMap.get(String(row.id)) || [], activeMemberIds, user.id))
+    .sort((left, right) => Number(right.pinned) - Number(left.pinned) || new Date(right.publishedAt).getTime() - new Date(left.publishedAt).getTime());
+}
+
 async function notificationsFor(user) {
   const [rows, dismissed] = await Promise.all([
     database("portal_notifications?select=*&order=created_at.desc&limit=200"),
@@ -241,13 +281,13 @@ async function quotaState(submissions) {
 }
 
 async function stateFor(user) {
-  const [chats, notifications, auditLogs, allSubmissions, summarySettings, sergeantAssignments, allManagementReports, managementReportSettings, loadedMeeting, soMeetingHistory] = await Promise.all([
-    allChats(user), notificationsFor(user), auditLogsFor(user), submissionsFor(), summarySettingsFor(), assignmentsFor(), managementReportsFor(), managementReportSettingsFor(), meetingFor(), meetingHistoryFor(),
+  const [chats, notifications, announcements, auditLogs, allSubmissions, summarySettings, sergeantAssignments, allManagementReports, managementReportSettings, loadedMeeting, soMeetingHistory] = await Promise.all([
+    allChats(user), notificationsFor(user), announcementsFor(user), auditLogsFor(user), submissionsFor(), summarySettingsFor(), assignmentsFor(), managementReportsFor(), managementReportSettingsFor(), meetingFor(), meetingHistoryFor(),
   ]);
   const soMeeting = await resetArchivedMeetingDraft(loadedMeeting, soMeetingHistory);
   const assignedSergeants = new Set(sergeantAssignments.filter((assignment) => assignment.observerId === user.id).map((assignment) => assignment.sergeantId));
   const managementReports = isManager(user) ? allManagementReports : allManagementReports.filter((report) => report.authorId === user.id || (user.role === "senior" && assignedSergeants.has(report.authorId)));
-  return { chats, notifications, auditLogs, submissions: allSubmissions, quotas: await quotaState(allSubmissions), summarySettings, sergeantAssignments, managementReports, managementReportSettings, soMeeting, soMeetingHistory };
+  return { chats, notifications, announcements, auditLogs, submissions: allSubmissions, quotas: await quotaState(allSubmissions), summarySettings, sergeantAssignments, managementReports, managementReportSettings, soMeeting, soMeetingHistory };
 }
 
 function canReviewManagementReport(actor, report, assignments) {
@@ -865,6 +905,62 @@ export async function POST(request) {
       if (!UUID.test(id) || !SUBMISSION_TYPES.has(type)) return json({ error: "Formulaire invalide." }, 400);
       await database(`portal_notifications?id=eq.${encodeURIComponent(id)}&target=eq.${encodeURIComponent(`${SUBMISSION_TARGET_PREFIX}${type}`)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
       await recordAuditLog({ actor, category: "form", action: "Élément supprimé de l’historique", details: type });
+    } else if (action === "create_announcement") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent publier une annonce." }, 403);
+      const title = clean(body?.title, 140);
+      const content = clean(body?.content, 2_400);
+      if (!title || !content) return json({ error: "Le titre et le message de l’annonce sont obligatoires." }, 400);
+      const id = crypto.randomUUID();
+      await database("portal_notifications", {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({
+          id,
+          recipient_ids: null,
+          kind: "info",
+          title,
+          body: JSON.stringify({
+            content,
+            pinned: body?.pinned === true,
+            publishedBy: `${actor.first_name} ${actor.last_name || ""}`.trim(),
+          }),
+          target: `${ANNOUNCEMENT_TARGET_PREFIX}${id}`,
+        }),
+      });
+      await recordAuditLog({ actor, category: "announcement", action: "Annonce publiée", details: title });
+    } else if (action === "update_announcement") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent modifier une annonce." }, 403);
+      const id = String(body?.announcementId || "");
+      const title = clean(body?.title, 140);
+      const content = clean(body?.content, 2_400);
+      if (!UUID.test(id) || !title || !content) return json({ error: "Annonce invalide." }, 400);
+      const rows = await database(`portal_notifications?id=eq.${encodeURIComponent(id)}&select=*`);
+      const announcement = parseArray(rows)[0];
+      if (!announcement || !String(announcement.target || "").startsWith(ANNOUNCEMENT_TARGET_PREFIX)) return json({ error: "Annonce introuvable." }, 404);
+      const existing = objectValue(jsonValue(announcement.body, {}));
+      await database(`portal_notifications?id=eq.${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ title, body: JSON.stringify({ ...existing, content, pinned: body?.pinned === true, updatedAt: new Date().toISOString() }) }),
+      });
+      await recordAuditLog({ actor, category: "announcement", action: "Annonce modifiée", details: title });
+    } else if (action === "delete_announcement") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent supprimer une annonce." }, 403);
+      const id = String(body?.announcementId || "");
+      if (!UUID.test(id)) return json({ error: "Annonce invalide." }, 400);
+      const rows = await database(`portal_notifications?id=eq.${encodeURIComponent(id)}&select=id,title,target`);
+      const announcement = parseArray(rows)[0];
+      if (!announcement || !String(announcement.target || "").startsWith(ANNOUNCEMENT_TARGET_PREFIX)) return json({ error: "Annonce introuvable." }, 404);
+      await database(`portal_notification_dismissals?notification_id=eq.${encodeURIComponent(id)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+      await database(`portal_notifications?id=eq.${encodeURIComponent(id)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+      await recordAuditLog({ actor, category: "announcement", action: "Annonce supprimée", details: announcement.title || "Annonce" });
+    } else if (action === "acknowledge_announcement") {
+      const id = String(body?.announcementId || "");
+      if (!UUID.test(id)) return json({ error: "Annonce invalide." }, 400);
+      const rows = await database(`portal_notifications?id=eq.${encodeURIComponent(id)}&select=id,target`);
+      const announcement = parseArray(rows)[0];
+      if (!announcement || !String(announcement.target || "").startsWith(ANNOUNCEMENT_TARGET_PREFIX)) return json({ error: "Annonce introuvable." }, 404);
+      await database("portal_notification_dismissals?on_conflict=notification_id,user_id", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=minimal" }, body: JSON.stringify({ notification_id: id, user_id: actor.id }) });
     } else if (action === "dismiss_notification") {
       const notificationId = String(body?.notificationId || "");
       if (!UUID.test(notificationId)) return json({ error: "Notification invalide." }, 400);

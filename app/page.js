@@ -18,6 +18,7 @@ import {
   Paperclip,
   Palette,
   Pencil,
+  Pin,
   RotateCcw,
   Search,
   ScrollText,
@@ -112,7 +113,7 @@ const CHAT_ATTACHMENT_TYPES = new Set([
 const DEFAULT_QUOTAS = { targets: { recommendation: 1, pcs_exp: 1, observations: 1, mission_internal: 0 }, counts: {}, exemptions: {} };
 const DEFAULT_SO_MEETING = { occurredAt: new Date().toISOString(), attendance: [], improvementAxes: "", caporalVotes: [], suggestions: "", updatedAt: null, updatedBy: "" };
 const QUOTA_TYPES = ["recommendation", "pcs_exp", "observation_hdr", "observation_so"];
-const LOG_CATEGORY_LABELS = { auth: "Connexion", account: "Comptes", presence: "Présences", quota: "Quotas", form: "Formulaires", mission: "Missions", chat: "Chat", assignment: "Référents", profile: "Profils", summary: "Résumé", management: "Gérance", meeting: "Réunion SO", system: "Système" };
+const LOG_CATEGORY_LABELS = { auth: "Connexion", account: "Comptes", presence: "Présences", quota: "Quotas", form: "Formulaires", mission: "Missions", chat: "Chat", assignment: "Référents", profile: "Profils", summary: "Résumé", management: "Gérance", meeting: "Réunion SO", announcement: "Annonces", system: "Système" };
 const REPORT_CONCLUSIONS = [
   "Passage confirmé en sergent",
   "Prolongation de la semaine de test",
@@ -698,7 +699,86 @@ function SpecializationsPanel({ users: suppliedUsers }) {
   );
 }
 
-function HomePanel({ session, users, missions, chats, quotas, logs, assignments, portalNotifications, shortcutIds, onSaveShortcuts, onNavigate, onDismissNotification, onClearNotifications }) {
+function announcementDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Date inconnue";
+  return new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short", timeZone: "Europe/Paris" }).format(date);
+}
+
+function AnnouncementCenter({ session, announcements, onCreate, onUpdate, onDelete, onAcknowledge }) {
+  const canManage = hasManagerAccess(session.role);
+  const [editor, setEditor] = useState(null);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const unreadCount = announcements.filter((announcement) => !announcement.read).length;
+
+  function openEditor(announcement = null) {
+    setError("");
+    setEditor(announcement ? {
+      id: announcement.id,
+      title: announcement.title,
+      content: announcement.content,
+      pinned: announcement.pinned,
+    } : { id: "", title: "", content: "", pinned: true });
+  }
+
+  async function save(event) {
+    event.preventDefault();
+    if (!editor?.title.trim() || !editor.content.trim()) {
+      setError("Renseignez un titre et le contenu de l’annonce.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      if (editor.id) await onUpdate(editor.id, editor);
+      else await onCreate(editor);
+      setEditor(null);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "L’annonce n’a pas pu être enregistrée.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove(announcement) {
+    if (!confirm(`Supprimer l’annonce « ${announcement.title} » ?`)) return;
+    try {
+      await onDelete(announcement.id);
+      if (editor?.id === announcement.id) setEditor(null);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "L’annonce n’a pas pu être supprimée.");
+    }
+  }
+
+  async function acknowledge(announcement) {
+    try { await onAcknowledge(announcement.id); }
+    catch (acknowledgeError) { setError(acknowledgeError instanceof Error ? acknowledgeError.message : "L’accusé de lecture n’a pas pu être enregistré."); }
+  }
+
+  return <section className="home-card announcements-card">
+    <div className="home-card-head announcements-head">
+      <div><p className="eyebrow dark">CENTRE D’ANNONCES</p><h2>Informations importantes</h2></div>
+      <div className="announcement-head-actions"><span><Pin size={15} /> {unreadCount ? `${unreadCount} à lire` : "Tout est lu"}</span>{canManage && <button className="announcement-publish" type="button" onClick={() => openEditor()}><Bell size={15} /> Publier</button>}</div>
+    </div>
+    {editor && <form className="announcement-editor" onSubmit={save}>
+      <div><strong>{editor.id ? "Modifier l’annonce" : "Nouvelle annonce"}</strong><small>Elle sera visible immédiatement par tous les membres du portail.</small></div>
+      <input value={editor.title} onChange={(event) => setEditor((current) => ({ ...current, title: event.target.value }))} maxLength={140} placeholder="Titre de l’annonce" required />
+      <textarea value={editor.content} onChange={(event) => setEditor((current) => ({ ...current, content: event.target.value }))} maxLength={2400} placeholder="Rédigez le message important…" required />
+      <label className="announcement-pin-toggle"><input type="checkbox" checked={editor.pinned} onChange={(event) => setEditor((current) => ({ ...current, pinned: event.target.checked }))} /> <Pin size={14} /> Épingler cette annonce</label>
+      {error && <p className="form-error">{error}</p>}
+      <div className="announcement-editor-actions"><button className="secondary" type="button" onClick={() => { setEditor(null); setError(""); }}>Annuler</button><button className="primary" type="submit" disabled={saving}>{saving ? "Enregistrement…" : editor.id ? "Enregistrer" : "Publier l’annonce"}</button></div>
+    </form>}
+    {!editor && error && <p className="form-error announcement-error">{error}</p>}
+    <div className="announcement-list">{announcements.map((announcement) => <article className={`${announcement.pinned ? "pinned" : ""} ${announcement.read ? "read" : "unread"}`} key={announcement.id}>
+      <div className="announcement-item-head"><div>{announcement.pinned && <span className="announcement-pin"><Pin size={13} /> Épinglée</span>}<h3>{announcement.title}</h3></div>{canManage && <div className="announcement-manage-actions"><button type="button" title="Modifier l’annonce" aria-label="Modifier l’annonce" onClick={() => openEditor(announcement)}><Pencil size={14} /></button><button type="button" title="Supprimer l’annonce" aria-label="Supprimer l’annonce" onClick={() => remove(announcement)}><Trash2 size={14} /></button></div>}</div>
+      <p>{announcement.content}</p>
+      <div className="announcement-footer"><small>Publié par {announcement.publishedBy} · {announcementDate(announcement.publishedAt)}{announcement.updatedAt && " · modifié"}</small><div>{canManage && <span className="announcement-read-count"><UserCheck size={14} /> {announcement.readCount}/{announcement.audienceCount || 0} lu{announcement.readCount > 1 ? "s" : ""}</span>}<button className={announcement.read ? "announcement-ack read" : "announcement-ack"} type="button" disabled={announcement.read} onClick={() => acknowledge(announcement)}>{announcement.read ? <><BadgeCheck size={15} /> Lu</> : <><BadgeCheck size={15} /> J’ai lu</>}</button></div></div>
+    </article>)}{!announcements.length && <div className="announcement-empty"><Bell size={24} /><strong>Aucune annonce pour le moment</strong><p>Les informations importantes apparaîtront ici.</p></div>}</div>
+  </section>;
+}
+
+function HomePanel({ session, users, missions, chats, quotas, logs, assignments, portalNotifications, announcements, shortcutIds, onSaveShortcuts, onNavigate, onDismissNotification, onClearNotifications, onCreateAnnouncement, onUpdateAnnouncement, onDeleteAnnouncement, onAcknowledgeAnnouncement }) {
   const isManager = hasManagerAccess(session.role);
   const isQuotaMember = ["senior", "officer"].includes(session.role);
   const shortcutCatalog = [
@@ -781,6 +861,7 @@ function HomePanel({ session, users, missions, chats, quotas, logs, assignments,
     <div className="home-dashboard">
       <section className="home-hero"><div><span className="home-date">{today}</span><h2>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h2><p>Voici les informations importantes de votre espace Sous-Officiers.</p></div><Avatar user={session} className="home-avatar" /></section>
       <section className="home-stats"><article><span className="home-stat-icon blue"><UsersRound size={20} /></span><div><strong>{activeAccounts}</strong><small>Comptes actifs</small></div></article><article><span className="home-stat-icon violet"><MessageSquareText size={20} /></span><div><strong>{myChats.length}</strong><small>Mes discussions</small></div></article><article><span className="home-stat-icon gold"><FileText size={20} /></span><div><strong>{isManager ? pendingMissions.length : myMissions.length}</strong><small>{isManager ? "Missions à traiter" : "Mes missions"}</small></div></article><article><span className="home-stat-icon green"><Gauge size={20} /></span><div><strong>{isQuotaMember ? remainingTotal : team.filter((user) => user.presence !== "absent").length}</strong><small>{isQuotaMember ? "Actions restantes" : "SO présents"}</small></div></article></section>
+      <AnnouncementCenter session={session} announcements={announcements} onCreate={onCreateAnnouncement} onUpdate={onUpdateAnnouncement} onDelete={onDeleteAnnouncement} onAcknowledge={onAcknowledgeAnnouncement} />
       {isQuotaMember && <section className="home-card home-quota-card"><div className="home-card-head"><div><p className="eyebrow dark">MES OBJECTIFS</p><h2>Mes quotas</h2></div><span className={isAbsent ? "quota-status-absent" : isExempted ? "quota-status-exempt" : ""}><Gauge size={17} /> {isAbsent ? "Absent" : isExempted ? "Exempté" : `${completedQuotaCategories}/4 terminés`}</span></div><div className="home-quota-grid">{quotaItems.map((item) => {
         const target = targets[item.key] || 0;
         const count = categoryCounts[item.key] || 0;
@@ -1981,6 +2062,7 @@ function App() {
   const [sergeantAssignments, setSergeantAssignments] = useState([]);
   const [submissionHistory, setSubmissionHistory] = useState([]);
   const [portalNotifications, setPortalNotifications] = useState([]);
+  const [announcements, setAnnouncements] = useState([]);
   const [managementReports, setManagementReports] = useState([]);
   const [managementReportSettings, setManagementReportSettings] = useState({ rankingResetAt: null });
   const [soMeeting, setSoMeeting] = useState(DEFAULT_SO_MEETING);
@@ -2255,6 +2337,7 @@ function App() {
   function applySharedPortalState(state) {
     if (Array.isArray(state?.chats)) setChats((current) => mergeChats(current, state.chats));
     if (Array.isArray(state?.notifications)) setPortalNotifications(state.notifications);
+    if (Array.isArray(state?.announcements)) setAnnouncements(state.announcements);
     if (Array.isArray(state?.auditLogs)) setAuditLogs((current) => mergeAuditLogs(current, state.auditLogs));
     if (Array.isArray(state?.submissions)) setSubmissionHistory(state.submissions);
     if (state?.quotas && typeof state.quotas === "object") setQuotas((current) => ({ ...DEFAULT_QUOTAS, ...current, ...state.quotas }));
@@ -2299,6 +2382,29 @@ function App() {
     }
     setPortalNotifications((current) => current.filter((notification) => Array.isArray(notification.recipients) && !notification.recipients.includes(session.id)));
     flash("Toutes vos notifications ont été effacées.");
+  }
+  async function createAnnouncement(values) {
+    if (!hasManagerAccess(session?.role)) throw new Error("Vous ne pouvez pas publier une annonce.");
+    const state = await portalRequest("POST", { action: "create_announcement", title: values.title, content: values.content, pinned: values.pinned === true });
+    applySharedPortalState(state);
+    flash("L’annonce a été publiée pour tous les membres.");
+  }
+  async function updateAnnouncement(announcementId, values) {
+    if (!hasManagerAccess(session?.role)) throw new Error("Vous ne pouvez pas modifier une annonce.");
+    const state = await portalRequest("POST", { action: "update_announcement", announcementId, title: values.title, content: values.content, pinned: values.pinned === true });
+    applySharedPortalState(state);
+    flash("L’annonce a été modifiée.");
+  }
+  async function deleteAnnouncement(announcementId) {
+    if (!hasManagerAccess(session?.role)) throw new Error("Vous ne pouvez pas supprimer une annonce.");
+    const state = await portalRequest("POST", { action: "delete_announcement", announcementId });
+    applySharedPortalState(state);
+    flash("L’annonce a été supprimée.");
+  }
+  async function acknowledgeAnnouncement(announcementId) {
+    const state = await portalRequest("POST", { action: "acknowledge_announcement", announcementId });
+    applySharedPortalState(state);
+    flash("Votre accusé de lecture est enregistré.");
   }
   function navigateFromHome(section) {
     if (!canOpenPortalSection(session.role, section)) {
@@ -2893,7 +2999,7 @@ function App() {
         <div className="mobile-section-nav"><label>Rubrique</label><select value={activeSection} onChange={(event) => setActiveSection(event.target.value)}><optgroup label="Menu"><option value="home">Accueil</option></optgroup>{hasAdminAccess(session.role) && <optgroup label="Admin"><option value="dashboard">Tableau de bord</option></optgroup>}{hasManagerAccess(session.role) && <optgroup label="Référent SO"><option value="workforce">Effectif</option><option value="specializations">Spécialisations</option><option value="presence">Présences</option><option value="meeting_so">Réunion SO</option><option value="quotas">Quotas</option></optgroup>}<optgroup label="Globale"><option value="summary">Résumé</option><option value="management_report">Rapport de gérance</option><option value="recommendation">Recommandation</option><option value="pcs_exp">Recommandation PCS EXP</option><option value="observation_hdr">Observation HDR</option><option value="mission_internal">Mission interne</option></optgroup>{hasSeniorAccess(session.role) && <optgroup label="Sous-Officier Supérieur"><option value="sergeant_assignments">Référent</option><option value="observation_so">Observation SO</option><option value="sergeant_report">Rapport nouveau Sous-Officier</option></optgroup>}<optgroup label="Chat"><option value="chat">Messagerie</option></optgroup>{hasManagerAccess(session.role) && <optgroup label="Journal"><option value="logs">Logs</option></optgroup>}</select></div>
         {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "management_report" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Rapport de gérance</h1><p className="muted">Auto-évaluez vos gérances et consultez les avis des responsables.</p></div><span className={hasManagerAccess(session.role) ? "referent-access" : "all-access"}><FileText size={16} /> {hasManagerAccess(session.role) ? "Suivi responsable" : "Auto-évaluation"}</span></header> : activeSection === "workforce" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Effectif</h1><p className="muted">Consultez l’organisation complète des membres par accès et par grade.</p></div><span className="referent-access"><UsersRound size={16} /> Vue des effectifs</span></header> : activeSection === "specializations" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Spécialisations</h1><p className="muted">Consultez les spécialités, Steam ID et Discord ID de l’effectif.</p></div><span className="referent-access"><BadgeCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "sergeant_assignments" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Référent</h1><p className="muted">Attribuez et suivez les référents des nouveaux Sergents.</p></div><span className="senior-access"><BadgeCheck size={16} /> Suivi des semaines de test</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Validez les demandes Discord et gardez une vue claire sur votre équipe.</p></div><span className="all-access"><MessageSquareText size={16} /> Connexion Discord</span></header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
-        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={navigateFromHome} onDismissNotification={dismissPortalNotification} onClearNotifications={clearPortalNotifications} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} submissions={submissionHistory} activityResetAt={summarySettings.activityResetAt} rankingResetAt={summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} onResetRanking={resetActivityRanking} /> : activeSection === "management_report" ? <ManagementReportPanel session={session} users={users} reports={managementReports} assignments={sergeantAssignments} settings={managementReportSettings} onSubmit={submitManagementReport} onComment={commentManagementReport} onUpdateComment={updateManagementComment} onDeleteComment={deleteManagementComment} onDeleteReport={deleteManagementReport} onResetRanking={resetManagementRanking} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
+        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} announcements={announcements} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={navigateFromHome} onDismissNotification={dismissPortalNotification} onClearNotifications={clearPortalNotifications} onCreateAnnouncement={createAnnouncement} onUpdateAnnouncement={updateAnnouncement} onDeleteAnnouncement={deleteAnnouncement} onAcknowledgeAnnouncement={acknowledgeAnnouncement} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} submissions={submissionHistory} activityResetAt={summarySettings.activityResetAt} rankingResetAt={summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} onResetRanking={resetActivityRanking} /> : activeSection === "management_report" ? <ManagementReportPanel session={session} users={users} reports={managementReports} assignments={sergeantAssignments} settings={managementReportSettings} onSubmit={submitManagementReport} onComment={commentManagementReport} onUpdateComment={updateManagementComment} onDeleteComment={deleteManagementComment} onDeleteReport={deleteManagementReport} onResetRanking={resetManagementRanking} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
         <section className="stats">
           <article><span className="stat-icon blue"><UsersRound /></span><div><strong>{users.length}</strong><small>Comptes au total</small></div><span className="trend">Tous niveaux</span></article>
           <article><span className="stat-icon gold"><UserRound /></span><div><strong>{users.filter((user) => user.approvalStatus === "pending").length}</strong><small>Demandes en attente</small></div><span className="trend">À valider</span></article>
