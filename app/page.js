@@ -938,7 +938,7 @@ function HomePanel({ session, users, missions, chats, quotas, logs, assignments,
 }
 
 function SummaryPanel({ session, users, submissions, activityResetAt, rankingResetAt, quotaResetAt, onResetActivity, onResetRanking }) {
-  const [period, setPeriod] = useState("week");
+  const [period, setPeriod] = useState("quota");
   const [scope, setScope] = useState("global");
   const allSeries = [
     { subtype: "recommendation", label: "Recommandation", shortLabel: "Reco", tone: "recommendation", kpiTone: "blue", icon: Medal },
