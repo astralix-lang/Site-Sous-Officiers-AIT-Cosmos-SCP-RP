@@ -144,7 +144,7 @@ const CHAT_ATTACHMENT_TYPES = new Set([
   "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 ]);
-const DEFAULT_QUOTAS = { targets: { recommendation: 1, pcs_exp: 1, observations: 1, mission_internal: 0 }, counts: {}, exemptions: {} };
+const DEFAULT_QUOTAS = { targets: { recommendation: 1, pcs_exp: 1, observations: 1, mission_internal: 0 }, counts: {}, exemptions: {}, resetAt: null };
 const DEFAULT_SO_MEETING = { occurredAt: new Date().toISOString(), attendance: [], improvementAxes: "", caporalVotes: [], suggestions: "", updatedAt: null, updatedBy: "" };
 const QUOTA_TYPES = ["recommendation", "pcs_exp", "observation_hdr", "observation_so"];
 const LOG_CATEGORY_LABELS = { auth: "Connexion", account: "Comptes", presence: "Présences", quota: "Quotas", form: "Formulaires", mission: "Missions", chat: "Chat", assignment: "Référents", profile: "Profils", summary: "Résumé", management: "Gérance", meeting: "Réunion SO", announcement: "Annonces", system: "Système" };
@@ -414,6 +414,41 @@ function getSummaryPeriod(period, referenceDate = new Date()) {
     cursor = end;
   }
   if (!bins.length) bins.push({ start, end: now, label: period === "day" ? "00h" : "Maintenant" });
+  return { start, end: now, bins };
+}
+
+// La période « Quota » démarre exactement au dernier reset partagé des quotas.
+// Son découpage s’adapte à sa durée, sans créer un graphique illisible quand
+// les quotas n’ont pas encore été réinitialisés depuis longtemps.
+function getQuotaSummaryPeriod(resetAt, referenceDate = new Date()) {
+  const now = new Date(referenceDate);
+  const candidate = resetAt ? new Date(resetAt) : null;
+  const start = candidate && !Number.isNaN(candidate.getTime()) && candidate <= now ? candidate : new Date(now);
+  const duration = Math.max(now.getTime() - start.getTime(), 0);
+  const bins = [];
+  let cursor = new Date(start);
+  const formatter = new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short" });
+  const mode = duration <= 2 * 24 * 60 * 60 * 1000 ? "hours" : duration <= 42 * 24 * 60 * 60 * 1000 ? "days" : duration <= 420 * 24 * 60 * 60 * 1000 ? "weeks" : "months";
+  while (cursor < now && bins.length < 60) {
+    let end;
+    let label;
+    if (mode === "hours") {
+      end = new Date(cursor); end.setHours(end.getHours() + 4);
+      label = `${String(cursor.getHours()).padStart(2, "0")}h`;
+    } else if (mode === "days") {
+      end = new Date(cursor); end.setDate(end.getDate() + 1);
+      label = formatter.format(cursor).replace(".", "");
+    } else if (mode === "weeks") {
+      end = new Date(cursor); end.setDate(end.getDate() + 7);
+      label = formatter.format(cursor).replace(".", "");
+    } else {
+      end = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+      label = new Intl.DateTimeFormat("fr-FR", { month: "short", year: "2-digit" }).format(cursor).replace(".", "");
+    }
+    bins.push({ start: new Date(cursor), end: end > now ? new Date(now) : end, label });
+    cursor = end;
+  }
+  if (!bins.length) bins.push({ start, end: now, label: "Maintenant" });
   return { start, end: now, bins };
 }
 
@@ -902,7 +937,7 @@ function HomePanel({ session, users, missions, chats, quotas, logs, assignments,
   );
 }
 
-function SummaryPanel({ session, users, submissions, activityResetAt, rankingResetAt, onResetActivity, onResetRanking }) {
+function SummaryPanel({ session, users, submissions, activityResetAt, rankingResetAt, quotaResetAt, onResetActivity, onResetRanking }) {
   const [period, setPeriod] = useState("week");
   const [scope, setScope] = useState("global");
   const allSeries = [
@@ -914,8 +949,7 @@ function SummaryPanel({ session, users, submissions, activityResetAt, rankingRes
   // Le résumé est commun à tous : chaque niveau d'accès voit les quatre catégories.
   const visibleSeries = allSeries;
   const visibleSubtypes = new Set(visibleSeries.map((series) => series.subtype));
-  const periodData = getSummaryPeriod(period);
-  const periodLabels = { day: "Aujourd’hui", week: "Cette semaine", month: "Ce mois", year: "Cette année" };
+  const periodLabels = { day: "Aujourd’hui", week: "Cette semaine", month: "Ce mois", year: "Cette année", quota: "Depuis le dernier reset des quotas" };
   const allActivity = submissions.map((submission) => {
     const subtype = submission?.type;
     return {
@@ -927,13 +961,18 @@ function SummaryPanel({ session, users, submissions, activityResetAt, rankingRes
       date: new Date(submission.createdAt),
     };
   }).filter((entry) => visibleSubtypes.has(entry.subtype) && !Number.isNaN(entry.date.getTime()));
+  const earliestActivity = allActivity.reduce((earliest, entry) => !earliest || entry.date < earliest ? entry.date : earliest, null);
+  const quotaResetDate = quotaResetAt ? new Date(quotaResetAt) : null;
+  const quotaStart = quotaResetDate && !Number.isNaN(quotaResetDate.getTime()) ? quotaResetDate : earliestActivity || new Date();
+  const periodData = period === "quota" ? getQuotaSummaryPeriod(quotaStart) : getSummaryPeriod(period);
   const resetDate = activityResetAt ? new Date(activityResetAt) : null;
   const activityAfterReset = resetDate && !Number.isNaN(resetDate.getTime()) ? allActivity.filter((entry) => entry.date >= resetDate) : allActivity;
-  const scopedActivity = scope === "self" ? activityAfterReset.filter((entry) => entry.actorId === session.id) : activityAfterReset;
+  const activityForPeriod = period === "quota" ? allActivity.filter((entry) => entry.date >= quotaStart) : activityAfterReset;
+  const scopedActivity = scope === "self" ? activityForPeriod.filter((entry) => entry.actorId === session.id) : activityForPeriod;
   const currentActivity = scopedActivity.filter((entry) => entry.date >= periodData.start && entry.date <= periodData.end);
   const duration = Math.max(periodData.end.getTime() - periodData.start.getTime(), 1);
   const previousStart = new Date(periodData.start.getTime() - duration);
-  const previousActivity = scopedActivity.filter((entry) => entry.date >= previousStart && entry.date < periodData.start);
+  const previousActivity = period === "quota" ? [] : scopedActivity.filter((entry) => entry.date >= previousStart && entry.date < periodData.start);
   const counts = Object.fromEntries(visibleSeries.map((series) => [series.subtype, currentActivity.filter((entry) => entry.subtype === series.subtype).length]));
   const trend = previousActivity.length ? Math.round(((currentActivity.length - previousActivity.length) / previousActivity.length) * 100) : currentActivity.length ? 100 : 0;
   const activeMembers = new Set(currentActivity.map((entry) => entry.actorId)).size;
@@ -961,7 +1000,7 @@ function SummaryPanel({ session, users, submissions, activityResetAt, rankingRes
 
   return (
     <div className="summary-dashboard">
-      <section className="summary-toolbar"><div><p className="eyebrow dark">PÉRIODE ANALYSÉE</p><h2>{periodLabels[period]}</h2><p>Les données sont calculées à partir des transmissions enregistrées sur le portail.</p></div><div className="summary-controls"><label>Affichage<select value={scope} onChange={(event) => setScope(event.target.value)}><option value="global">Vue globale</option><option value="self">Moi uniquement</option></select></label><label>Période<select value={period} onChange={(event) => setPeriod(event.target.value)}><option value="day">Jour</option><option value="week">Semaine</option><option value="month">Mois</option><option value="year">Année</option></select></label>{canReset && <><button className="summary-reset-button" onClick={onResetActivity}><RotateCcw size={16} /> Reset graphiques</button><button className="summary-reset-button" onClick={onResetRanking}><Trophy size={16} /> Reset classement</button></>}</div></section>
+      <section className="summary-toolbar"><div><p className="eyebrow dark">PÉRIODE ANALYSÉE</p><h2>{periodLabels[period]}</h2><p>{period === "quota" ? "Recommandations et observations réalisées depuis la dernière réinitialisation des quotas." : "Les données sont calculées à partir des transmissions enregistrées sur le portail."}</p></div><div className="summary-controls"><label>Affichage<select value={scope} onChange={(event) => setScope(event.target.value)}><option value="global">Vue globale</option><option value="self">Moi uniquement</option></select></label><label>Période<select value={period} onChange={(event) => setPeriod(event.target.value)}><option value="day">Jour</option><option value="week">Semaine</option><option value="month">Mois</option><option value="year">Année</option><option value="quota">Quota</option></select></label>{canReset && <><button className="summary-reset-button" onClick={onResetActivity}><RotateCcw size={16} /> Reset graphiques</button><button className="summary-reset-button" onClick={onResetRanking}><Trophy size={16} /> Reset classement</button></>}</div></section>
       <section className="summary-kpis"><article><span className="summary-kpi-icon blue"><BarChart3 size={20} /></span><div><strong>{currentActivity.length}</strong><small>Transmissions</small></div><em className={trend >= 0 ? "positive" : "negative"}><TrendingUp size={13} /> {trend >= 0 ? "+" : ""}{trend}%</em></article>{visibleSeries.map((series) => { const SeriesIcon = series.icon; return <article key={series.subtype}><span className={`summary-kpi-icon ${series.kpiTone}`}><SeriesIcon size={20} /></span><div><strong>{counts[series.subtype]}</strong><small>{series.label}</small></div></article>; })}<article><span className="summary-kpi-icon green"><UsersRound size={20} /></span><div><strong>{activeMembers}</strong><small>Membres actifs</small></div></article></section>
       <div className="summary-grid">
         <section className="summary-card activity-chart-card"><div className="summary-card-head"><div><p className="eyebrow dark">ÉVOLUTION</p><h2>Activité détaillée par catégorie</h2></div><div className="chart-legend">{visibleSeries.map((series) => <span key={series.subtype}><i className={series.tone} /> {series.shortLabel}</span>)}</div></div><div className="activity-chart">{chartBins.map((bin, index) => <div className="activity-column" key={`${bin.label}-${index}`}><div className="activity-bars">{visibleSeries.map((series) => { const value = bin.counts[series.subtype]; return <span className={`series-bar ${series.tone}`} key={series.subtype} title={`${series.label} : ${value}`} style={{ height: `${value ? Math.max((value / chartMaximum) * 100, 7) : 2}%` }} />; })}</div><span>{bin.label}</span></div>)}</div><div className="chart-insight"><CalendarDays size={16} /><span>Période la plus active : <strong>{busiestBin?.label || "—"}</strong></span></div></section>
@@ -2148,7 +2187,7 @@ function App() {
       }
 
       const parsedQuotas = readStoredJson(QUOTA_KEY, DEFAULT_QUOTAS);
-      setQuotas({ targets: { ...DEFAULT_QUOTAS.targets, ...(parsedQuotas?.targets || {}) }, counts: parsedQuotas?.counts || {}, exemptions: parsedQuotas?.exemptions || {} });
+      setQuotas({ targets: { ...DEFAULT_QUOTAS.targets, ...(parsedQuotas?.targets || {}) }, counts: parsedQuotas?.counts || {}, exemptions: parsedQuotas?.exemptions || {}, resetAt: parsedQuotas?.resetAt || null });
       const savedMissions = readStoredJson(MISSIONS_KEY, []);
       const savedChats = readStoredJson(CHAT_KEY, []);
       const savedLogs = readStoredJson(LOG_KEY, []);
@@ -2752,7 +2791,7 @@ function App() {
         .catch((error) => flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible."));
       return;
     }
-    setQuotas((current) => ({ ...current, counts: {} }));
+    setQuotas((current) => ({ ...current, counts: {}, resetAt: new Date().toISOString() }));
     addLog("quota", "Compteurs de quotas réinitialisés");
     flash("Les quotas ont été réinitialisés.");
   }
@@ -3031,7 +3070,7 @@ function App() {
         })}{PORTAL_SECTION_REGISTRY.filter((item) => item.group === "logs" && hasSectionAccess(session.role, item.access)).length > 0 && <optgroup label="Journal">{PORTAL_SECTION_REGISTRY.filter((item) => item.group === "logs" && hasSectionAccess(session.role, item.access)).map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</optgroup>}</select></div>
         {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "management_report" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Rapport de gérance</h1><p className="muted">Auto-évaluez vos gérances et consultez les avis des responsables.</p></div><span className={hasManagerAccess(session.role) ? "referent-access" : "all-access"}><FileText size={16} /> {hasManagerAccess(session.role) ? "Suivi responsable" : "Auto-évaluation"}</span></header> : activeSection === "workforce" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Effectif</h1><p className="muted">Consultez l’organisation complète des membres par accès et par grade.</p></div><span className="referent-access"><UsersRound size={16} /> Vue des effectifs</span></header> : activeSection === "specializations" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Spécialisations</h1><p className="muted">Consultez les spécialités, Steam ID et Discord ID de l’effectif.</p></div><span className="referent-access"><BadgeCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "sergeant_assignments" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Référent</h1><p className="muted">Attribuez et suivez les référents des nouveaux Sergents.</p></div><span className="senior-access"><BadgeCheck size={16} /> Suivi des semaines de test</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Validez les demandes Discord et gardez une vue claire sur votre équipe.</p></div><span className="all-access"><MessageSquareText size={16} /> Connexion Discord</span></header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
-        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} announcements={announcements} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={navigateFromHome} onDismissNotification={dismissPortalNotification} onClearNotifications={clearPortalNotifications} onCreateAnnouncement={createAnnouncement} onUpdateAnnouncement={updateAnnouncement} onDeleteAnnouncement={deleteAnnouncement} onAcknowledgeAnnouncement={acknowledgeAnnouncement} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} submissions={submissionHistory} activityResetAt={summarySettings.activityResetAt} rankingResetAt={summarySettings.rankingResetAt} onResetActivity={resetActivitySummary} onResetRanking={resetActivityRanking} /> : activeSection === "management_report" ? <ManagementReportPanel session={session} users={users} reports={managementReports} assignments={sergeantAssignments} settings={managementReportSettings} onSubmit={submitManagementReport} onComment={commentManagementReport} onUpdateComment={updateManagementComment} onDeleteComment={deleteManagementComment} onDeleteReport={deleteManagementReport} onResetRanking={resetManagementRanking} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
+        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} announcements={announcements} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={navigateFromHome} onDismissNotification={dismissPortalNotification} onClearNotifications={clearPortalNotifications} onCreateAnnouncement={createAnnouncement} onUpdateAnnouncement={updateAnnouncement} onDeleteAnnouncement={deleteAnnouncement} onAcknowledgeAnnouncement={acknowledgeAnnouncement} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} submissions={submissionHistory} activityResetAt={summarySettings.activityResetAt} rankingResetAt={summarySettings.rankingResetAt} quotaResetAt={quotas.resetAt} onResetActivity={resetActivitySummary} onResetRanking={resetActivityRanking} /> : activeSection === "management_report" ? <ManagementReportPanel session={session} users={users} reports={managementReports} assignments={sergeantAssignments} settings={managementReportSettings} onSubmit={submitManagementReport} onComment={commentManagementReport} onUpdateComment={updateManagementComment} onDeleteComment={deleteManagementComment} onDeleteReport={deleteManagementReport} onResetRanking={resetManagementRanking} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
         <section className="stats">
           <article><span className="stat-icon blue"><UsersRound /></span><div><strong>{users.length}</strong><small>Comptes au total</small></div><span className="trend">Tous niveaux</span></article>
           <article><span className="stat-icon gold"><UserRound /></span><div><strong>{users.filter((user) => user.approvalStatus === "pending").length}</strong><small>Demandes en attente</small></div><span className="trend">À valider</span></article>
