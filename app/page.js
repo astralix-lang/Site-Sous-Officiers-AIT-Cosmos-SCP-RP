@@ -125,6 +125,7 @@ const THEME_KEY = "portail-so-theme";
 const SOUND_KEY = "portail-so-sounds";
 const QUOTA_KEY = "portail-so-quotas-v1";
 const MISSIONS_KEY = "portail-so-missions-v1";
+const LEGACY_MISSIONS_PURGED_KEY = "portail-so-missions-legacy-purged-v1";
 const CHAT_KEY = "portail-so-chats-v1";
 const LOG_KEY = "portail-so-logs-v1";
 const SHORTCUTS_KEY = "portail-so-shortcuts-v1";
@@ -2204,9 +2205,16 @@ function App() {
       const savedManagementReports = readStoredJson(MANAGEMENT_REPORTS_KEY, []);
       const savedManagementReportSettings = readStoredJson(MANAGEMENT_REPORT_SETTINGS_KEY, { rankingResetAt: null });
       const savedMeeting = readStoredJson(SO_MEETING_KEY, DEFAULT_SO_MEETING);
-      // Les dépôts créés avant la synchronisation partagée restent disponibles
-      // afin d’être transférés automatiquement à la base au prochain chargement.
-      setMissions(Array.isArray(savedMissions) ? savedMissions.map((mission) => ({ ...mission, legacyLocal: true })) : []);
+      // Les anciennes missions n’étaient stockées que dans le navigateur. Elles
+      // ne doivent plus réapparaître ni être importées dans l’espace partagé.
+      // La purge ne s’exécute qu’une fois : les données reçues du serveur restent
+      // ensuite disponibles comme cache de secours lors des prochains chargements.
+      const purgeLegacyMissions = localStorage.getItem(LEGACY_MISSIONS_PURGED_KEY) !== "true";
+      if (purgeLegacyMissions) {
+        localStorage.removeItem(MISSIONS_KEY);
+        localStorage.setItem(LEGACY_MISSIONS_PURGED_KEY, "true");
+      }
+      setMissions(purgeLegacyMissions ? [] : (Array.isArray(savedMissions) ? savedMissions : []));
       setChats(Array.isArray(savedChats) ? savedChats : []);
       setAuditLogs(Array.isArray(savedLogs) ? savedLogs : []);
       setShortcutPreferences(readStoredJson(SHORTCUTS_KEY, {}));
