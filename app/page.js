@@ -1105,12 +1105,12 @@ function MissionInternalPanel({ session, missions, onSubmit, onValidate, onRejec
           <div><p className="eyebrow dark">{canValidate ? "VALIDATION RÉFÉRENT SO" : "MES DÉPÔTS"}</p><h2>{canValidate ? "Documents à contrôler" : "Suivi des missions"}</h2></div>
           <div className="mission-list-actions">
             <span className="mission-pending-count">{displayedMissions.filter((mission) => mission.status === "pending").length} en attente</span>
-            {canValidate && <button className="reset-missions" type="button" onClick={onReset}><RotateCcw size={15} /> Réinitialiser les documents</button>}
+            {canValidate && <button className="reset-missions" type="button" onClick={onReset}><Trash2 size={15} /> Tout effacer</button>}
           </div>
         </div>
         <div className="mission-list">
           {displayedMissions.map((mission) => {
-            const canDelete = mission.userId === session.id && mission.status !== "validated";
+            const canDelete = canValidate || (mission.userId === session.id && mission.status !== "validated");
             const status = mission.status === "validated" ? { icon: <BadgeCheck size={15} />, label: "Validé" } : mission.status === "rejected" ? { icon: <X size={15} />, label: "Refusé" } : { icon: <Gauge size={15} />, label: "En attente" };
             return <article key={mission.id}><div className="mission-document"><span className="mission-file-icon"><FileText size={19} /></span><div><strong>{mission.title}</strong><small>{mission.userName} • {mission.grade} • {mission.submittedAt}</small></div></div><a href={mission.documentUrl} target="_blank" rel="noreferrer">Ouvrir le Google Docs</a><span className={`mission-status ${mission.status}`}>{status.icon}{status.label}</span><div className="mission-item-actions">{canValidate && mission.status === "pending" && <><button className="reject-mission" type="button" onClick={() => onReject(mission.id)}><X size={16} /> Refuser</button><button className="validate-mission" type="button" onClick={() => onValidate(mission.id)}><BadgeCheck size={16} /> Valider</button></>}{canDelete && <button className="delete-mission" type="button" onClick={() => onDelete(mission.id)}><Trash2 size={16} /> Supprimer</button>}</div></article>;
           })}
@@ -2889,7 +2889,8 @@ function App() {
   }
   function deleteMission(missionId) {
     const mission = missions.find((item) => item.id === missionId);
-    if (!mission || mission.userId !== session.id || mission.status === "validated") return;
+    const canDelete = hasManagerAccess(session.role) || (mission?.userId === session.id && mission.status !== "validated");
+    if (!mission || !canDelete) return;
     if (!confirm("Supprimer ce document de mission interne ?")) return;
     if (portalRemote) {
       portalRequest("POST", { action: "delete_mission", missionId })

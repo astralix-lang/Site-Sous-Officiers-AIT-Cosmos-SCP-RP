@@ -968,9 +968,13 @@ export async function POST(request) {
       const missionId = String(body?.missionId || "");
       const missions = await missionsFor();
       const mission = missions.find((item) => item.id === missionId);
-      if (!mission || mission.userId !== actor.id || mission.status === "validated") return json({ error: "Vous ne pouvez plus supprimer cette mission." }, 403);
+      // Un responsable doit pouvoir retirer n'importe quel document de la liste
+      // commune, y compris une mission déjà validée. Un déposant, lui, ne peut
+      // retirer que son propre brouillon/refus avant validation.
+      const canDeleteOwnMission = mission?.userId === actor.id && mission.status !== "validated";
+      if (!mission || (!isManager(actor) && !canDeleteOwnMission)) return json({ error: "Vous ne pouvez pas supprimer cette mission." }, 403);
       await saveMissions(missions.filter((item) => item.id !== mission.id));
-      await recordAuditLog({ actor, category: "mission", action: "Mission interne supprimée", details: mission.title });
+      await recordAuditLog({ actor, category: "mission", action: isManager(actor) && mission.userId !== actor.id ? "Mission interne supprimée par un responsable" : "Mission interne supprimée", details: `${mission.title} · ${mission.userName}` });
     } else if (action === "reset_missions") {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent réinitialiser les missions." }, 403);
       const missions = await missionsFor();
