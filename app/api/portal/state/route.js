@@ -18,6 +18,8 @@ const SUMMARY_SETTINGS_ID = "a148a81a-6d81-46a4-8c82-fd09391b76cc";
 const SUMMARY_SETTINGS_TARGET = "__portal_summary_settings";
 const ASSIGNMENTS_ID = "c90a8db5-8c52-4a2b-b2a7-503c95dcb2e2";
 const ASSIGNMENTS_TARGET = "__portal_sergeant_assignments";
+const MISSIONS_ID = "34d09213-9ed9-420f-a3dc-3d730524a3e2";
+const MISSIONS_TARGET = "__portal_internal_missions";
 const MANAGEMENT_REPORTS_ID = "5b5254f3-f22b-4cb4-935f-cffd73e8bba7";
 const MANAGEMENT_REPORTS_TARGET = "__portal_management_reports";
 const MANAGEMENT_SETTINGS_ID = "b8d9ba07-0f50-4558-b0af-173790f89ab4";
@@ -290,13 +292,14 @@ async function quotaState(submissions) {
 }
 
 async function stateFor(user) {
-  const [chats, notifications, announcements, auditLogs, allSubmissions, summarySettings, sergeantAssignments, allManagementReports, managementReportSettings, loadedMeeting, soMeetingHistory] = await Promise.all([
-    allChats(user), notificationsFor(user), announcementsFor(user), auditLogsFor(user), submissionsFor(), summarySettingsFor(), assignmentsFor(), managementReportsFor(), managementReportSettingsFor(), meetingFor(), meetingHistoryFor(),
+  const [chats, notifications, announcements, auditLogs, allSubmissions, summarySettings, sergeantAssignments, allMissions, allManagementReports, managementReportSettings, loadedMeeting, soMeetingHistory] = await Promise.all([
+    allChats(user), notificationsFor(user), announcementsFor(user), auditLogsFor(user), submissionsFor(), summarySettingsFor(), assignmentsFor(), missionsFor(), managementReportsFor(), managementReportSettingsFor(), meetingFor(), meetingHistoryFor(),
   ]);
   const soMeeting = await resetArchivedMeetingDraft(loadedMeeting, soMeetingHistory);
   const assignedSergeants = new Set(sergeantAssignments.filter((assignment) => assignment.observerId === user.id).map((assignment) => assignment.sergeantId));
   const managementReports = isManager(user) ? allManagementReports : allManagementReports.filter((report) => report.authorId === user.id || (user.role === "senior" && assignedSergeants.has(report.authorId)));
-  return { chats, notifications, announcements, auditLogs, submissions: allSubmissions, quotas: await quotaState(allSubmissions), summarySettings, sergeantAssignments, managementReports, managementReportSettings, soMeeting, soMeetingHistory };
+  const missions = isManager(user) ? allMissions : allMissions.filter((mission) => mission.userId === user.id);
+  return { chats, notifications, announcements, auditLogs, submissions: allSubmissions, quotas: await quotaState(allSubmissions), summarySettings, sergeantAssignments, missions, managementReports, managementReportSettings, soMeeting, soMeetingHistory };
 }
 
 function canReviewManagementReport(actor, report, assignments) {
@@ -444,6 +447,53 @@ async function assignmentsFor() {
 
 async function saveAssignments(assignments) {
   await saveSharedRecord(ASSIGNMENTS_ID, ASSIGNMENTS_TARGET, "Assignations internes des Sergents", assignments);
+}
+
+function missionDocumentUrl(value) {
+  try {
+    const url = new URL(clean(value, 1600));
+    return url.protocol === "https:" && url.hostname === "docs.google.com" && !url.username && !url.password && url.pathname.startsWith("/document/d/") ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+function missionValues(value) {
+  const source = objectValue(value);
+  const title = clean(source.title, 100);
+  const documentUrl = missionDocumentUrl(source.documentUrl);
+  return title && documentUrl ? { title, documentUrl } : null;
+}
+
+function missionsFromValue(value) {
+  return parseArray(value).filter((mission) => UUID.test(String(mission?.id || "")) && UUID.test(String(mission?.userId || ""))).map((mission) => {
+    const created = new Date(mission.createdAt || mission.submittedAt || "");
+    const createdAt = Number.isFinite(created.getTime()) ? created.toISOString() : new Date().toISOString();
+    const status = mission.status === "validated" ? "validated" : mission.status === "rejected" ? "rejected" : "pending";
+    return {
+      id: mission.id,
+      userId: mission.userId,
+      userName: clean(mission.userName, 120) || "Membre du portail",
+      grade: clean(mission.grade, 60),
+      title: clean(mission.title, 100),
+      documentUrl: missionDocumentUrl(mission.documentUrl),
+      status,
+      createdAt,
+      submittedAt: label(createdAt),
+      validatedBy: status === "validated" ? clean(mission.validatedBy, 120) : "",
+      validatedAt: status === "validated" && Number.isFinite(new Date(mission.validatedAt).getTime()) ? new Date(mission.validatedAt).toISOString() : null,
+      rejectedBy: status === "rejected" ? clean(mission.rejectedBy, 120) : "",
+      rejectedAt: status === "rejected" && Number.isFinite(new Date(mission.rejectedAt).getTime()) ? new Date(mission.rejectedAt).toISOString() : null,
+    };
+  }).filter((mission) => mission.title && mission.documentUrl).sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+async function missionsFor() {
+  return missionsFromValue(await sharedRecord(MISSIONS_ID, MISSIONS_TARGET, "Documents de missions internes", []));
+}
+
+async function saveMissions(missions) {
+  await saveSharedRecord(MISSIONS_ID, MISSIONS_TARGET, "Documents de missions internes", missionsFromValue(missions).slice(0, 800));
 }
 
 function managementReportValues(value) {
@@ -843,6 +893,89 @@ export async function POST(request) {
       await recordAuditLog({ actor, category: "assignment", action: "Rapport de nouveau Sergent finalisé" });
     } else if (action === "notify") {
       await createNotification({ recipients: body?.recipients === "all" ? null : body?.recipients, kind: body?.kind, title: body?.title, text: body?.text, target: body?.target });
+    } else if (action === "create_mission") {
+      if (!["senior", "officer"].includes(actor.role)) return json({ error: "Seuls les Sous-Officiers peuvent déposer une mission." }, 403);
+      const values = missionValues(body?.mission);
+      if (!values) return json({ error: "Le titre ou le lien Google Docs de la mission est invalide." }, 400);
+      const missions = await missionsFor();
+      const createdAt = new Date().toISOString();
+      const mission = {
+        id: crypto.randomUUID(),
+        userId: actor.id,
+        userName: `${actor.first_name} ${actor.last_name || ""}`.trim(),
+        grade: actor.grade || "",
+        ...values,
+        status: "pending",
+        createdAt,
+      };
+      await saveMissions([mission, ...missions]);
+      await createNotification({ recipients: [actor.id], kind: "form", title: "Mission interne déposée", text: "Votre document est en attente de validation.", target: "mission_internal" });
+      await recordAuditLog({ actor, category: "mission", action: "Mission interne déposée", details: values.title });
+    } else if (action === "migrate_missions") {
+      if (!["senior", "officer"].includes(actor.role)) return json({ error: "Vous ne pouvez pas synchroniser ces missions." }, 403);
+      const missions = await missionsFor();
+      const existingIds = new Set(missions.map((mission) => mission.id));
+      const legacyMissions = parseArray(body?.missions).slice(0, 80);
+      const migrated = [];
+      for (const legacyMission of legacyMissions) {
+        const id = String(legacyMission?.id || "");
+        const values = missionValues(legacyMission);
+        if (!UUID.test(id) || existingIds.has(id) || String(legacyMission?.userId || "") !== actor.id || !values) continue;
+        const created = new Date(legacyMission?.createdAt || legacyMission?.submittedAt || "");
+        migrated.push({
+          id,
+          userId: actor.id,
+          userName: `${actor.first_name} ${actor.last_name || ""}`.trim(),
+          grade: actor.grade || "",
+          ...values,
+          status: legacyMission?.status === "rejected" ? "rejected" : legacyMission?.status === "validated" ? "validated" : "pending",
+          createdAt: Number.isFinite(created.getTime()) ? created.toISOString() : new Date().toISOString(),
+          validatedBy: clean(legacyMission?.validatedBy, 120),
+          validatedAt: legacyMission?.validatedAt,
+          rejectedBy: clean(legacyMission?.rejectedBy, 120),
+          rejectedAt: legacyMission?.rejectedAt,
+        });
+      }
+      if (migrated.length) {
+        await saveMissions([...migrated, ...missions]);
+        await recordAuditLog({ actor, category: "mission", action: "Anciennes missions synchronisées", details: `${migrated.length} document${migrated.length > 1 ? "s" : ""}` });
+      }
+    } else if (action === "validate_mission") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent valider une mission." }, 403);
+      const missionId = String(body?.missionId || "");
+      const missions = await missionsFor();
+      const mission = missions.find((item) => item.id === missionId && item.status === "pending");
+      if (!mission) return json({ error: "Mission introuvable ou déjà traitée." }, 404);
+      const validatedAt = new Date().toISOString();
+      await saveMissions(missions.map((item) => item.id === mission.id ? { ...item, status: "validated", validatedBy: `${actor.first_name} ${actor.last_name || ""}`.trim(), validatedAt } : item));
+      const settings = await currentQuotaSettings();
+      const missionCounts = objectValue(settings.mission_counts);
+      missionCounts[mission.userId] = numberInRange(missionCounts[mission.userId], 0, 99) + 1;
+      await updateQuotaSettings({ mission_counts: missionCounts });
+      await createNotification({ recipients: [mission.userId], kind: "info", title: "Mission interne validée", text: "Votre mission a été ajoutée à votre quota.", target: "mission_internal" });
+      await recordAuditLog({ actor, category: "mission", action: "Mission interne validée", details: `${mission.title} · ${mission.userName}` });
+    } else if (action === "reject_mission") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent refuser une mission." }, 403);
+      const missionId = String(body?.missionId || "");
+      const missions = await missionsFor();
+      const mission = missions.find((item) => item.id === missionId && item.status === "pending");
+      if (!mission) return json({ error: "Mission introuvable ou déjà traitée." }, 404);
+      const rejectedAt = new Date().toISOString();
+      await saveMissions(missions.map((item) => item.id === mission.id ? { ...item, status: "rejected", rejectedBy: `${actor.first_name} ${actor.last_name || ""}`.trim(), rejectedAt } : item));
+      await createNotification({ recipients: [mission.userId], kind: "info", title: "Mission interne refusée", text: "Votre document a été refusé par un responsable.", target: "mission_internal" });
+      await recordAuditLog({ actor, category: "mission", action: "Mission interne refusée", details: `${mission.title} · ${mission.userName}` });
+    } else if (action === "delete_mission") {
+      const missionId = String(body?.missionId || "");
+      const missions = await missionsFor();
+      const mission = missions.find((item) => item.id === missionId);
+      if (!mission || mission.userId !== actor.id || mission.status === "validated") return json({ error: "Vous ne pouvez plus supprimer cette mission." }, 403);
+      await saveMissions(missions.filter((item) => item.id !== mission.id));
+      await recordAuditLog({ actor, category: "mission", action: "Mission interne supprimée", details: mission.title });
+    } else if (action === "reset_missions") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent réinitialiser les missions." }, 403);
+      const missions = await missionsFor();
+      await saveMissions([]);
+      await recordAuditLog({ actor, category: "mission", action: "Documents de missions réinitialisés", details: `${missions.length} document${missions.length > 1 ? "s" : ""}` });
     } else if (action === "quota_set_target") {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent modifier les quotas." }, 403);
       const category = String(body?.category || "");
