@@ -1076,12 +1076,14 @@ function MissionInternalPanel({ session, missions, onSubmit, onValidate, onRejec
   const [title, setTitle] = useState("");
   const [documentUrl, setDocumentUrl] = useState("");
   const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const canSubmit = ["senior", "officer"].includes(session.role);
   const canValidate = hasManagerAccess(session.role);
   const displayedMissions = canValidate ? missions : missions.filter((mission) => mission.userId === session.id);
 
   async function submit(event) {
     event.preventDefault();
+    if (submitting) return;
     try {
       const parsedUrl = new URL(documentUrl);
       if (parsedUrl.protocol !== "https:" || parsedUrl.hostname !== "docs.google.com" || parsedUrl.username || parsedUrl.password || !parsedUrl.pathname.startsWith("/document/d/")) throw new Error();
@@ -1089,18 +1091,21 @@ function MissionInternalPanel({ session, missions, onSubmit, onValidate, onRejec
       return setError("Ajoutez un lien Google Docs valide.");
     }
     try {
+      setSubmitting(true);
       await onSubmit({ title: title.trim(), documentUrl: documentUrl.trim() });
       setTitle("");
       setDocumentUrl("");
       setError("");
     } catch (error) {
       setError(error instanceof Error ? error.message : "Le dépôt de la mission a échoué.");
+    } finally {
+      setSubmitting(false);
     }
   }
 
   return (
     <section className="mission-layout">
-      {canSubmit && <div className="mission-submit-card"><div className="transmission-head"><span className="category-icon large blue"><FileText size={25} /></span><div><p className="eyebrow dark">NOUVEAU DÉPÔT</p><h2>Mission interne</h2><p className="muted">Déposez votre Google Docs pour validation par un Référent SO.</p></div></div><form onSubmit={submit}><label>Titre de la mission</label><input value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={100} placeholder="Ex. Compte rendu de mission interne" /><label>Lien Google Docs</label><input type="url" value={documentUrl} onChange={(event) => setDocumentUrl(event.target.value)} required placeholder="https://docs.google.com/document/d/…" />{error && <p className="form-error transmission-error">{error}</p>}<div className="transmission-actions"><span><ShieldCheck size={15} /> Le dépôt sera placé en attente</span><button className="primary" type="submit"><FileText size={17} /> Déposer le document</button></div></form></div>}
+      {canSubmit && <div className="mission-submit-card"><div className="transmission-head"><span className="category-icon large blue"><FileText size={25} /></span><div><p className="eyebrow dark">NOUVEAU DÉPÔT</p><h2>Mission interne</h2><p className="muted">Déposez votre Google Docs pour validation par un Référent SO.</p></div></div><form onSubmit={submit}><label>Titre de la mission</label><input value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={100} placeholder="Ex. Compte rendu de mission interne" /><label>Lien Google Docs</label><input type="url" value={documentUrl} onChange={(event) => setDocumentUrl(event.target.value)} required placeholder="https://docs.google.com/document/d/…" />{error && <p className="form-error transmission-error">{error}</p>}<div className="transmission-actions"><span><ShieldCheck size={15} /> Le dépôt sera placé en attente</span><button className="primary" type="submit" disabled={submitting}><FileText size={17} /> {submitting ? "Dépôt en cours…" : "Déposer le document"}</button></div></form></div>}
       <div className="mission-list-card">
         <div className="mission-list-head">
           <div><p className="eyebrow dark">{canValidate ? "VALIDATION RÉFÉRENT SO" : "MES DÉPÔTS"}</p><h2>{canValidate ? "Documents à contrôler" : "Suivi des missions"}</h2></div>
@@ -2138,7 +2143,6 @@ function App() {
   const [loginTransition, setLoginTransition] = useState(null);
   const [avatarSyncing, setAvatarSyncing] = useState(false);
   const audioContextRef = useRef(null);
-  const legacyMissionSyncRef = useRef("");
 
   useEffect(() => {
     if (!ready || !session) return;
@@ -2414,11 +2418,7 @@ function App() {
   }
   function mergeMissions(current, remoteMissions) {
     const remote = Array.isArray(remoteMissions) ? remoteMissions : [];
-    const remoteIds = new Set(remote.map((mission) => mission.id));
-    // Les anciens dépôts n’existaient que dans le navigateur de leur auteur.
-    // On les garde brièvement le temps que la migration automatique les enregistre.
-    const legacy = current.filter((mission) => mission?.legacyLocal && mission.userId === session?.id && !remoteIds.has(mission.id));
-    return [...remote, ...legacy].sort((left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime());
+    return remote.sort((left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime());
   }
   function applySharedPortalState(state) {
     if (Array.isArray(state?.chats)) setChats((current) => mergeChats(current, state.chats));
@@ -2436,17 +2436,6 @@ function App() {
     setPortalRemote(true);
   }
 
-  useEffect(() => {
-    if (!ready || !session || !portalRemote) return;
-    const legacyMissions = missions.filter((mission) => mission?.legacyLocal && mission.userId === session.id);
-    if (!legacyMissions.length) return;
-    const syncKey = legacyMissions.map((mission) => mission.id).sort().join(",");
-    if (!syncKey || legacyMissionSyncRef.current === syncKey) return;
-    legacyMissionSyncRef.current = syncKey;
-    portalRequest("POST", { action: "migrate_missions", missions: legacyMissions })
-      .then(applySharedPortalState)
-      .catch(() => { legacyMissionSyncRef.current = ""; });
-  }, [ready, session?.id, portalRemote, missions]);
   function syncSharedPortal(action, payload = {}) {
     if (!portalRemote) return Promise.resolve(null);
     return portalRequest("POST", { action, ...payload })
@@ -2852,15 +2841,8 @@ function App() {
   }
   async function submitMission({ title, documentUrl }) {
     if (!["senior", "officer"].includes(session.role)) throw new Error("Vous ne pouvez pas déposer une mission.");
-    if (portalRemote) {
-      const state = await portalRequest("POST", { action: "create_mission", mission: { title, documentUrl } });
-      applySharedPortalState(state);
-      flash("Le document a été déposé et placé en attente.");
-      return;
-    }
-    const mission = { id: crypto.randomUUID(), userId: session.id, userName: `${session.firstName} ${session.lastName}`, grade: session.grade || GRADES[0], title, documentUrl, status: "pending", submittedAt: new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" }).format(new Date()), legacyLocal: true };
-    setMissions((current) => [mission, ...current]);
-    addLog("mission", "Mission interne déposée", title);
+    const state = await portalRequest("POST", { action: "create_mission", mission: { title, documentUrl } });
+    applySharedPortalState(state);
     flash("Le document a été déposé et placé en attente.");
   }
   function validateMission(missionId) {
