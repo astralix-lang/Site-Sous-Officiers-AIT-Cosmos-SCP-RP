@@ -53,6 +53,9 @@ const hasAdminAccess = (role) => ADMIN_ACCESS_ROLES.has(role);
 const hasManagerAccess = (role) => MANAGER_ACCESS_ROLES.has(role);
 const hasSeniorAccess = (role) => SENIOR_ACCESS_ROLES.has(role);
 const hasChatParticipant = (chat, userId) => Array.isArray(chat?.participants) && chat.participants.some((id) => String(id) === String(userId));
+// L'aperçu OpenAI peut être ouvert sans Discord afin de valider le portail
+// avant la mise en ligne. Cette option n'est pas compilée sur Vercel.
+const OPENAI_PREVIEW_ENABLED = process.env.NEXT_PUBLIC_OPENAI_PREVIEW_ACCESS === "enabled";
 
 // Registre unique des rubriques : les menus et les raccourcis en tirent leur
 // liste. Ainsi, toute nouvelle rubrique ajoutée ici devient disponible dans
@@ -533,6 +536,7 @@ function ThemePicker({ themeId, onChange }) {
 }
 
 function Login({ configurationError, error }) {
+  const previewEnabled = OPENAI_PREVIEW_ENABLED;
   const status = typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("discord") || "";
   const messages = {
     pending: "Votre demande a été envoyée. Un administrateur doit encore vous attribuer un niveau d’accès.",
@@ -558,11 +562,10 @@ function Login({ configurationError, error }) {
         <div className="login-card">
           <div className="mobile-logo"><div className="brand-mark"><ShieldCheck size={23} /></div><strong>Portail SO</strong></div>
           <p className="eyebrow dark">ACCÈS AU PORTAIL</p>
-          <h2>Continuez avec Discord</h2>
-          <p className="muted">Connectez-vous avec votre compte Discord pour accéder au portail.</p>
+          <h2>{previewEnabled ? "Aperçu du portail" : "Continuez avec Discord"}</h2>
+          <p className="muted">{previewEnabled ? "Ouvrez directement l’aperçu sécurisé pour consulter le portail." : "Connectez-vous avec votre compte Discord pour accéder au portail."}</p>
           <div className="discord-login-panel">
-            <a className={`primary wide discord-login ${configurationError ? "disabled" : ""}`} href={configurationError ? undefined : "/api/auth/discord"} aria-disabled={Boolean(configurationError)}><MessageSquareText size={20} /> Continuer avec Discord <span>→</span></a>
-            <p className="discord-login-note">Lors de votre première connexion, votre demande devra être validée par un administrateur.</p>
+            {previewEnabled ? <><a className={`primary wide discord-login ${configurationError ? "disabled" : ""}`} href={configurationError ? undefined : "/api/auth/preview"} aria-disabled={Boolean(configurationError)}><LayoutDashboard size={20} /> Ouvrir le portail <span>→</span></a><p className="discord-login-note">Accès temporaire réservé à l’aperçu OpenAI.</p></> : <><a className={`primary wide discord-login ${configurationError ? "disabled" : ""}`} href={configurationError ? undefined : "/api/auth/discord"} aria-disabled={Boolean(configurationError)}><MessageSquareText size={20} /> Continuer avec Discord <span>→</span></a><p className="discord-login-note">Lors de votre première connexion, votre demande devra être validée par un administrateur.</p></>}
           </div>
           {(configurationError || error || messages[status]) && <p className="form-error">{configurationError || error || messages[status]}</p>}
         </div>
