@@ -418,7 +418,9 @@ h1,h2,h3,h4,strong,.brand-row strong,.content header h1 {
 .theme-options button:hover { color:#f3f5ef; background:#ffffff08; }
 
 .content {
-  max-width:1640px;
+  width:100%;
+  max-width:none;
+  min-width:0;
   padding:42px clamp(24px,4vw,66px) 68px;
 }
 
