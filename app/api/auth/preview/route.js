@@ -22,7 +22,14 @@ export async function GET(request) {
 
     const sessionCookie = await createSession(admin.id, request);
     await recordAuditLog({ actor: admin, category: "auth", action: "Accès aperçu OpenAI", details: "Ouverture temporaire du portail sans connexion Discord." }).catch(() => {});
-    return Response.redirect(new URL("/", request.url), 302, { headers: { "Set-Cookie": sessionCookie, "Cache-Control": "no-store, max-age=0" } });
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: new URL("/", request.url).toString(),
+        "Set-Cookie": sessionCookie,
+        "Cache-Control": "no-store, max-age=0",
+      },
+    });
   } catch (error) {
     console.error("OpenAI preview access failed", error instanceof Error ? error.message : "Unknown error");
     return json({ error: "L’aperçu n’a pas pu être ouvert. Réessayez dans un instant." }, 503);
