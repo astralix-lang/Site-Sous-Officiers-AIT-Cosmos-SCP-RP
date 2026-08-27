@@ -1086,9 +1086,11 @@ function MissionInternalPanel({ session, missions, onSubmit, onValidate, onRejec
     if (submitting) return;
     try {
       const parsedUrl = new URL(documentUrl);
-      if (parsedUrl.protocol !== "https:" || parsedUrl.hostname !== "docs.google.com" || parsedUrl.username || parsedUrl.password || !parsedUrl.pathname.startsWith("/document/d/")) throw new Error();
+      const isGoogleDocument = parsedUrl.hostname === "docs.google.com" && parsedUrl.pathname.startsWith("/document/d/");
+      const isGoogleDrive = parsedUrl.hostname === "drive.google.com";
+      if (parsedUrl.protocol !== "https:" || parsedUrl.username || parsedUrl.password || (!isGoogleDocument && !isGoogleDrive)) throw new Error();
     } catch {
-      return setError("Ajoutez un lien Google Docs valide.");
+      return setError("Ajoutez un lien Google Docs ou Google Drive valide.");
     }
     try {
       setSubmitting(true);
@@ -1105,7 +1107,7 @@ function MissionInternalPanel({ session, missions, onSubmit, onValidate, onRejec
 
   return (
     <section className="mission-layout">
-      {canSubmit && <div className="mission-submit-card"><div className="transmission-head"><span className="category-icon large blue"><FileText size={25} /></span><div><p className="eyebrow dark">NOUVEAU DÉPÔT</p><h2>Mission interne</h2><p className="muted">Déposez votre Google Docs pour validation par un Référent SO.</p></div></div><form onSubmit={submit}><label>Titre de la mission</label><input value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={100} placeholder="Ex. Compte rendu de mission interne" /><label>Lien Google Docs</label><input type="url" value={documentUrl} onChange={(event) => setDocumentUrl(event.target.value)} required placeholder="https://docs.google.com/document/d/…" />{error && <p className="form-error transmission-error">{error}</p>}<div className="transmission-actions"><span><ShieldCheck size={15} /> Le dépôt sera placé en attente</span><button className="primary" type="submit" disabled={submitting}><FileText size={17} /> {submitting ? "Dépôt en cours…" : "Déposer le document"}</button></div></form></div>}
+      {canSubmit && <div className="mission-submit-card"><div className="transmission-head"><span className="category-icon large blue"><FileText size={25} /></span><div><p className="eyebrow dark">NOUVEAU DÉPÔT</p><h2>Mission interne</h2><p className="muted">Déposez votre Google Docs ou Google Drive pour validation par un Référent SO.</p></div></div><form onSubmit={submit}><label>Titre de la mission</label><input value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={100} placeholder="Ex. Compte rendu de mission interne" /><label>Lien Google Docs ou Drive</label><input type="url" value={documentUrl} onChange={(event) => setDocumentUrl(event.target.value)} required placeholder="https://docs.google.com/document/d/… ou https://drive.google.com/…" />{error && <p className="form-error transmission-error">{error}</p>}<div className="transmission-actions"><span><ShieldCheck size={15} /> Le dépôt sera placé en attente</span><button className="primary" type="submit" disabled={submitting}><FileText size={17} /> {submitting ? "Dépôt en cours…" : "Déposer le document"}</button></div></form></div>}
       <div className="mission-list-card">
         <div className="mission-list-head">
           <div><p className="eyebrow dark">{canValidate ? "VALIDATION RÉFÉRENT SO" : "MES DÉPÔTS"}</p><h2>{canValidate ? "Documents à contrôler" : "Suivi des missions"}</h2></div>

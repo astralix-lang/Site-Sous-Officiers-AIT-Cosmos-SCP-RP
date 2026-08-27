@@ -453,7 +453,9 @@ async function saveAssignments(assignments) {
 function missionDocumentUrl(value) {
   try {
     const url = new URL(clean(value, 1600));
-    return url.protocol === "https:" && url.hostname === "docs.google.com" && !url.username && !url.password && url.pathname.startsWith("/document/d/") ? url.toString() : "";
+    const isGoogleDocument = url.hostname === "docs.google.com" && url.pathname.startsWith("/document/d/");
+    const isGoogleDrive = url.hostname === "drive.google.com";
+    return url.protocol === "https:" && !url.username && !url.password && (isGoogleDocument || isGoogleDrive) ? url.toString() : "";
   } catch {
     return "";
   }
