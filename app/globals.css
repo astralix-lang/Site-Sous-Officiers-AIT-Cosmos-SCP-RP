@@ -707,3 +707,95 @@ table td strong,.user-cell strong,.category-card strong,.home-stats strong,.home
 [data-theme="dark"] .discord-login:hover { color:#fff7d6; background:linear-gradient(135deg,#3a4039,#202620); border-color:#e2c451; }
 .discord-login svg { color:#e5ca69; }
 .discord-login-note { color:#9ba59a; }
+
+/* Couche finale acier : les modules ne gardent plus les anciens aplats bleus.
+   Les thèmes conservent leur accent, mais les surfaces restent volontairement
+   noires et grises pour conserver le même langage que le centre de commande. */
+:root {
+  --steel-deep:#0d120f;
+  --steel-panel:#151b17;
+  --steel-raised:#1b211c;
+  --steel-line:#303932;
+  --steel-text:#e8ece5;
+  --steel-muted:#a6afa3;
+}
+
+[data-theme="dark"] :is(.accounts-card,.presence-card,.specializations-card,.quota-card,.logs-card,.meeting-card,.meeting-history-card) :is(thead,thead tr,th,.meeting-attendance-head,.meeting-votes-head) {
+  color:var(--steel-muted) !important;
+  background:linear-gradient(180deg,#1c221d,#161b17) !important;
+  border-color:var(--steel-line) !important;
+}
+
+[data-theme="dark"] :is(.accounts-card,.presence-card,.specializations-card,.quota-card,.logs-card,.meeting-card,.meeting-history-card) :is(td,.meeting-attendance-row,.meeting-vote-row) {
+  border-color:#29322c !important;
+}
+
+/* Les rôles sont lisibles grâce à leur pastille, sans grand cartouche bleu. */
+[data-theme="dark"] :is(.role-badge,.all-access,.referent-access,.senior-access,.management-list-head>span,.meeting-history-count,.meeting-history-stats span) {
+  color:var(--steel-text) !important;
+  background:var(--steel-raised) !important;
+  border:1px solid #39433a !important;
+  box-shadow:none !important;
+}
+[data-theme="dark"] .role-badge.violet span { background:#6e55a3 !important; }
+[data-theme="dark"] .role-badge.blue span { background:#6f7980 !important; }
+[data-theme="dark"] .role-badge.gold span { background:#b07b1c !important; }
+[data-theme="dark"] .role-badge.green span { background:#2d9975 !important; }
+
+/* Les grands bandeaux auparavant bleus deviennent des panneaux de commandement. */
+[data-theme="dark"] :is(.summary-toolbar,.management-overview .summary-toolbar) {
+  color:var(--steel-text) !important;
+  background:radial-gradient(circle at 88% 12%,color-mix(in srgb,var(--theme-accent) 16%,transparent),transparent 34%),linear-gradient(135deg,#1a201b,#101510) !important;
+  border:1px solid #354036 !important;
+  border-radius:7px !important;
+  box-shadow:0 14px 32px #0000004a !important;
+}
+[data-theme="dark"] .summary-toolbar :is(.eyebrow,.summary-controls label,.summary-toolbar p:last-child) { color:#a6afa3 !important; }
+[data-theme="dark"] .summary-toolbar .eyebrow { color:var(--theme-accent) !important; }
+[data-theme="dark"] .summary-toolbar select { color:var(--steel-text) !important; background:#0c110e !important; border-color:#39433a !important; }
+[data-theme="dark"] .summary-toolbar option { color:var(--steel-text) !important; background:#151b17 !important; }
+[data-theme="dark"] .summary-reset-button { color:#f1e4b7 !important; background:#282719 !important; border-color:#655829 !important; }
+
+[data-theme="dark"] :is(.summary-kpi-icon.blue,.home-stat-icon.blue,.home-quota-title>span,.stat-icon.blue,.preference-toggle .preference-icon) {
+  color:#dec978 !important;
+  background:#2a291b !important;
+}
+[data-theme="dark"] :is(.summary-kpi-icon,.stat-icon,.home-stat-icon) { border:1px solid #3a4036; }
+
+/* Avis, compteurs et contrôles secondaires : même gris profond partout. */
+[data-theme="dark"] :is(.management-comments,.management-comments article,.management-report-card,.management-ranking article,.meeting-history-details section) {
+  background:var(--steel-deep) !important;
+  border-color:#2c352e !important;
+}
+[data-theme="dark"] .management-comments article { background:var(--steel-raised) !important; }
+[data-theme="dark"] :is(.avatar-sync,.accounts-card .icon-button,.presence-actions button,.meeting-attendance-row .icon-button,.meeting-vote-row .icon-button) {
+  color:#d6ddd4 !important;
+  background:#1a211c !important;
+  border-color:#39433a !important;
+}
+[data-theme="dark"] :is(.avatar-sync,.accounts-card .icon-button,.presence-actions button):hover {
+  color:#fff7d2 !important;
+  background:#252c25 !important;
+  border-color:var(--theme-accent) !important;
+}
+
+/* Catégories spéciales, graphiques et historiques sans bleu résiduel. */
+[data-theme="dark"] .specialization-badge.pm { color:#d8d4c0 !important; background:#292a24 !important; }
+[data-theme="dark"] .log-category.account,[data-theme="dark"] .log-category.auth { color:#d6d8d0 !important; background:#252a26 !important; }
+[data-theme="dark"] :is(.chart-legend,.distribution-details,.chart-group-labels,.chart-insight) { color:#a6afa3 !important; }
+[data-theme="dark"] :is(.chart-legend i.recommendation,.distribution-details i.recommendation,.series-stack i.recommendation,.chart-group-labels i.recommendation) { background:var(--theme-accent) !important; }
+[data-theme="dark"] :is(.chart-legend i.pcs-exp,.series-stack i.pcs-exp) { background:#8a9389 !important; }
+[data-theme="dark"] :is(.chart-legend i.observation-hdr,.series-stack i.observation-hdr,.chart-group-labels i.observation) { background:#5c9a7a !important; }
+[data-theme="dark"] :is(.chart-legend i.observation-so,.series-stack i.observation-so) { background:#a77d5e !important; }
+[data-theme="dark"] .distribution-visual { background:conic-gradient(var(--theme-accent) 0 var(--recommendation-share),#5c9a7a var(--recommendation-share) 100%) !important; }
+
+/* Les rubriques du menu utilisent désormais la même police condensée que les titres. */
+.sidebar .menu-group-items .menu-item,
+.sidebar .menu-group-toggle,
+.sidebar .standalone-nav,
+.mobile-section-nav select {
+  font-family:"Barlow Condensed","DM Sans",sans-serif;
+  font-weight:600;
+  letter-spacing:.015em;
+}
+.sidebar .menu-group-items .menu-item { font-size:13px; }
