@@ -293,6 +293,7 @@ const TRANSMISSION_TYPES = {
 };
 
 const THEME_OPTIONS = [
+  { id: "doctrine", label: "Doctrine", mode: "dark", accent: "#c9a521", deep: "#80630d", surface: "#080b09", sidebarA: "#090d0a", sidebarB: "#121711" },
   { id: "clair", label: "Aurore", mode: "dark", accent: "#3caf93", deep: "#1f7565", surface: "#091b1b", sidebarA: "#071716", sidebarB: "#15443c" },
   { id: "sable", label: "Sable", mode: "dark", accent: "#d59a58", deep: "#9d622b", surface: "#1b130d", sidebarA: "#21160e", sidebarB: "#50351c" },
   { id: "rose", label: "Sakura", mode: "dark", accent: "#d76a96", deep: "#9d3e65", surface: "#1d1018", sidebarA: "#24101d", sidebarB: "#522241" },
@@ -306,7 +307,7 @@ const THEME_OPTIONS = [
 ];
 
 function themeById(id) {
-  return THEME_OPTIONS.find((theme) => theme.id === id) || THEME_OPTIONS.find((theme) => theme.id === "nuit") || THEME_OPTIONS[0];
+  return THEME_OPTIONS.find((theme) => theme.id === id) || THEME_OPTIONS.find((theme) => theme.id === "doctrine") || THEME_OPTIONS[0];
 }
 
 function readFormDraft(userId, type) {
@@ -2126,7 +2127,7 @@ function App() {
   const [activeSection, setActiveSection] = useState("home");
   const [openGroups, setOpenGroups] = useState({ admin: true, referent: true, global: true, senior: true, chat: true });
   const [profileOpen, setProfileOpen] = useState(false);
-  const [themeId, setThemeId] = useState("nuit");
+  const [themeId, setThemeId] = useState("doctrine");
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [quotas, setQuotas] = useState(DEFAULT_QUOTAS);
   const [missions, setMissions] = useState([]);
