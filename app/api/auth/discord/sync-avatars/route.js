@@ -1,4 +1,4 @@
-import { adminAccess, database, json, listUsers, publicUser, recordAuditLog, requireSession, validCsrfRequest } from "../../_shared";
+import { dashboardAccess, database, json, listUsers, publicUser, recordAuditLog, requireSession, validCsrfRequest } from "../../_shared";
 import { discordAvatarUrl, discordConfig, discordDisplayName, refreshDiscordUser } from "../oauth";
 
 export const runtime = "edge";
@@ -16,7 +16,7 @@ export async function POST(request) {
   if (!validCsrfRequest(request)) return json({ error: "Jeton de sécurité invalide. Rechargez la page." }, 403);
   const current = await requireSession(request);
   if (current.error) return current.error;
-  if (!adminAccess(current.user)) return json({ error: "Seuls les administrateurs peuvent synchroniser les photos Discord." }, 403);
+  if (!dashboardAccess(current.user)) return json({ error: "Seuls les responsables peuvent synchroniser les photos Discord." }, 403);
   const config = discordConfig(request);
   if (!config) return json({ error: "La connexion Discord n’est pas configurée." }, 503);
 

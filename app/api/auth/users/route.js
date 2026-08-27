@@ -1,5 +1,5 @@
 import {
-  adminAccess, canManage, cleanApprovalStatus, cleanGrade, cleanName, cleanPresence, cleanRole, database,
+  adminAccess, canManage, cleanApprovalStatus, cleanGrade, cleanName, cleanPresence, cleanRole, dashboardAccess, database,
   deleteSessionsForUser, json, listUsers, manager, publicUser, readJson, requireSession, validCsrfRequest,
 } from "../_shared";
 
@@ -85,8 +85,8 @@ export async function PATCH(request) {
 
     const targetStatus = cleanApprovalStatus(target.approval_status) || "approved";
     const requestedStatus = cleanApprovalStatus(body?.approvalStatus);
-    if (!self && requestedStatus && requestedStatus !== targetStatus && !adminAccess(current.user)) {
-      return json({ error: "Seul un administrateur peut valider ou refuser une demande Discord." }, 403);
+    if (!self && requestedStatus && requestedStatus !== targetStatus && !dashboardAccess(current.user)) {
+      return json({ error: "Seul un responsable peut valider ou refuser une demande Discord." }, 403);
     }
     if (self && requestedStatus && requestedStatus !== targetStatus) return json({ error: "Vous ne pouvez pas modifier le statut de votre demande." }, 403);
 
@@ -97,7 +97,7 @@ export async function PATCH(request) {
     if (identity.error) return json({ error: identity.error }, 400);
     const approvalStatus = self ? targetStatus : (requestedStatus || targetStatus);
     identity.value.approval_status = approvalStatus;
-    const changedBlock = typeof body?.blocked === "boolean" && !self && adminAccess(current.user) && target.role !== "admin";
+    const changedBlock = typeof body?.blocked === "boolean" && !self && dashboardAccess(current.user) && target.role !== "admin";
     if (changedBlock) identity.value.blocked = body.blocked;
 
     const updatedRows = await database(`portal_users?id=eq.${encodeURIComponent(id)}`, {

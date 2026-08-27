@@ -220,6 +220,7 @@ export async function getSession(request) {
 
 export function adminAccess(user) { return ["admin", "management"].includes(user?.role); }
 export function manager(user) { return ["admin", "management", "referent"].includes(user?.role); }
+export function dashboardAccess(user) { return ["admin", "management", "referent"].includes(user?.role); }
 
 export function canManage(actor, target) {
   if (!actor || !target || actor.id === target.id) return false;

@@ -58,14 +58,14 @@ const hasChatParticipant = (chat, userId) => Array.isArray(chat?.participants) &
 // liste. Ainsi, toute nouvelle rubrique ajoutée ici devient disponible dans
 // les raccourcis pour les personnes qui y ont accès.
 const PORTAL_MENU_GROUPS = [
-  { id: "admin", label: "Admin", icon: ShieldCheck, access: "admin" },
+  { id: "admin", label: "Admin", icon: ShieldCheck, access: "manager" },
   { id: "referent", label: "Référent SO", icon: UsersRound, access: "manager" },
   { id: "global", label: "Globale", icon: Send, access: "all" },
   { id: "senior", label: "Sous-Officier Supérieur", icon: BadgeCheck, access: "senior" },
   { id: "chat", label: "Chat", icon: MessageSquareText, access: "all" },
 ];
 const PORTAL_SECTION_REGISTRY = [
-  { id: "dashboard", group: "admin", label: "Tableau de bord", shortcutLabel: "Gestion des comptes", description: "Administrer les accès", icon: LayoutDashboard, access: "admin" },
+  { id: "dashboard", group: "admin", label: "Tableau de bord", shortcutLabel: "Gestion des comptes", description: "Administrer les accès", icon: LayoutDashboard, access: "manager" },
   { id: "workforce", group: "referent", label: "Effectif", description: "Voir l’organisation de l’équipe", icon: UsersRound, access: "manager" },
   { id: "specializations", group: "referent", label: "Spécialisations", description: "Consulter les spécialités de l’effectif", icon: BadgeCheck, access: "manager" },
   { id: "presence", group: "referent", label: "Présences", description: "Mettre l’équipe à jour", icon: UserCheck, access: "manager" },
@@ -2384,7 +2384,7 @@ function App() {
 
   const canManage = session && hasManagerAccess(session.role);
   const manageable = (user) => {
-    if (user.approvalStatus !== "approved") return hasAdminAccess(session?.role);
+    if (user.approvalStatus !== "approved") return hasManagerAccess(session?.role);
     if (session?.role === "admin") return user.role !== "admin";
     if (session?.role === "management") return !["admin", "management"].includes(user.role);
     return ["senior", "officer"].includes(user.role);
@@ -3020,7 +3020,7 @@ function App() {
     } catch (error) { flash(error instanceof Error ? error.message : "La présence n’a pas pu être modifiée."); }
   }
   async function toggleAccountBlock(user) {
-    if (!hasAdminAccess(session.role) || user.id === session.id || user.role === "admin" || (session.role === "management" && user.role === "management")) return;
+    if (!hasManagerAccess(session.role) || user.id === session.id || user.role === "admin" || (session.role === "management" && user.role === "management")) return;
     const willBlock = !user.blocked;
     try {
       const result = await accountRequest("/api/auth/users", "PATCH", { ...user, id: user.id, blocked: willBlock });
@@ -3030,7 +3030,7 @@ function App() {
     } catch (error) { flash(error instanceof Error ? error.message : "Le blocage du compte a échoué."); }
   }
   async function syncDiscordAvatars() {
-    if (!hasAdminAccess(session?.role) || avatarSyncing) return;
+    if (!hasManagerAccess(session?.role) || avatarSyncing) return;
     setAvatarSyncing(true);
     try {
       const result = await accountRequest("/api/auth/discord/sync-avatars", "POST", {});
@@ -3125,7 +3125,7 @@ function App() {
 
         <section className="accounts-card">
           <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><button className="secondary avatar-sync" type="button" onClick={syncDiscordAvatars} disabled={avatarSyncing}><RotateCcw size={15} /> {avatarSyncing ? "Synchronisation…" : "Rafraîchir les photos"}</button><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
-          <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>État du compte</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><Avatar user={user} size="small" /><div><strong>{user.firstName} {user.lastName}</strong><small>{user.discordUsername ? `Discord : ${user.discordUsername}` : "Compte Discord lié"}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td>{user.approvalStatus === "pending" ? <span className="locked">À attribuer</span> : <RoleBadge role={user.role} />}</td><td>{user.approvalStatus === "pending" ? <button className="account-state pending" type="button" onClick={() => hasAdminAccess(session.role) && setModal(user)}><UserRound size={15} /> En attente</button> : user.approvalStatus === "rejected" ? <span className="account-state blocked"><UserX size={15} /> Refusé</span> : user.role === "admin" ? <span className="account-state active"><UserCheck size={15} /> Compte actif</span> : <button className={`account-state ${user.blocked ? "blocked" : "active"}`} type="button" onClick={() => toggleAccountBlock(user)}>{user.blocked ? <UserX size={15} /> : <UserCheck size={15} />}{user.blocked ? "Compte bloqué" : "Compte actif"}</button>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title={user.approvalStatus === "pending" ? "Examiner la demande" : "Modifier"} onClick={() => setModal(user)}>{user.approvalStatus === "pending" ? <BadgeCheck size={17} /> : <Pencil size={17} />}</button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
+          <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>État du compte</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><Avatar user={user} size="small" /><div><strong>{user.firstName} {user.lastName}</strong><small>{user.discordUsername ? `Discord : ${user.discordUsername}` : "Compte Discord lié"}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td>{user.approvalStatus === "pending" ? <span className="locked">À attribuer</span> : <RoleBadge role={user.role} />}</td><td>{user.approvalStatus === "pending" ? <button className="account-state pending" type="button" onClick={() => hasManagerAccess(session.role) && setModal(user)}><UserRound size={15} /> En attente</button> : user.approvalStatus === "rejected" ? <span className="account-state blocked"><UserX size={15} /> Refusé</span> : user.role === "admin" ? <span className="account-state active"><UserCheck size={15} /> Compte actif</span> : <button className={`account-state ${user.blocked ? "blocked" : "active"}`} type="button" onClick={() => toggleAccountBlock(user)}>{user.blocked ? <UserX size={15} /> : <UserCheck size={15} />}{user.blocked ? "Compte bloqué" : "Compte actif"}</button>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title={user.approvalStatus === "pending" ? "Examiner la demande" : "Modifier"} onClick={() => setModal(user)}>{user.approvalStatus === "pending" ? <BadgeCheck size={17} /> : <Pencil size={17} />}</button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
         </section>
         </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onUpdateGroup={updateChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} assignments={sergeantAssignments} onSuccess={sergeantReportSuccess} history={submissionHistory.filter((entry) => entry.type === "sergeant_report")} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} history={submissionHistory.filter((entry) => entry.type === activeSection)} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} />}
       </main>
