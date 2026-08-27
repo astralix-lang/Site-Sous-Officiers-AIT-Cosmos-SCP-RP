@@ -892,6 +892,15 @@ export async function POST(request) {
         await saveMeeting(emptyMeeting(actor.id));
         await recordAuditLog({ actor, category: "meeting", action: "Réunion SO enregistrée dans l’historique", details: `${meeting.attendance.length} membre(s) suivi(s)` });
       }
+    } else if (action === "delete_so_meeting_history") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent supprimer un compte rendu de réunion." }, 403);
+      const meetingId = String(body?.meetingId || "");
+      if (!UUID.test(meetingId)) return json({ error: "Compte rendu invalide." }, 400);
+      const history = await meetingHistoryFor();
+      const savedMeeting = history.find((entry) => entry.id === meetingId);
+      if (!savedMeeting) return json({ error: "Compte rendu introuvable." }, 404);
+      await saveMeetingHistory(history.filter((entry) => entry.id !== meetingId));
+      await recordAuditLog({ actor, category: "meeting", action: "Compte rendu de réunion SO supprimé", details: `Réunion du ${label(savedMeeting.occurredAt)}` });
     } else if (action === "sync_so_meeting_presence") {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent synchroniser la réunion." }, 403);
       const userId = String(body?.userId || "");

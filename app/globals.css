@@ -652,6 +652,9 @@ table td strong,.user-cell strong,.category-card strong,.home-stats strong,.home
 .meeting-status.red { color:#ffc0bd; background:#391b1d; border-color:#7a3e43; }
 .meeting-status.gold { color:#f1da86; background:#352d14; border-color:#766421; }
 .meeting-history-details section { padding:14px; }
+.meeting-history-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; }
+.meeting-history-delete { width:34px; min-height:34px; padding:0; }
+@media(max-width:800px) { .meeting-history-actions { width:100%; justify-content:flex-start; } }
 
 .management-comments { background:#0e130f; }
 .management-comments article { color:#cbd2c7; background:#171e18; }
