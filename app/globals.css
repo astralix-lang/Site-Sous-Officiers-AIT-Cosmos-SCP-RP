@@ -683,3 +683,27 @@ table td strong,.user-cell strong,.category-card strong,.home-stats strong,.home
 [data-theme="dark"] :is(.submission-history-title strong,.submission-history-head h2,.mission-document strong,.home-card-head h2,.summary-card h2,.conversation-head strong,.user-cell strong,.workforce-name strong,.assignment-people strong) { color:#edf1ea; }
 [data-theme="dark"] :is(.card-head,.home-card-head,.summary-card-head,.submission-history-head,.transmission-head,.quota-head,.mission-list-head,.chat-card-head,.conversation-head,.logs-summary,.logs-filters,.specializations-head,.management-form-head,.management-list-head,.meeting-head,.meeting-section+.meeting-section,.assignment-card-head,.assignment-list-head,.workforce-group>header) { border-color:#293329; }
 [data-theme="dark"] .chat-message.mine :is(p,.chat-bubble),[data-theme="dark"] .chat-message.mine p,[data-theme="dark"] .chat-message.mine .chat-bubble { color:#18180d; background:linear-gradient(135deg,#e0c247,var(--theme-accent)); border-color:#e2c64f; }
+
+/* Connexion : aucun vestige bleu, même lorsqu'un ancien thème est mémorisé. */
+[data-theme="dark"] .login-brand,
+.login-brand {
+  color:#edf0e9;
+  background:radial-gradient(620px 390px at 100% 0,#d2b24012 0,transparent 70%),linear-gradient(145deg,#0a0e0b 0%,#141914 100%);
+}
+[data-theme="dark"] .login-panel,
+.login-panel { background:#090d0a; }
+.login-brand::after { border-color:#d7ba4520; box-shadow:0 0 0 60px #d7ba4508,0 0 0 120px #ffffff025; }
+.login-brand .brand-mark { color:#17180f; background:linear-gradient(145deg,#eee1aa,#aa8b22); }
+.login-card h2 { color:#eef1e9; }
+.login-card > .eyebrow { color:#cfb044; }
+.discord-login,
+[data-theme="dark"] .discord-login {
+  color:#f1f2ed;
+  background:linear-gradient(135deg,#30352f,#1a1e1a);
+  border:1px solid #b99a2f;
+  box-shadow:inset 3px 0 #c8a521,0 10px 26px #0007;
+}
+.discord-login:hover,
+[data-theme="dark"] .discord-login:hover { color:#fff7d6; background:linear-gradient(135deg,#3a4039,#202620); border-color:#e2c451; }
+.discord-login svg { color:#e5ca69; }
+.discord-login-note { color:#9ba59a; }
