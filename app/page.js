@@ -126,7 +126,10 @@ function compareUsersByGrade(left, right) {
 
 const THEME_KEY = "portail-so-theme";
 const SOUND_KEY = "portail-so-sounds";
-const QUOTA_KEY = "portail-so-quotas-v1";
+// Les compteurs et transmissions sont communs à tous les comptes. On change
+// de version de cache après la correction des suppressions afin que les
+// anciens chiffres locaux ne puissent plus réapparaître dans le résumé.
+const QUOTA_KEY = "portail-so-quotas-v2";
 const MISSIONS_KEY = "portail-so-missions-v1";
 const LEGACY_MISSIONS_PURGED_KEY = "portail-so-missions-legacy-purged-v1";
 const CHAT_KEY = "portail-so-chats-v1";
@@ -135,7 +138,7 @@ const SHORTCUTS_KEY = "portail-so-shortcuts-v1";
 const SUMMARY_KEY = "portail-so-summary-v1";
 const ASSIGNMENTS_KEY = "portail-so-sergeant-assignments-v1";
 const DRAFTS_KEY = "portail-so-form-drafts-v1";
-const SUBMISSION_HISTORY_KEY = "portail-so-submission-history-v1";
+const SUBMISSION_HISTORY_KEY = "portail-so-submission-history-v2";
 const NOTIFICATION_KEY = "portail-so-notifications-v1";
 const MANAGEMENT_REPORTS_KEY = "portail-so-management-reports-v1";
 const MANAGEMENT_REPORT_SETTINGS_KEY = "portail-so-management-report-settings-v1";
