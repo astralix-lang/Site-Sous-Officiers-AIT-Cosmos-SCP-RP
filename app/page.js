@@ -574,9 +574,10 @@ function Login({ configurationError, error }) {
   );
 }
 
-function LoginTransition({ user }) {
+function LoginTransition({ user, themeId }) {
+  const theme = themeById(themeId);
   return (
-    <div className="login-transition" role="status" aria-live="polite">
+    <div className="login-transition" style={{ "--transition-accent": theme.accent, "--transition-accent-deep": theme.deep }} role="status" aria-live="polite">
       <div className="transition-glow one" />
       <div className="transition-glow two" />
       <div className="transition-content">
@@ -1915,13 +1916,17 @@ function MeetingPanel({ session, users, meeting, history, onSave, onDelete }) {
     const version = draftVersionRef.current;
     const timer = window.setTimeout(async () => {
       setSyncingDraft(true);
+      // Libère la réception de la version partagée avant le retour réseau :
+      // tous les champs (axes, votes et suggestions inclus) se mettent alors
+      // immédiatement à jour sur l’ensemble des écrans ouverts.
+      hasUnsavedChangesRef.current = false;
       try {
         await onSave({ ...form, occurredAt: new Date(form.occurredAt).toISOString() }, { draft: true });
         if (draftVersionRef.current === version) {
-          hasUnsavedChangesRef.current = false;
           setDraftSavedAt(new Date().toISOString());
         }
       } catch (draftError) {
+        if (draftVersionRef.current === version) hasUnsavedChangesRef.current = true;
         setError(draftError instanceof Error ? draftError.message : "Le brouillon partagé n’a pas pu être synchronisé.");
       } finally {
         setSyncingDraft(false);
@@ -1933,14 +1938,15 @@ function MeetingPanel({ session, users, meeting, history, onSave, onDelete }) {
   async function save(event) {
     event.preventDefault();
     setSaving(true); setError("");
+    const version = draftVersionRef.current;
     try {
-      const version = draftVersionRef.current;
+      hasUnsavedChangesRef.current = false;
       await onSave({ ...form, occurredAt: new Date(form.occurredAt).toISOString() }, { draft: false });
       if (draftVersionRef.current === version) {
-        hasUnsavedChangesRef.current = false;
         setDraftSavedAt(new Date().toISOString());
       }
     } catch (saveError) {
+      if (draftVersionRef.current === version) hasUnsavedChangesRef.current = true;
       setError(saveError instanceof Error ? saveError.message : "La réunion n’a pas pu être enregistrée.");
     } finally { setSaving(false); }
   }
@@ -3155,7 +3161,7 @@ function App() {
       {modal && <UserModal actor={session} editing={modal.id ? modal : null} onClose={() => setModal(null)} onSave={saveUser} />}
       {profileOpen && <ProfileModal user={session} onClose={() => setProfileOpen(false)} onSave={saveProfile} soundEnabled={soundEnabled} onSoundEnabledChange={setSoundEnabled} />}
       {requiresIdentitySetup && <InitialIdentityModal user={session} onSave={saveRequiredIdentity} />}
-      {loginTransition && <LoginTransition user={loginTransition} />}
+      {loginTransition && <LoginTransition user={loginTransition} themeId={themeId} />}
     </div>
   );
 }
