@@ -256,6 +256,33 @@ async function submissionsFor() {
   return parseArray(rows).filter((row) => SUBMISSION_TYPES.has(String(row.target || "").slice(SUBMISSION_TARGET_PREFIX.length))).map(submissionFromRow);
 }
 
+// Les transmissions servent à la fois d'historique, de source du résumé et de
+// compteur de quotas. La suppression passe donc par ce point unique : on
+// retire aussi les accusés de lecture associés, puis on vérifie que la ligne a
+// bien disparu avant de renvoyer l'état recalculé au portail.
+async function removeSubmission(id, type) {
+  const target = `${SUBMISSION_TARGET_PREFIX}${type}`;
+  const rows = await database(`portal_notifications?id=eq.${encodeURIComponent(id)}&target=eq.${encodeURIComponent(target)}&select=*`);
+  const submission = parseArray(rows)[0];
+  if (!submission) return null;
+  await database(`portal_notification_dismissals?notification_id=eq.${encodeURIComponent(id)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+  await database(`portal_notifications?id=eq.${encodeURIComponent(id)}&target=eq.${encodeURIComponent(target)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+  const remaining = parseArray(await database(`portal_notifications?id=eq.${encodeURIComponent(id)}&target=eq.${encodeURIComponent(target)}&select=id`));
+  if (remaining.length) throw new Error("SUBMISSION_DELETE_NOT_CONFIRMED");
+  return submissionFromRow(submission);
+}
+
+async function removeSubmissionsByType(type) {
+  const target = `${SUBMISSION_TARGET_PREFIX}${type}`;
+  const rows = parseArray(await database(`portal_notifications?target=eq.${encodeURIComponent(target)}&select=id`));
+  await Promise.all(rows.map(async (row) => {
+    if (!UUID.test(String(row.id || ""))) return;
+    await database(`portal_notification_dismissals?notification_id=eq.${encodeURIComponent(row.id)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+  }));
+  await database(`portal_notifications?target=eq.${encodeURIComponent(target)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+  return rows.length;
+}
+
 function normalizeQuotaTargets(value) {
   const source = objectValue(value);
   return Object.fromEntries(Object.keys(DEFAULT_QUOTA_TARGETS).map((key) => [key, numberInRange(source[key] ?? DEFAULT_QUOTA_TARGETS[key]) ]));
@@ -1051,7 +1078,8 @@ export async function POST(request) {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent réinitialiser cet historique." }, 403);
       const type = String(body?.type || "");
       if (!SUBMISSION_TYPES.has(type)) return json({ error: "Historique invalide." }, 400);
-      await database(`portal_notifications?target=eq.${encodeURIComponent(`${SUBMISSION_TARGET_PREFIX}${type}`)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+      const deletedCount = await removeSubmissionsByType(type);
+      result.deletedSubmissionCount = deletedCount;
       await recordAuditLog({ actor, category: "form", action: "Historique de formulaire réinitialisé", details: type });
     } else if (action === "update_submission") {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent modifier cet historique." }, 403);
@@ -1083,7 +1111,10 @@ export async function POST(request) {
       const id = String(body?.submissionId || "");
       const type = String(body?.type || "");
       if (!UUID.test(id) || !SUBMISSION_TYPES.has(type)) return json({ error: "Formulaire invalide." }, 400);
-      await database(`portal_notifications?id=eq.${encodeURIComponent(id)}&target=eq.${encodeURIComponent(`${SUBMISSION_TARGET_PREFIX}${type}`)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+      const deleted = await removeSubmission(id, type);
+      if (!deleted) return json({ error: "Formulaire introuvable ou déjà supprimé." }, 404);
+      result.deletedSubmissionId = deleted.id;
+      result.deletedSubmissionType = deleted.type;
       await recordAuditLog({ actor, category: "form", action: "Élément supprimé de l’historique", details: type });
     } else if (action === "create_announcement") {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent publier une annonce." }, 403);

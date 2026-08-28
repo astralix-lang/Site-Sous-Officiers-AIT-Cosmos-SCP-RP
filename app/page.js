@@ -179,6 +179,31 @@ function observationQuotaCount(counts) {
   return Math.max(0, Number(counts?.observation_hdr) || 0) + Math.max(0, Number(counts?.observation_so) || 0);
 }
 
+// L'historique est la source des recommandations et observations. Ce recalcul
+// ne sert qu'au mode de secours local : sur le portail partagé, le serveur
+// renvoie déjà les mêmes compteurs après chaque modification.
+function quotaCountsFromHistory(history, currentQuotas) {
+  const resetAt = currentQuotas?.resetAt ? new Date(currentQuotas.resetAt).getTime() : 0;
+  const counts = {};
+  for (const entry of Array.isArray(history) ? history : []) {
+    const createdAt = new Date(entry?.createdAt).getTime();
+    if (!entry?.authorId || !QUOTA_TYPES.includes(entry.type) || !Number.isFinite(createdAt) || createdAt < resetAt) continue;
+    if (!counts[entry.authorId]) counts[entry.authorId] = {};
+    counts[entry.authorId][entry.type] = (counts[entry.authorId][entry.type] || 0) + 1;
+    if (["observation_hdr", "observation_so"].includes(entry.type)) {
+      counts[entry.authorId].observations = (counts[entry.authorId].observations || 0) + 1;
+    }
+  }
+  // Les missions validées ne figurent pas dans l'historique de formulaires ;
+  // elles conservent donc leur compteur propre.
+  for (const [userId, values] of Object.entries(currentQuotas?.counts || {})) {
+    if (!values || !Number(values.mission_internal)) continue;
+    if (!counts[userId]) counts[userId] = {};
+    counts[userId].mission_internal = Math.max(0, Number(values.mission_internal) || 0);
+  }
+  return counts;
+}
+
 const ATTACHMENT_TYPE_BY_EXTENSION = {
   png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif",
   pdf: "application/pdf", txt: "text/plain", doc: "application/msword",
@@ -2695,7 +2720,9 @@ function App() {
         .catch((error) => flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible."));
       return;
     }
-    setSubmissionHistory((current) => current.filter((entry) => entry.type !== type));
+    const nextHistory = submissionHistory.filter((entry) => entry.type !== type);
+    setSubmissionHistory(nextHistory);
+    setQuotas((current) => ({ ...current, counts: quotaCountsFromHistory(nextHistory, current) }));
     addLog("form", "Historique de formulaire réinitialisé", label);
     flash(`L’historique « ${label} » a été réinitialisé.`);
   }
@@ -2738,11 +2765,16 @@ function App() {
     if (!entry) return;
     if (portalRemote) {
       portalRequest("POST", { action: "delete_submission", submissionId: entryId, type })
-        .then((state) => { applySharedPortalState(state); flash("L’élément a été supprimé de l’historique."); })
+        .then((state) => {
+          applySharedPortalState(state);
+          flash("L’élément a été supprimé de l’historique, du résumé et des quotas.");
+        })
         .catch((error) => flash(error instanceof Error ? error.message : "La synchronisation est temporairement indisponible."));
       return;
     }
-    setSubmissionHistory((current) => current.filter((item) => item.id !== entryId));
+    const nextHistory = submissionHistory.filter((item) => item.id !== entryId);
+    setSubmissionHistory(nextHistory);
+    setQuotas((current) => ({ ...current, counts: quotaCountsFromHistory(nextHistory, current) }));
     const label = type === "sergeant_report" ? "Rapport nouveau Sous-Officier" : TRANSMISSION_TYPES[type]?.title || type;
     addLog("form", "Élément supprimé de l’historique", label);
     flash("L’élément a été supprimé de l’historique.");
