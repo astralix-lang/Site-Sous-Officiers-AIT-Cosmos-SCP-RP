@@ -816,16 +816,21 @@ export async function POST(request) {
     if (action === "create_absence") {
       const values = absenceValues(body?.values);
       if (!values) return json({ error: "Indiquez une période valide et le motif de votre absence." }, 400);
+      const requestedUserId = String(body?.values?.userId || actor.id);
+      if (!UUID.test(requestedUserId)) return json({ error: "Membre invalide." }, 400);
+      if (requestedUserId !== actor.id && !isManager(actor)) return json({ error: "Seuls les responsables peuvent déclarer l’absence d’un autre membre." }, 403);
+      const absentMember = requestedUserId === actor.id ? actor : await portalUser(requestedUserId);
+      if (!absentMember) return json({ error: "Ce membre n’est plus disponible." }, 404);
       const absence = {
         id: crypto.randomUUID(),
         ...values,
-        authorId: actor.id,
-        authorName: `${actor.first_name} ${actor.last_name || ""}`.trim(),
-        authorGrade: actor.grade || "",
-        authorRole: actor.role || "",
+        authorId: absentMember.id,
+        authorName: `${absentMember.first_name} ${absentMember.last_name || ""}`.trim(),
+        authorGrade: absentMember.grade || "",
+        authorRole: absentMember.role || "",
       };
       await saveAbsence(absence);
-      await recordAuditLog({ actor, category: "absence", action: "Absence déclarée", details: `Du ${values.startDate} au ${values.endDate}` });
+      await recordAuditLog({ actor, category: "absence", action: requestedUserId === actor.id ? "Absence déclarée" : "Absence déclarée pour un membre", details: `${absence.authorName} · du ${values.startDate} au ${values.endDate}` });
     } else if (action === "start_direct") {
       const otherUserId = String(body?.otherUserId || "");
       if (!UUID.test(otherUserId) || otherUserId === actor.id) return json({ error: "Destinataire invalide." }, 400);
