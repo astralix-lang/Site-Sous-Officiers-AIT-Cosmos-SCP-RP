@@ -823,3 +823,24 @@ body { font-size:15px; line-height:1.5; }
 .sidebar .menu-group-items .menu-item { font-size:14px; }
 .sidebar .profile-card strong { font-size:15px; }
 .sidebar .profile-card small,.sidebar .logout { font-size:12px; }
+
+/* Effectif : les intitulés des unités doivent rester identifiables au premier coup d'œil. */
+.workforce-group > header .role-badge {
+  padding:8px 13px 8px 7px;
+  font-size:16px;
+}
+.workforce-group > header .role-badge > span {
+  width:27px;
+  height:27px;
+  font-size:10px;
+}
+.workforce-group > header > div > span:last-child { font-size:12px; }
+.workforce-group > header > strong {
+  width:32px;
+  height:32px;
+  font-size:13px;
+}
+@media (max-width:680px) {
+  .workforce-group > header .role-badge { font-size:15px; }
+  .workforce-group > header > div > span:last-child { display:none; }
+}
