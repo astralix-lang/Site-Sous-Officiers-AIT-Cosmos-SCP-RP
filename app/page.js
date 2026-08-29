@@ -792,15 +792,15 @@ function AbsenceRequestPanel({ session, users, onSubmit }) {
   }
 
   return (
-    <section className="meeting-card absence-request-card">
-      <div className="meeting-head absence-request-head"><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h2>Déclarer une absence</h2><p className="muted">Indiquez la période d’absence afin que le suivi de l’équipe et la réunion SO soient automatiquement mis à jour.</p></div><span className="absence-head-icon"><UserX size={19} /></span></div>
-      <form className="absence-form" onSubmit={submit}>
-        <label>Nom</label>
+    <section className="transmission-card absence-request-card">
+      <div className="transmission-head"><span className="category-icon large gold"><UserX size={25} /></span><div><p className="eyebrow dark">NOUVELLE DÉCLARATION</p><h2>Absence</h2><p className="muted">Le suivi de l’équipe et la réunion SO seront automatiquement mis à jour.</p></div></div>
+      <form onSubmit={submit}>
+        <label>Nom du membre absent</label>
         {canDeclareForOthers ? <select value={form.userId} onChange={(event) => setForm((current) => ({ ...current, userId: event.target.value }))}>{availableMembers.map((user) => <option value={user.id} key={user.id}>{user.grade || GRADES[0]} {user.firstName} {user.lastName}</option>)}</select> : <input value={memberName} readOnly aria-readonly="true" />}
         <div className="absence-form-grid"><label>Date de début<input type="date" value={form.startDate} onChange={(event) => setForm((current) => ({ ...current, startDate: event.target.value }))} required /></label><label>Date de fin<input type="date" min={form.startDate || undefined} value={form.endDate} onChange={(event) => setForm((current) => ({ ...current, endDate: event.target.value }))} required /></label></div>
         <label>Raison<textarea value={form.reason} onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))} rows={6} maxLength={1500} required placeholder="Expliquez brièvement la raison de votre absence…" /></label>
         {error && <p className="form-error">{error}</p>}
-        <div className="meeting-actions"><span><ShieldCheck size={15} /> {canDeclareForOthers ? "La déclaration apparaît immédiatement dans le suivi des absences." : "Votre déclaration est transmise aux responsables SO."}</span><div><button className="primary" type="submit" disabled={sending}><Send size={17} />{sending ? "Enregistrement…" : canDeclareForOthers && selectedMember.id !== session.id ? "Déclarer cette absence" : "Déclarer mon absence"}</button></div></div>
+        <div className="transmission-actions"><span><ShieldCheck size={15} /> {canDeclareForOthers ? "La déclaration apparaît immédiatement dans le suivi des absences." : "Votre déclaration est transmise aux responsables SO."}</span><button className="primary" type="submit" disabled={sending}><Send size={17} />{sending ? "Enregistrement…" : canDeclareForOthers && selectedMember.id !== session.id ? "Déclarer cette absence" : "Déclarer mon absence"}</button></div>
       </form>
     </section>
   );
