@@ -848,3 +848,13 @@ body { font-size:15px; line-height:1.5; }
   .workforce-group > header .role-badge { font-size:17px; }
   .workforce-group > header > div > span:last-child { display:none; }
 }
+
+/* Effectif : nom et grade de chaque membre, notamment dans les cartes d'unité. */
+.workforce-list .workforce-name strong {
+  font-size:16px !important;
+  line-height:1.3;
+}
+.workforce-list .workforce-name small {
+  font-size:13px !important;
+  line-height:1.4;
+}
