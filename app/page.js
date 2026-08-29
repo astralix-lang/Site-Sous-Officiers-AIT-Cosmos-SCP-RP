@@ -71,11 +71,12 @@ const PORTAL_SECTION_REGISTRY = [
   { id: "dashboard", group: "admin", label: "Tableau de bord", shortcutLabel: "Gestion des comptes", description: "Administrer les accès", icon: LayoutDashboard, access: "manager" },
   { id: "workforce", group: "referent", label: "Effectif", description: "Voir l’organisation de l’équipe", icon: UsersRound, access: "manager" },
   { id: "specializations", group: "referent", label: "Spécialisations", description: "Consulter les spécialités de l’effectif", icon: BadgeCheck, access: "manager" },
-  { id: "presence", group: "referent", label: "Présences", description: "Mettre l’équipe à jour", icon: UserCheck, access: "manager" },
+  { id: "absence_table", group: "referent", label: "Absences", description: "Consulter les absences de l’équipe", icon: UserX, access: "manager" },
   { id: "meeting_so", group: "referent", label: "Réunion SO", description: "Préparer et suivre une réunion SO", icon: ClipboardCheck, access: "manager" },
   { id: "quotas", group: "referent", label: "Quotas", shortcutLabel: "Gestion des quotas", description: "Consulter les objectifs de l’équipe", icon: Gauge, access: "manager" },
   { id: "summary", group: "global", label: "Résumé", description: "Consulter les statistiques", icon: BarChart3, access: "all" },
   { id: "management_report", group: "global", label: "Rapport de gérance", description: "Rédiger ou consulter les rapports de gérance", icon: FileText, access: "all" },
+  { id: "absence_request", group: "global", label: "Absences", description: "Déclarer une absence", icon: CalendarDays, access: "all" },
   { id: "recommendation", group: "global", label: "Recommandation", description: "Envoyer une recommandation", icon: Medal, access: "all" },
   { id: "pcs_exp", group: "global", label: "Recommandation PCS EXP", shortcutLabel: "Reco PCS EXP", description: "Ouvrir le formulaire PCS EXP", icon: ClipboardCheck, access: "all" },
   { id: "observation_hdr", group: "global", label: "Observation HDR", description: "Consigner une observation HDR", icon: MessageSquareText, access: "all" },
@@ -139,6 +140,7 @@ const SUMMARY_KEY = "portail-so-summary-v1";
 const ASSIGNMENTS_KEY = "portail-so-sergeant-assignments-v1";
 const DRAFTS_KEY = "portail-so-form-drafts-v1";
 const SUBMISSION_HISTORY_KEY = "portail-so-submission-history-v2";
+const ABSENCES_KEY = "portail-so-absences-v1";
 const NOTIFICATION_KEY = "portail-so-notifications-v1";
 const MANAGEMENT_REPORTS_KEY = "portail-so-management-reports-v1";
 const MANAGEMENT_REPORT_SETTINGS_KEY = "portail-so-management-report-settings-v1";
@@ -154,7 +156,7 @@ const CHAT_ATTACHMENT_TYPES = new Set([
 const DEFAULT_QUOTAS = { targets: { recommendation: 1, pcs_exp: 1, observations: 1, mission_internal: 0 }, counts: {}, exemptions: {}, resetAt: null };
 const DEFAULT_SO_MEETING = { occurredAt: new Date().toISOString(), attendance: [], improvementAxes: "", caporalVotes: [], suggestions: "", updatedAt: null, updatedBy: "" };
 const QUOTA_TYPES = ["recommendation", "pcs_exp", "observation_hdr", "observation_so"];
-const LOG_CATEGORY_LABELS = { auth: "Connexion", account: "Comptes", presence: "Présences", quota: "Quotas", form: "Formulaires", mission: "Missions", chat: "Chat", assignment: "Référents", profile: "Profils", summary: "Résumé", management: "Gérance", meeting: "Réunion SO", announcement: "Annonces", system: "Système" };
+const LOG_CATEGORY_LABELS = { auth: "Connexion", account: "Comptes", presence: "Présences", absence: "Absences", quota: "Quotas", form: "Formulaires", mission: "Missions", chat: "Chat", assignment: "Référents", profile: "Profils", summary: "Résumé", management: "Gérance", meeting: "Réunion SO", announcement: "Annonces", system: "Système" };
 const REPORT_CONCLUSIONS = [
   "Passage confirmé en sergent",
   "Prolongation de la semaine de test",
@@ -339,6 +341,36 @@ const THEME_OPTIONS = [
 
 function themeById(id) {
   return THEME_OPTIONS.find((theme) => theme.id === id) || THEME_OPTIONS.find((theme) => theme.id === "doctrine") || THEME_OPTIONS[0];
+}
+
+function parisDayValue(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function absenceState(absence, day = parisDayValue()) {
+  if (!absence?.startDate || !absence?.endDate) return "finished";
+  if (absence.startDate > day) return "upcoming";
+  if (absence.endDate < day) return "finished";
+  return "active";
+}
+
+function activeAbsenceMemberIds(absences, day = parisDayValue()) {
+  return new Set((Array.isArray(absences) ? absences : [])
+    .filter((absence) => absenceState(absence, day) === "active")
+    .map((absence) => String(absence.authorId || ""))
+    .filter(Boolean));
+}
+
+function usersWithCurrentAbsences(users, absences) {
+  const absentIds = activeAbsenceMemberIds(absences);
+  return (Array.isArray(users) ? users : []).map((user) => ({ ...user, presence: absentIds.has(String(user.id)) ? "absent" : "present" }));
+}
+
+function absenceDateLabel(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) return "—";
+  return new Intl.DateTimeFormat("fr-FR", { dateStyle: "long", timeZone: "Europe/Paris" }).format(new Date(`${value}T12:00:00Z`));
 }
 
 function readFormDraft(userId, type) {
@@ -730,23 +762,70 @@ function InitialIdentityModal({ user, onSave }) {
   );
 }
 
-function PresencePanel({ users, onChange }) {
-  const team = users.filter((user) => user.approvalStatus === "approved" && ["senior", "officer"].includes(user.role)).sort(compareUsersByGrade);
-  const presentCount = team.filter((user) => user.presence !== "absent").length;
+function AbsenceRequestPanel({ session, onSubmit }) {
+  const today = parisDayValue();
+  const [form, setForm] = useState({ startDate: today, endDate: today, reason: "" });
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const memberName = `${session.grade || GRADES[0]} ${session.firstName} ${session.lastName}`.trim();
+
+  async function submit(event) {
+    event.preventDefault();
+    if (form.endDate < form.startDate) {
+      setError("La date de fin doit être égale ou postérieure à la date de début.");
+      return;
+    }
+    setSending(true);
+    setError("");
+    try {
+      await onSubmit(form);
+      const nextDay = parisDayValue();
+      setForm({ startDate: nextDay, endDate: nextDay, reason: "" });
+    } catch (submissionError) {
+      setError(submissionError instanceof Error ? submissionError.message : "L’absence n’a pas pu être déclarée.");
+    } finally {
+      setSending(false);
+    }
+  }
 
   return (
-    <section className="presence-card">
-      <div className="presence-summary">
-        <div><p className="eyebrow dark">SUIVI DE L’ÉQUIPE</p><h2>Tableau des présences</h2><p className="muted">Membres classés du grade le plus élevé au plus bas.</p></div>
-        <div className="presence-counts"><span className="present"><UserCheck size={17} /><strong>{presentCount}</strong> présent{presentCount > 1 ? "s" : ""}</span><span className="absent"><UserX size={17} /><strong>{team.length - presentCount}</strong> absent{team.length - presentCount > 1 ? "s" : ""}</span></div>
-      </div>
-      <div className="table-wrap"><table className="presence-table"><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>Situation</th><th>Mettre à jour</th></tr></thead><tbody>
-        {team.map((user) => {
-          const isPresent = user.presence !== "absent";
-          return <tr key={user.id}><td><div className="user-cell"><Avatar user={user} size="small" /><div><strong>{user.firstName} {user.lastName}</strong><small>{user.discordUsername ? `Discord : ${user.discordUsername}` : "Compte Discord lié"}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td><RoleBadge role={user.role} /></td><td><span className={`presence-status ${isPresent ? "present" : "absent"}`}><i />{isPresent ? "Présent" : "Absent"}</span></td><td><div className="presence-actions"><button className={isPresent ? "selected present" : ""} onClick={() => onChange(user.id, "present")}><UserCheck size={16} /> Présent</button><button className={!isPresent ? "selected absent" : ""} onClick={() => onChange(user.id, "absent")}><UserX size={16} /> Absent</button></div></td></tr>;
-        })}
-        {!team.length && <tr><td colSpan="5" className="empty-presence">Aucun Sous-Officier à afficher.</td></tr>}
-      </tbody></table></div>
+    <section className="meeting-card absence-request-card">
+      <div className="meeting-head absence-request-head"><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h2>Déclarer une absence</h2><p className="muted">Indiquez votre période d’absence afin que le suivi de l’équipe et la réunion SO soient automatiquement mis à jour.</p></div><span className="absence-head-icon"><UserX size={19} /></span></div>
+      <form className="absence-form" onSubmit={submit}>
+        <label>Nom</label>
+        <input value={memberName} readOnly aria-readonly="true" />
+        <div className="absence-form-grid"><label>Date de début<input type="date" value={form.startDate} onChange={(event) => setForm((current) => ({ ...current, startDate: event.target.value }))} required /></label><label>Date de fin<input type="date" min={form.startDate || undefined} value={form.endDate} onChange={(event) => setForm((current) => ({ ...current, endDate: event.target.value }))} required /></label></div>
+        <label>Raison<textarea value={form.reason} onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))} rows={6} maxLength={1500} required placeholder="Expliquez brièvement la raison de votre absence…" /></label>
+        {error && <p className="form-error">{error}</p>}
+        <div className="meeting-actions"><span><ShieldCheck size={15} /> Votre déclaration est transmise aux responsables SO.</span><div><button className="primary" type="submit" disabled={sending}><Send size={17} />{sending ? "Enregistrement…" : "Déclarer mon absence"}</button></div></div>
+      </form>
+    </section>
+  );
+}
+
+function AbsenceTablePanel({ absences, users }) {
+  const usersById = useMemo(() => new Map(users.map((user) => [String(user.id), user])), [users]);
+  const orderedAbsences = useMemo(() => [...(Array.isArray(absences) ? absences : [])].sort((left, right) => {
+    const stateOrder = { active: 0, upcoming: 1, finished: 2 };
+    const statusDifference = stateOrder[absenceState(left)] - stateOrder[absenceState(right)];
+    return statusDifference || right.startDate.localeCompare(left.startDate) || new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+  }), [absences]);
+  const activeCount = orderedAbsences.filter((absence) => absenceState(absence) === "active").length;
+
+  function author(absence) {
+    const user = usersById.get(String(absence.authorId));
+    return user ? { ...absence, firstName: user.firstName, lastName: user.lastName, avatarUrl: user.avatarUrl, discordUsername: user.discordUsername } : null;
+  }
+
+  return (
+    <section className="presence-card absence-table-card">
+      <div className="presence-summary"><div><p className="eyebrow dark">SUIVI DE L’ÉQUIPE</p><h2>Absences déclarées</h2><p className="muted">Toutes les absences sont conservées avec leur période et leur motif.</p></div><div className="presence-counts"><span className="absent"><UserX size={17} /><strong>{activeCount}</strong> en cours</span><span className="present"><CalendarDays size={17} /><strong>{orderedAbsences.length}</strong> déclaration{orderedAbsences.length > 1 ? "s" : ""}</span></div></div>
+      <div className="table-wrap"><table className="presence-table absence-table"><thead><tr><th>Membre</th><th>Période</th><th>Raison</th><th>Statut</th></tr></thead><tbody>{orderedAbsences.map((absence) => {
+        const member = author(absence);
+        const status = absenceState(absence);
+        const statusLabel = status === "active" ? "En cours" : status === "upcoming" ? "À venir" : "Terminée";
+        return <tr key={absence.id}><td><div className="user-cell">{member ? <Avatar user={member} size="small" /> : <span className="absence-member-mark"><UserRound size={17} /></span>}<div><strong>{member ? `${member.firstName} ${member.lastName}` : absence.authorName}</strong><small>{absence.authorGrade || "Membre du portail"}</small></div></div></td><td><strong>{absenceDateLabel(absence.startDate)}</strong><small className="absence-end-date">jusqu’au {absenceDateLabel(absence.endDate)}</small></td><td><p className="absence-reason">{absence.reason}</p></td><td><span className={`presence-status absence-status ${status === "active" ? "absent" : status === "upcoming" ? "gold" : "present"}`}><i />{statusLabel}</span></td></tr>;
+      })}{!orderedAbsences.length && <tr><td colSpan="4" className="empty-presence">Aucune absence n’a encore été déclarée.</td></tr>}</tbody></table></div>
     </section>
   );
 }
@@ -1555,7 +1634,7 @@ function SergeantReportPanel({ users, session, assignments, onSuccess, history, 
 
 function TransmissionPanel({ type, ...props }) {
   if (type === "specializations") return <SpecializationsPanel />;
-  if (type === "meeting_so") return <MeetingTransmissionPanel session={props.session} />;
+  if (type === "meeting_so") return <MeetingTransmissionPanel session={props.session} absences={props.absences} />;
   return <StandardTransmissionPanel type={type} {...props} />;
 }
 
@@ -2114,10 +2193,11 @@ function MeetingPanel({ session, users, meeting, history, onSave, onDelete }) {
   </div>;
 }
 
-function MeetingTransmissionPanel({ session }) {
+function MeetingTransmissionPanel({ session, absences = [] }) {
   const [users, setUsers] = useState([]);
   const [meeting, setMeeting] = useState(DEFAULT_SO_MEETING);
   const [history, setHistory] = useState([]);
+  const [sharedAbsences, setSharedAbsences] = useState(absences);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -2130,6 +2210,7 @@ function MeetingTransmissionPanel({ session }) {
         setMeeting((current) => current.updatedAt === next.updatedAt && current.occurredAt === next.occurredAt ? current : next);
       }
       if (Array.isArray(state?.soMeetingHistory)) setHistory(state.soMeetingHistory);
+      if (Array.isArray(state?.absences)) setSharedAbsences(state.absences);
     };
     async function loadInitial() {
       try {
@@ -2151,6 +2232,8 @@ function MeetingTransmissionPanel({ session }) {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
 
+  useEffect(() => { setSharedAbsences(Array.isArray(absences) ? absences : []); }, [absences]);
+
   async function save(values, { draft = false } = {}) {
     const state = await portalRequest("POST", { action: draft ? "save_so_meeting_draft" : "save_so_meeting", meeting: { ...values, updatedAt: new Date().toISOString(), updatedBy: session.id } });
     if (state?.soMeeting && typeof state.soMeeting === "object") setMeeting({ ...DEFAULT_SO_MEETING, ...state.soMeeting });
@@ -2163,8 +2246,9 @@ function MeetingTransmissionPanel({ session }) {
     if (Array.isArray(state?.soMeetingHistory)) setHistory(state.soMeetingHistory);
   }
 
+  const meetingUsers = useMemo(() => usersWithCurrentAbsences(users, sharedAbsences), [users, sharedAbsences]);
   if (loading) return <div className="meeting-card"><p className="muted">Chargement de la réunion SO…</p></div>;
-  return <MeetingPanel session={session} users={users} meeting={meeting} history={history} onSave={save} onDelete={removeSavedMeeting} />;
+  return <MeetingPanel session={session} users={meetingUsers} meeting={meeting} history={history} onSave={save} onDelete={removeSavedMeeting} />;
 }
 
 function App() {
@@ -2190,6 +2274,7 @@ function App() {
   const [summarySettings, setSummarySettings] = useState({ activityResetAt: null });
   const [sergeantAssignments, setSergeantAssignments] = useState([]);
   const [submissionHistory, setSubmissionHistory] = useState([]);
+  const [absences, setAbsences] = useState([]);
   const [portalNotifications, setPortalNotifications] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
   const [managementReports, setManagementReports] = useState([]);
@@ -2261,6 +2346,7 @@ function App() {
       const savedLogs = readStoredJson(LOG_KEY, []);
       const savedAssignments = readStoredJson(ASSIGNMENTS_KEY, []);
       const savedSubmissionHistory = readStoredJson(SUBMISSION_HISTORY_KEY, []);
+      const savedAbsences = readStoredJson(ABSENCES_KEY, []);
       const savedNotifications = readStoredJson(NOTIFICATION_KEY, []);
       const savedManagementReports = readStoredJson(MANAGEMENT_REPORTS_KEY, []);
       const savedManagementReportSettings = readStoredJson(MANAGEMENT_REPORT_SETTINGS_KEY, { rankingResetAt: null });
@@ -2281,6 +2367,7 @@ function App() {
       setSummarySettings(readStoredJson(SUMMARY_KEY, { activityResetAt: null }));
       setSergeantAssignments(Array.isArray(savedAssignments) ? savedAssignments : []);
       setSubmissionHistory(Array.isArray(savedSubmissionHistory) ? savedSubmissionHistory : []);
+      setAbsences(Array.isArray(savedAbsences) ? savedAbsences : []);
       setPortalNotifications(Array.isArray(savedNotifications) ? savedNotifications : []);
       setManagementReports(Array.isArray(savedManagementReports) ? savedManagementReports : []);
       setManagementReportSettings(savedManagementReportSettings && typeof savedManagementReportSettings === "object" ? savedManagementReportSettings : { rankingResetAt: null });
@@ -2324,6 +2411,7 @@ function App() {
   useEffect(() => { if (ready) localStorage.setItem(SUMMARY_KEY, JSON.stringify(summarySettings)); }, [summarySettings, ready]);
   useEffect(() => { if (ready) localStorage.setItem(ASSIGNMENTS_KEY, JSON.stringify(sergeantAssignments)); }, [sergeantAssignments, ready]);
   useEffect(() => { if (ready) localStorage.setItem(SUBMISSION_HISTORY_KEY, JSON.stringify(submissionHistory)); }, [submissionHistory, ready]);
+  useEffect(() => { if (ready) localStorage.setItem(ABSENCES_KEY, JSON.stringify(absences)); }, [absences, ready]);
   useEffect(() => { if (ready) localStorage.setItem(MANAGEMENT_REPORTS_KEY, JSON.stringify(managementReports)); }, [managementReports, ready]);
   useEffect(() => { if (ready) localStorage.setItem(MANAGEMENT_REPORT_SETTINGS_KEY, JSON.stringify(managementReportSettings)); }, [managementReportSettings, ready]);
   useEffect(() => { if (ready) localStorage.setItem(SO_MEETING_KEY, JSON.stringify(soMeeting)); }, [soMeeting, ready]);
@@ -2353,6 +2441,10 @@ function App() {
       }
       if (event.key === SUBMISSION_HISTORY_KEY && event.newValue) {
         try { setSubmissionHistory(JSON.parse(event.newValue)); } catch { /* Ignore un historique invalide. */ }
+        return;
+      }
+      if (event.key === ABSENCES_KEY && event.newValue) {
+        try { setAbsences(JSON.parse(event.newValue)); } catch { /* Ignore des absences invalides. */ }
         return;
       }
       if (event.key === NOTIFICATION_KEY && event.newValue) {
@@ -2439,6 +2531,11 @@ function App() {
   }, []);
 
   const canManage = session && hasManagerAccess(session.role);
+  const usersWithAbsenceStatus = useMemo(() => usersWithCurrentAbsences(users, absences), [users, absences]);
+  const sessionWithAbsenceStatus = useMemo(() => {
+    if (!session) return session;
+    return usersWithCurrentAbsences([session], absences)[0];
+  }, [session, absences]);
   const manageable = (user) => {
     if (user.approvalStatus !== "approved") return hasManagerAccess(session?.role);
     if (session?.role === "admin") return user.role !== "admin";
@@ -2482,6 +2579,7 @@ function App() {
     if (Array.isArray(state?.announcements)) setAnnouncements(state.announcements);
     if (Array.isArray(state?.auditLogs)) setAuditLogs((current) => mergeAuditLogs(current, state.auditLogs));
     if (Array.isArray(state?.submissions)) setSubmissionHistory(state.submissions);
+    if (Array.isArray(state?.absences)) setAbsences(state.absences);
     if (Array.isArray(state?.missions)) setMissions((current) => mergeMissions(current, state.missions));
     if (state?.quotas && typeof state.quotas === "object") setQuotas((current) => ({ ...DEFAULT_QUOTAS, ...current, ...state.quotas }));
     if (state?.summarySettings && typeof state.summarySettings === "object") setSummarySettings(state.summarySettings);
@@ -2549,6 +2647,12 @@ function App() {
     const state = await portalRequest("POST", { action: "acknowledge_announcement", announcementId });
     applySharedPortalState(state);
     flash("Votre accusé de lecture est enregistré.");
+  }
+  async function createAbsence(values) {
+    if (!session) throw new Error("Votre session n’est plus active.");
+    const state = await portalRequest("POST", { action: "create_absence", values });
+    applySharedPortalState(state);
+    flash("Votre absence a été déclarée et apparaît dans le suivi des responsables.");
   }
   function navigateFromHome(section) {
     if (!canOpenPortalSection(session.role, section)) {
@@ -3177,9 +3281,9 @@ function App() {
           const sections = PORTAL_SECTION_REGISTRY.filter((item) => item.group === group.id && hasSectionAccess(session.role, item.access));
           return hasSectionAccess(session.role, group.access) && sections.length ? <optgroup label={group.label} key={group.id}>{sections.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</optgroup> : null;
         })}{PORTAL_SECTION_REGISTRY.filter((item) => item.group === "logs" && hasSectionAccess(session.role, item.access)).length > 0 && <optgroup label="Journal">{PORTAL_SECTION_REGISTRY.filter((item) => item.group === "logs" && hasSectionAccess(session.role, item.access)).map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</optgroup>}</select></div>
-        {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "management_report" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Rapport de gérance</h1><p className="muted">Auto-évaluez vos gérances et consultez les avis des responsables.</p></div><span className={hasManagerAccess(session.role) ? "referent-access" : "all-access"}><FileText size={16} /> {hasManagerAccess(session.role) ? "Suivi responsable" : "Auto-évaluation"}</span></header> : activeSection === "workforce" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Effectif</h1><p className="muted">Consultez l’organisation complète des membres par accès et par grade.</p></div><span className="referent-access"><UsersRound size={16} /> Vue des effectifs</span></header> : activeSection === "specializations" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Spécialisations</h1><p className="muted">Consultez les spécialités, Steam ID et Discord ID de l’effectif.</p></div><span className="referent-access"><BadgeCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "meeting_so" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Réunion SO</h1><p className="muted">Préparez le suivi de l’effectif et les comptes rendus de réunion.</p></div><span className="referent-access"><ClipboardCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "sergeant_assignments" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Référent</h1><p className="muted">Attribuez et suivez les référents des nouveaux Sergents.</p></div><span className="senior-access"><BadgeCheck size={16} /> Suivi des semaines de test</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Validez les demandes Discord et gardez une vue claire sur votre équipe.</p></div><span className="all-access"><MessageSquareText size={16} /> Connexion Discord</span></header> : activeSection === "presence" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Présences</h1><p className="muted">Suivez la présence des Sous-Officiers de votre équipe.</p></div><span className="referent-access"><ShieldCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
+        {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "management_report" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Rapport de gérance</h1><p className="muted">Auto-évaluez vos gérances et consultez les avis des responsables.</p></div><span className={hasManagerAccess(session.role) ? "referent-access" : "all-access"}><FileText size={16} /> {hasManagerAccess(session.role) ? "Suivi responsable" : "Auto-évaluation"}</span></header> : activeSection === "absence_request" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Absences</h1><p className="muted">Déclarez votre absence pour que le suivi de l’équipe soit automatiquement actualisé.</p></div><span className="all-access"><UserX size={16} /> Déclaration personnelle</span></header> : activeSection === "workforce" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Effectif</h1><p className="muted">Consultez l’organisation complète des membres par accès et par grade.</p></div><span className="referent-access"><UsersRound size={16} /> Vue des effectifs</span></header> : activeSection === "specializations" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Spécialisations</h1><p className="muted">Consultez les spécialités, Steam ID et Discord ID de l’effectif.</p></div><span className="referent-access"><BadgeCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "absence_table" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Absences</h1><p className="muted">Consultez les périodes et motifs d’absence déclarés par l’équipe.</p></div><span className="referent-access"><UserX size={16} /> Suivi Référent SO</span></header> : activeSection === "meeting_so" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Réunion SO</h1><p className="muted">Préparez le suivi de l’effectif et les comptes rendus de réunion.</p></div><span className="referent-access"><ClipboardCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "sergeant_assignments" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Référent</h1><p className="muted">Attribuez et suivez les référents des nouveaux Sergents.</p></div><span className="senior-access"><BadgeCheck size={16} /> Suivi des semaines de test</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Validez les demandes Discord et gardez une vue claire sur votre équipe.</p></div><span className="all-access"><MessageSquareText size={16} /> Connexion Discord</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
-        {activeSection === "home" ? <HomePanel session={session} users={users} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} announcements={announcements} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={navigateFromHome} onDismissNotification={dismissPortalNotification} onClearNotifications={clearPortalNotifications} onCreateAnnouncement={createAnnouncement} onUpdateAnnouncement={updateAnnouncement} onDeleteAnnouncement={deleteAnnouncement} onAcknowledgeAnnouncement={acknowledgeAnnouncement} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} submissions={submissionHistory} activityResetAt={summarySettings.activityResetAt} rankingResetAt={summarySettings.rankingResetAt} quotaResetAt={quotas.resetAt} onResetActivity={resetActivitySummary} onResetRanking={resetActivityRanking} /> : activeSection === "management_report" ? <ManagementReportPanel session={session} users={users} reports={managementReports} assignments={sergeantAssignments} settings={managementReportSettings} onSubmit={submitManagementReport} onComment={commentManagementReport} onUpdateComment={updateManagementComment} onDeleteComment={deleteManagementComment} onDeleteReport={deleteManagementReport} onResetRanking={resetManagementRanking} /> : activeSection === "workforce" ? <WorkforcePanel users={users} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
+        {activeSection === "home" ? <HomePanel session={sessionWithAbsenceStatus} users={usersWithAbsenceStatus} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} announcements={announcements} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={navigateFromHome} onDismissNotification={dismissPortalNotification} onClearNotifications={clearPortalNotifications} onCreateAnnouncement={createAnnouncement} onUpdateAnnouncement={updateAnnouncement} onDeleteAnnouncement={deleteAnnouncement} onAcknowledgeAnnouncement={acknowledgeAnnouncement} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} submissions={submissionHistory} activityResetAt={summarySettings.activityResetAt} rankingResetAt={summarySettings.rankingResetAt} quotaResetAt={quotas.resetAt} onResetActivity={resetActivitySummary} onResetRanking={resetActivityRanking} /> : activeSection === "management_report" ? <ManagementReportPanel session={session} users={users} reports={managementReports} assignments={sergeantAssignments} settings={managementReportSettings} onSubmit={submitManagementReport} onComment={commentManagementReport} onUpdateComment={updateManagementComment} onDeleteComment={deleteManagementComment} onDeleteReport={deleteManagementReport} onResetRanking={resetManagementRanking} /> : activeSection === "absence_request" ? <AbsenceRequestPanel session={session} onSubmit={createAbsence} /> : activeSection === "workforce" ? <WorkforcePanel users={usersWithAbsenceStatus} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
         <section className="stats">
           <article><span className="stat-icon blue"><UsersRound /></span><div><strong>{users.length}</strong><small>Comptes au total</small></div><span className="trend">Tous niveaux</span></article>
           <article><span className="stat-icon gold"><UserRound /></span><div><strong>{users.filter((user) => user.approvalStatus === "pending").length}</strong><small>Demandes en attente</small></div><span className="trend">À valider</span></article>
@@ -3190,7 +3294,7 @@ function App() {
           <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><button className="secondary avatar-sync" type="button" onClick={syncDiscordAvatars} disabled={avatarSyncing}><RotateCcw size={15} /> {avatarSyncing ? "Synchronisation…" : "Rafraîchir les photos"}</button><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
           <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>État du compte</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><Avatar user={user} size="small" /><div><strong>{user.firstName} {user.lastName}</strong><small>{user.discordUsername ? `Discord : ${user.discordUsername}` : "Compte Discord lié"}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td>{user.approvalStatus === "pending" ? <span className="locked">À attribuer</span> : <RoleBadge role={user.role} />}</td><td>{user.approvalStatus === "pending" ? <button className="account-state pending" type="button" onClick={() => hasManagerAccess(session.role) && setModal(user)}><UserRound size={15} /> En attente</button> : user.approvalStatus === "rejected" ? <span className="account-state blocked"><UserX size={15} /> Refusé</span> : user.role === "admin" ? <span className="account-state active"><UserCheck size={15} /> Compte actif</span> : <button className={`account-state ${user.blocked ? "blocked" : "active"}`} type="button" onClick={() => toggleAccountBlock(user)}>{user.blocked ? <UserX size={15} /> : <UserCheck size={15} />}{user.blocked ? "Compte bloqué" : "Compte actif"}</button>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title={user.approvalStatus === "pending" ? "Examiner la demande" : "Modifier"} onClick={() => setModal(user)}>{user.approvalStatus === "pending" ? <BadgeCheck size={17} /> : <Pencil size={17} />}</button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
         </section>
-        </> : activeSection === "presence" ? <PresencePanel users={users} onChange={changePresence} /> : activeSection === "quotas" ? <QuotaPanel users={users} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onUpdateGroup={updateChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} assignments={sergeantAssignments} onSuccess={sergeantReportSuccess} history={submissionHistory.filter((entry) => entry.type === "sergeant_report")} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} /> : <TransmissionPanel key={activeSection} session={session} onSuccess={transmissionSuccess} type={activeSection} history={submissionHistory.filter((entry) => entry.type === activeSection)} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} />}
+        </> : activeSection === "absence_table" ? <AbsenceTablePanel absences={absences} users={users} /> : activeSection === "quotas" ? <QuotaPanel users={usersWithAbsenceStatus} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onUpdateGroup={updateChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} assignments={sergeantAssignments} onSuccess={sergeantReportSuccess} history={submissionHistory.filter((entry) => entry.type === "sergeant_report")} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} /> : <TransmissionPanel key={activeSection} session={session} absences={absences} onSuccess={transmissionSuccess} type={activeSection} history={submissionHistory.filter((entry) => entry.type === activeSection)} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} />}
       </main>
       {notice && <div className="toast"><BadgeCheck size={19} />{notice}</div>}
       {modal && <UserModal actor={session} editing={modal.id ? modal : null} onClose={() => setModal(null)} onSave={saveUser} />}

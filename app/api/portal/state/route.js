@@ -12,6 +12,7 @@ const QUOTA_CATEGORIES = new Set(["recommendation", "pcs_exp", "observations", "
 const DEFAULT_QUOTA_TARGETS = { recommendation: 1, pcs_exp: 1, observations: 1, mission_internal: 0 };
 const SUBMISSION_TARGET_PREFIX = "__portal_submission_";
 const ANNOUNCEMENT_TARGET_PREFIX = "__portal_announcement_";
+const ABSENCE_TARGET_PREFIX = "__portal_absence_";
 const QUOTA_SETTINGS_ID = "f51a7616-15ea-40c8-aac0-7e265c913521";
 const QUOTA_SETTINGS_TARGET = "__portal_quota_settings";
 const SUMMARY_SETTINGS_ID = "a148a81a-6d81-46a4-8c82-fd09391b76cc";
@@ -49,6 +50,19 @@ function cleanMultiline(value, max = 1000) {
   return typeof value === "string"
     ? value.replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trim().slice(0, max)
     : "";
+}
+
+function calendarDate(value) {
+  const date = String(value || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return "";
+  const parsed = new Date(`${date}T12:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date ? date : "";
+}
+
+function todayInParis() {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function numberInRange(value, minimum = 0, maximum = 100) {
@@ -256,6 +270,59 @@ async function submissionsFor() {
   return parseArray(rows).filter((row) => SUBMISSION_TYPES.has(String(row.target || "").slice(SUBMISSION_TARGET_PREFIX.length))).map(submissionFromRow);
 }
 
+function absenceValues(value) {
+  const source = objectValue(value);
+  const startDate = calendarDate(source.startDate);
+  const endDate = calendarDate(source.endDate);
+  const reason = cleanMultiline(source.reason, 1_500);
+  return startDate && endDate && startDate <= endDate && reason ? { startDate, endDate, reason } : null;
+}
+
+function absenceFromRow(row) {
+  const payload = objectValue(jsonValue(row?.body, {}));
+  const values = absenceValues(payload);
+  if (!values || !UUID.test(String(row?.id || "")) || !UUID.test(String(payload.authorId || ""))) return null;
+  return {
+    id: row.id,
+    authorId: payload.authorId,
+    authorName: clean(payload.authorName, 120) || "Membre du portail",
+    authorGrade: clean(payload.authorGrade, 60),
+    authorRole: clean(payload.authorRole, 40),
+    ...values,
+    createdAt: Number.isFinite(new Date(row.created_at).getTime()) ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+  };
+}
+
+async function absencesFor() {
+  const rows = await database("portal_notifications?select=*&order=created_at.desc&limit=1000");
+  return parseArray(rows)
+    .filter((row) => String(row?.target || "").startsWith(ABSENCE_TARGET_PREFIX))
+    .map(absenceFromRow)
+    .filter(Boolean)
+    .sort((left, right) => right.startDate.localeCompare(left.startDate) || new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+function absenceIsActive(absence, day = todayInParis()) {
+  return absence?.startDate <= day && absence?.endDate >= day;
+}
+
+async function saveAbsence(absence) {
+  const values = absenceValues(absence);
+  if (!values || !UUID.test(String(absence?.id || "")) || !UUID.test(String(absence?.authorId || ""))) throw new Error("Absence invalide.");
+  await database("portal_notifications", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      id: absence.id,
+      recipient_ids: [absence.authorId],
+      kind: "info",
+      title: `Absence — ${clean(absence.authorName, 120) || "Membre du portail"}`,
+      body: JSON.stringify({ ...values, authorId: absence.authorId, authorName: clean(absence.authorName, 120), authorGrade: clean(absence.authorGrade, 60), authorRole: clean(absence.authorRole, 40) }),
+      target: `${ABSENCE_TARGET_PREFIX}${absence.id}`,
+    }),
+  });
+}
+
 // Les transmissions servent à la fois d'historique, de source du résumé et de
 // compteur de quotas. La suppression passe donc par ce point unique : on
 // retire aussi les accusés de lecture associés, puis on vérifie que la ligne a
@@ -320,14 +387,15 @@ async function quotaState(submissions) {
 }
 
 async function stateFor(user) {
-  const [chats, notifications, announcements, auditLogs, allSubmissions, summarySettings, sergeantAssignments, allMissions, allManagementReports, managementReportSettings, loadedMeeting, soMeetingHistory] = await Promise.all([
-    allChats(user), notificationsFor(user), announcementsFor(user), auditLogsFor(user), submissionsFor(), summarySettingsFor(), assignmentsFor(), missionsFor(), managementReportsFor(), managementReportSettingsFor(), meetingFor(), meetingHistoryFor(),
+  const [chats, notifications, announcements, auditLogs, allSubmissions, summarySettings, sergeantAssignments, allMissions, allManagementReports, managementReportSettings, loadedMeeting, soMeetingHistory, allAbsences] = await Promise.all([
+    allChats(user), notificationsFor(user), announcementsFor(user), auditLogsFor(user), submissionsFor(), summarySettingsFor(), assignmentsFor(), missionsFor(), managementReportsFor(), managementReportSettingsFor(), meetingFor(), meetingHistoryFor(), absencesFor(),
   ]);
   const soMeeting = await resetArchivedMeetingDraft(loadedMeeting, soMeetingHistory);
   const assignedSergeants = new Set(sergeantAssignments.filter((assignment) => assignment.observerId === user.id).map((assignment) => assignment.sergeantId));
   const managementReports = isManager(user) ? allManagementReports : allManagementReports.filter((report) => report.authorId === user.id || (user.role === "senior" && assignedSergeants.has(report.authorId)));
   const missions = isManager(user) ? allMissions : allMissions.filter((mission) => mission.userId === user.id);
-  return { chats, notifications, announcements, auditLogs, submissions: allSubmissions, quotas: await quotaState(allSubmissions), summarySettings, sergeantAssignments, missions, managementReports, managementReportSettings, soMeeting, soMeetingHistory };
+  const absences = isManager(user) ? allAbsences : allAbsences.filter((absence) => absence.authorId === user.id);
+  return { chats, notifications, announcements, auditLogs, submissions: allSubmissions, quotas: await quotaState(allSubmissions), summarySettings, sergeantAssignments, missions, managementReports, managementReportSettings, soMeeting, soMeetingHistory, absences };
 }
 
 function canReviewManagementReport(actor, report, assignments) {
@@ -672,10 +740,9 @@ async function meetingFor() {
 
 async function meetingWithPresenceSynced(value) {
   const meeting = meetingFromValue(value);
-  const rows = await database("portal_users?select=id,role,presence,blocked,approval_status");
-  const absentIds = new Set(parseArray(rows)
-    .filter((user) => ["officer", "senior"].includes(user?.role) && user?.presence === "absent" && !user?.blocked && (!user?.approval_status || user.approval_status === "approved"))
-    .map((user) => user.id)
+  const absentIds = new Set((await absencesFor())
+    .filter((absence) => absenceIsActive(absence))
+    .map((absence) => absence.authorId)
     .filter((id) => UUID.test(String(id))));
   if (!absentIds.size) return meeting;
   const attendance = meeting.attendance.map((entry) => absentIds.has(entry.userId) ? { ...entry, status: "absent" } : entry);
@@ -746,7 +813,20 @@ export async function POST(request) {
     const actor = current.user;
     const result = {};
 
-    if (action === "start_direct") {
+    if (action === "create_absence") {
+      const values = absenceValues(body?.values);
+      if (!values) return json({ error: "Indiquez une période valide et le motif de votre absence." }, 400);
+      const absence = {
+        id: crypto.randomUUID(),
+        ...values,
+        authorId: actor.id,
+        authorName: `${actor.first_name} ${actor.last_name || ""}`.trim(),
+        authorGrade: actor.grade || "",
+        authorRole: actor.role || "",
+      };
+      await saveAbsence(absence);
+      await recordAuditLog({ actor, category: "absence", action: "Absence déclarée", details: `Du ${values.startDate} au ${values.endDate}` });
+    } else if (action === "start_direct") {
       const otherUserId = String(body?.otherUserId || "");
       if (!UUID.test(otherUserId) || otherUserId === actor.id) return json({ error: "Destinataire invalide." }, 400);
       const members = await validMembers([otherUserId], actor.id);
