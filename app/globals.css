@@ -824,31 +824,6 @@ body { font-size:15px; line-height:1.5; }
 .sidebar .profile-card strong { font-size:15px; }
 .sidebar .profile-card small,.sidebar .logout { font-size:12px; }
 
-/* Effectif : les intitulés des unités doivent rester identifiables au premier coup d'œil. */
-.workforce-group > header .role-badge {
-  padding:9px 16px 9px 8px;
-  font-size:20px;
-  line-height:1;
-}
-.workforce-group > header .role-badge > span {
-  width:31px;
-  height:31px;
-  font-size:11px;
-}
-.workforce-group > header > div > span:last-child {
-  font-size:15px;
-  font-weight:600;
-}
-.workforce-group > header > strong {
-  width:36px;
-  height:36px;
-  font-size:15px;
-}
-@media (max-width:680px) {
-  .workforce-group > header .role-badge { font-size:17px; }
-  .workforce-group > header > div > span:last-child { display:none; }
-}
-
 /* Effectif : nom et grade de chaque membre, notamment dans les cartes d'unité. */
 .workforce-list .workforce-name strong {
   font-size:16px !important;
