@@ -833,3 +833,25 @@ body { font-size:15px; line-height:1.5; }
   font-size:13px !important;
   line-height:1.4;
 }
+
+/* Tous les formulaires partagent la typographie lisible du formulaire Absence. */
+.content form label,
+.content form :is(input,select,textarea),
+.content form :is(input,select,textarea)::placeholder {
+  font-family:"DM Sans",sans-serif !important;
+  letter-spacing:0;
+}
+.content form label {
+  font-size:14px;
+  font-weight:700;
+}
+.content form :is(input,select,textarea) {
+  font-size:14px !important;
+  font-weight:500;
+  line-height:1.55;
+}
+.content form :is(input,select,textarea)::placeholder {
+  font-weight:500;
+  opacity:1;
+}
+.content form select option { font-family:"DM Sans",sans-serif; }
