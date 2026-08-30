@@ -855,3 +855,6 @@ body { font-size:15px; line-height:1.5; }
   opacity:1;
 }
 .content form select option { font-family:"DM Sans",sans-serif; }
+
+.absence-table th:last-child,.absence-table td:last-child { width:54px; text-align:center; }
+.absence-delete { margin:auto; }

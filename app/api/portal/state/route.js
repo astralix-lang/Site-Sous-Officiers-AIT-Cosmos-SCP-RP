@@ -323,6 +323,21 @@ async function saveAbsence(absence) {
   });
 }
 
+// Les absences sont une source commune pour l'effectif et la réunion SO.
+// Leur suppression passe par ce point unique afin de retirer aussi les
+// éventuels accusés de lecture liés à la déclaration.
+async function removeAbsence(id) {
+  const target = `${ABSENCE_TARGET_PREFIX}${id}`;
+  const rows = await database(`portal_notifications?id=eq.${encodeURIComponent(id)}&target=eq.${encodeURIComponent(target)}&select=*`);
+  const row = parseArray(rows)[0];
+  if (!row) return null;
+  await database(`portal_notification_dismissals?notification_id=eq.${encodeURIComponent(id)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+  await database(`portal_notifications?id=eq.${encodeURIComponent(id)}&target=eq.${encodeURIComponent(target)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+  const remaining = parseArray(await database(`portal_notifications?id=eq.${encodeURIComponent(id)}&target=eq.${encodeURIComponent(target)}&select=id`));
+  if (remaining.length) throw new Error("ABSENCE_DELETE_NOT_CONFIRMED");
+  return absenceFromRow(row);
+}
+
 // Les transmissions servent à la fois d'historique, de source du résumé et de
 // compteur de quotas. La suppression passe donc par ce point unique : on
 // retire aussi les accusés de lecture associés, puis on vérifie que la ligne a
@@ -831,6 +846,14 @@ export async function POST(request) {
       };
       await saveAbsence(absence);
       await recordAuditLog({ actor, category: "absence", action: requestedUserId === actor.id ? "Absence déclarée" : "Absence déclarée pour un membre", details: `${absence.authorName} · du ${values.startDate} au ${values.endDate}` });
+    } else if (action === "delete_absence") {
+      if (!isManager(actor)) return json({ error: "Seuls les Référents SO et les accès supérieurs peuvent supprimer une absence." }, 403);
+      const absenceId = String(body?.absenceId || "");
+      if (!UUID.test(absenceId)) return json({ error: "Absence invalide." }, 400);
+      const removed = await removeAbsence(absenceId);
+      if (!removed) return json({ error: "Absence introuvable ou déjà supprimée." }, 404);
+      result.deletedAbsenceId = removed.id;
+      await recordAuditLog({ actor, category: "absence", action: "Absence supprimée", details: `${removed.authorName} · du ${removed.startDate} au ${removed.endDate}` });
     } else if (action === "start_direct") {
       const otherUserId = String(body?.otherUserId || "");
       if (!UUID.test(otherUserId) || otherUserId === actor.id) return json({ error: "Destinataire invalide." }, 400);
