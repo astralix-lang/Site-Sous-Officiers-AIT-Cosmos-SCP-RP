@@ -1,0 +1,11 @@
+.git
+.next
+node_modules
+.pnpm-store
+.env
+.env.*
+!/.env.example
+dist
+tmp
+sites-build-*.tar
+

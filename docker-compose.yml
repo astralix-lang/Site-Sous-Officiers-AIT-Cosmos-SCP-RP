@@ -1,0 +1,36 @@
+services:
+  portail:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    expose:
+      - "3000"
+    networks:
+      - portail
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - portail
+    env_file:
+      - .env.production
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - portail
+
+networks:
+  portail:
+
+volumes:
+  caddy_data:
+  caddy_config:
