@@ -18,7 +18,7 @@ function config() {
   // seul le conteneur du portail peut joindre son API REST sur ce réseau privé.
   if (localUrl) {
     if (localUrl !== "http://database-api:3000") return null;
-    return { url: localUrl, key: "" };
+    return { url: localUrl, key: "", apiPrefix: "/" };
   }
   const url = String(process.env.SUPABASE_URL || "").replace(/\/+$/, "");
   const key = String(process.env.SUPABASE_SECRET_KEY || "");
@@ -70,7 +70,7 @@ export async function database(path, init = {}) {
   if (!settings) throw new Error("DATABASE_NOT_CONFIGURED");
   let response;
   try {
-    response = await fetch(`${settings.url}/rest/v1/${path}`, {
+    response = await fetch(`${settings.url}${settings.apiPrefix || "/rest/v1/"}${path}`, {
       cache: "no-store",
       signal: AbortSignal.timeout(12_000),
     ...init,
