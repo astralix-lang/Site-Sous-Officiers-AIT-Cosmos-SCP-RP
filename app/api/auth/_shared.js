@@ -13,6 +13,13 @@ const GRADES = new Set([
 ]);
 
 function config() {
+  const localUrl = String(process.env.PORTAL_DATABASE_URL || "").replace(/\/+$/, "");
+  // La base PostgreSQL auto-hébergée n'est jamais exposée sur Internet :
+  // seul le conteneur du portail peut joindre son API REST sur ce réseau privé.
+  if (localUrl) {
+    if (localUrl !== "http://database-api:3000") return null;
+    return { url: localUrl, key: "" };
+  }
   const url = String(process.env.SUPABASE_URL || "").replace(/\/+$/, "");
   const key = String(process.env.SUPABASE_SECRET_KEY || "");
   if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url) || !key) return null;
@@ -66,11 +73,10 @@ export async function database(path, init = {}) {
     response = await fetch(`${settings.url}/rest/v1/${path}`, {
       cache: "no-store",
       signal: AbortSignal.timeout(12_000),
-      ...init,
-      headers: {
-        apikey: settings.key,
-        Authorization: `Bearer ${settings.key}`,
+    ...init,
+    headers: {
         Accept: "application/json",
+        ...(settings.key ? { apikey: settings.key, Authorization: `Bearer ${settings.key}` } : {}),
         ...(init.body ? { "Content-Type": "application/json" } : {}),
         ...(init.headers || {}),
       },

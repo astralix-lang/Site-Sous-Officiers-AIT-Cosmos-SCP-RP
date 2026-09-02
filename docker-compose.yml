@@ -13,6 +13,38 @@ services:
     networks:
       - portail
 
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - portail
+
+  database-api:
+    image: postgrest/postgrest:v12.2.3
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env.production
+    environment:
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: portal_api
+    expose:
+      - "3000"
+    networks:
+      - portail
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -36,3 +68,4 @@ networks:
 volumes:
   caddy_data:
   caddy_config:
+  postgres_data:
