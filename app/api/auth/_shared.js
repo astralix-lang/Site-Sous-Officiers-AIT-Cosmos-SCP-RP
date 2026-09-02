@@ -43,11 +43,26 @@ export function sameValue(left, right) {
   return difference === 0;
 }
 
+function forwardedHeader(request, name) {
+  return String(request.headers.get(name) || "").split(",")[0].trim();
+}
+
+export function secureRequest(request) {
+  return forwardedHeader(request, "x-forwarded-proto") === "https" || new URL(request.url).protocol === "https:";
+}
+
 export function validRequestSource(request) {
   const origin = request.headers.get("origin");
   const fetchSite = request.headers.get("sec-fetch-site");
   if (!origin || fetchSite === "cross-site") return false;
-  try { return new URL(origin).origin === new URL(request.url).origin; }
+  try {
+    const forwardedHost = forwardedHeader(request, "x-forwarded-host");
+    const forwardedProtocol = forwardedHeader(request, "x-forwarded-proto");
+    const requestOrigin = forwardedHost && ["http", "https"].includes(forwardedProtocol)
+      ? `${forwardedProtocol}://${forwardedHost}`
+      : new URL(request.url).origin;
+    return new URL(origin).origin === requestOrigin;
+  }
   catch { return false; }
 }
 
@@ -179,12 +194,12 @@ function randomToken() {
 }
 
 function sessionCookie(token, request) {
-  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  const secure = secureRequest(request) ? "; Secure" : "";
   return `portal-so-session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_MAX_AGE_SECONDS}${secure}`;
 }
 
 export function expiredSessionCookie(request) {
-  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  const secure = secureRequest(request) ? "; Secure" : "";
   return `portal-so-session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`;
 }
 

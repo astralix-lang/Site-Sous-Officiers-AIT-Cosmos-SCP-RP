@@ -1,4 +1,4 @@
-import { database, recordAuditLog, requireSession } from "../auth/_shared";
+import { database, recordAuditLog, requireSession, validRequestSource } from "../auth/_shared";
 import { discordErrorMessage, ROLE_LABELS, REPORT_CONCLUSIONS, sendDiscordSubmission, TYPE_CONFIG } from "./discord";
 
 export const runtime = "edge";
@@ -32,14 +32,6 @@ function sameValue(left, right) {
   let difference = 0;
   for (let index = 0; index < left.length; index += 1) difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
   return difference === 0;
-}
-
-function validRequestSource(request) {
-  const origin = request.headers.get("origin");
-  const fetchSite = request.headers.get("sec-fetch-site");
-  if (!origin || fetchSite === "cross-site") return false;
-  try { return new URL(origin).origin === new URL(request.url).origin; }
-  catch { return false; }
 }
 
 function allowedByRateLimit(request) {
@@ -107,8 +99,20 @@ export async function POST(request) {
     // grade pour Discord et, à défaut, un libellé français compréhensible.
     const senderPosition = clean(actor.grade, 60) || ROLE_LABELS[actor.role] || "";
     let discordMessage;
-    try { discordMessage = await sendDiscordSubmission({ type: body.type, values: storedValues, senderName, senderPosition }); }
-    catch (error) { return json({ error: discordErrorMessage(error) }, error instanceof Error && error.message === "DISCORD_WEBHOOK_UNAVAILABLE" ? 503 : 502); }
+    let discordDelivered = true;
+    let deliveryWarning = "";
+    try {
+      discordMessage = await sendDiscordSubmission({ type: body.type, values: storedValues, senderName, senderPosition });
+    } catch (error) {
+      // Le portail reste la source fiable de l'historique : une configuration
+      // Discord manquante ne doit jamais faire perdre le formulaire rempli.
+      if (error instanceof Error && error.message === "DISCORD_WEBHOOK_UNAVAILABLE") {
+        discordDelivered = false;
+        deliveryWarning = "Le formulaire est enregistré dans le portail, mais le salon Discord de cette catégorie doit encore être configuré.";
+      } else {
+        return json({ error: discordErrorMessage(error) }, 502);
+      }
+    }
     await database("portal_notifications", {
       method: "POST",
       headers: { Prefer: "return=minimal" },
@@ -124,6 +128,7 @@ export async function POST(request) {
           authorGrade: clean(actor.grade, 60),
           authorRole: clean(actor.role, 40),
           discordMessageId: discordMessage?.messageId || "",
+          discordDelivered,
         }),
         target: `__portal_submission_${body.type}`,
       }),
@@ -137,11 +142,11 @@ export async function POST(request) {
         recipient_ids: [actor.id],
         kind: "form",
         title: `Formulaire envoyé — ${config.title.replace(/^\S+\s+/, "")}`,
-        body: "Votre formulaire a été transmis sur Discord.",
+        body: discordDelivered ? "Votre formulaire a été transmis sur Discord." : "Votre formulaire a été enregistré dans le portail. L’envoi Discord doit encore être configuré.",
         target: body.type,
       }),
     });
-    return json({ ok: true });
+    return json({ ok: true, discordDelivered, ...(deliveryWarning ? { warning: deliveryWarning } : {}) });
   } catch (error) {
     console.error("Submission failed", error instanceof Error ? error.message : "Unknown error");
     return json({ error: "Impossible de transmettre le message." }, 500);

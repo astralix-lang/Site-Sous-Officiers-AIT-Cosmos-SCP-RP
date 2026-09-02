@@ -1210,7 +1210,14 @@ export async function POST(request) {
         });
         result.discordUpdated = discord.updated;
       } catch (error) {
-        return json({ error: discordErrorMessage(error) }, error instanceof Error && error.message === "DISCORD_WEBHOOK_UNAVAILABLE" ? 503 : 502);
+        // Une modification d'historique doit rester possible, même si le
+        // connecteur Discord est momentanément absent du VPS.
+        if (error instanceof Error && error.message === "DISCORD_WEBHOOK_UNAVAILABLE") {
+          result.discordUpdated = false;
+          result.discordWarning = "La modification est enregistrée dans le portail, mais Discord n’est pas encore configuré pour cette catégorie.";
+        } else {
+          return json({ error: discordErrorMessage(error) }, 502);
+        }
       }
       await database(`portal_notifications?id=eq.${encodeURIComponent(id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ body: JSON.stringify({ ...payload, values, editedAt: new Date().toISOString(), editedBy: actor.id }) }) });
       await recordAuditLog({ actor, category: "form", action: "Historique de formulaire modifié", details: result.discordUpdated ? `${type} • Discord mis à jour` : `${type} • ancien message Discord non modifiable` });

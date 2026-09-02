@@ -1,4 +1,4 @@
-import { cookieValue, sameValue } from "../_shared";
+import { cookieValue, sameValue, secureRequest } from "../_shared";
 
 const DISCORD_AUTHORIZE_URL = "https://discord.com/oauth2/authorize";
 const DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token";
@@ -16,7 +16,7 @@ function expiresAt(expiresIn) {
 }
 
 function secureCookie(request) {
-  return new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  return secureRequest(request) ? "; Secure" : "";
 }
 
 export function discordConfig(request) {

@@ -1601,7 +1601,7 @@ function SergeantReportPanel({ users, session, assignments, onSuccess, history, 
       clearFormDraft(session.id, "sergeant_report");
       setDraftSavedAt("");
       setForm((current) => ({ ...current, positivePoints: "", negativePoints: "", globalOpinion: "", conclusion: REPORT_CONCLUSIONS[0] }));
-      onSuccess("Le rapport du nouveau Sous-Officier a été envoyé sur Discord.", selectedSergeant.id, reportValues);
+      onSuccess(result.warning || "Le rapport du nouveau Sous-Officier a été envoyé sur Discord.", selectedSergeant.id, reportValues);
     } catch (submissionError) {
       setError(submissionError.message || "Une erreur est survenue pendant l’envoi.");
     } finally {
@@ -1691,7 +1691,7 @@ function StandardTransmissionPanel({ session, onSuccess, type, history, canManag
       clearFormDraft(session.id, type);
       setDraftSavedAt("");
       setForm((current) => ({ ...current, aitName: "", reason: "", observation: "positive" }));
-      onSuccess(`${selected.title} envoyée sur Discord.`, type, submittedValues);
+      onSuccess(result.warning || `${selected.title} envoyée sur Discord.`, type, submittedValues);
     } catch (submissionError) {
       setError(submissionError.message || "Une erreur est survenue pendant l’envoi.");
     } finally {
