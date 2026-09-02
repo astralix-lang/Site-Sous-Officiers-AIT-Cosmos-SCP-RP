@@ -9,6 +9,8 @@ RUN pnpm install --frozen-lockfile
 
 FROM base AS builder
 RUN corepack enable
+ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID
+ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
 RUN pnpm build

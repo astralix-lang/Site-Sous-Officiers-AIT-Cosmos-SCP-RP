@@ -1,7 +1,3 @@
-{
-  email {$ACME_EMAIL}
-}
-
 {$PORTAL_DOMAIN} {
   encode zstd gzip
   reverse_proxy portail:3000
