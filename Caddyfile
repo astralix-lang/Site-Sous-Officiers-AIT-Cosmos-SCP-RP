@@ -1,3 +1,7 @@
+www.{$PORTAL_DOMAIN} {
+  redir https://{$PORTAL_DOMAIN}{uri} permanent
+}
+
 {$PORTAL_DOMAIN} {
   encode zstd gzip
   reverse_proxy portail:3000
