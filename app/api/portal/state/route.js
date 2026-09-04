@@ -760,7 +760,9 @@ async function meetingWithPresenceSynced(value) {
     .map((absence) => absence.authorId)
     .filter((id) => UUID.test(String(id))));
   if (!absentIds.size) return meeting;
-  const attendance = meeting.attendance.map((entry) => absentIds.has(entry.userId) ? { ...entry, status: "absent" } : entry);
+  // Une absence préremplit le statut lors de la première synchronisation, mais
+  // ne remplace jamais le choix ponctuel du Référent pour cette réunion.
+  const attendance = [...meeting.attendance];
   const presentIds = new Set(attendance.map((entry) => entry.userId));
   absentIds.forEach((userId) => { if (!presentIds.has(userId)) attendance.push({ userId, status: "absent", note: "" }); });
   return { ...meeting, attendance };
