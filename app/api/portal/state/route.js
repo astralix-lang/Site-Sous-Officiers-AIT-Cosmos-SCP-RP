@@ -781,6 +781,7 @@ function meetingHistoryFromValue(value) {
     savedAt: new Date(entry.savedAt).toISOString(),
     savedBy: UUID.test(String(entry.savedBy || "")) ? entry.savedBy : "",
     savedByName: clean(entry.savedByName, 120) || "Responsable SO",
+    googleDocumentUrl: missionDocumentUrl(entry.googleDocumentUrl),
     ...meetingFromValue(entry),
   }));
 }
@@ -1036,6 +1037,16 @@ export async function POST(request) {
       if (!savedMeeting) return json({ error: "Compte rendu introuvable." }, 404);
       await saveMeetingHistory(history.filter((entry) => entry.id !== meetingId));
       await recordAuditLog({ actor, category: "meeting", action: "Compte rendu de réunion SO supprimé", details: `Réunion du ${label(savedMeeting.occurredAt)}` });
+    } else if (action === "set_so_meeting_history_document") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent gérer les documents de réunion." }, 403);
+      const meetingId = String(body?.meetingId || "");
+      const googleDocumentUrl = missionDocumentUrl(body?.googleDocumentUrl);
+      if (!UUID.test(meetingId) || !googleDocumentUrl) return json({ error: "Le lien Google Docs est invalide." }, 400);
+      const history = await meetingHistoryFor();
+      const savedMeeting = history.find((entry) => entry.id === meetingId);
+      if (!savedMeeting) return json({ error: "Compte rendu introuvable." }, 404);
+      await saveMeetingHistory(history.map((entry) => entry.id === meetingId ? { ...entry, googleDocumentUrl } : entry));
+      await recordAuditLog({ actor, category: "meeting", action: "Google Doc créé depuis un compte rendu de réunion SO", details: `Réunion du ${label(savedMeeting.occurredAt)}` });
     } else if (action === "sync_so_meeting_presence") {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent synchroniser la réunion." }, 403);
       const userId = String(body?.userId || "");

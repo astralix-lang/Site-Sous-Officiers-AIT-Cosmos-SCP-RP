@@ -1939,7 +1939,7 @@ function meetingLocalValue(value) {
   return date.toISOString().slice(0, 16);
 }
 
-function MeetingPanel({ session, users, meeting, history, onSave, onDelete }) {
+function MeetingPanel({ session, users, meeting, history, onSave, onDelete, onSetDocument }) {
   const members = useMemo(() => users.filter((user) => user.approvalStatus === "approved" && ["admin", "referent", "senior", "officer"].includes(user.role)).sort(compareUsersByGrade), [users]);
   const savedMeetings = useMemo(() => Array.isArray(history) ? history : [], [history]);
   const usersById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
@@ -1948,6 +1948,7 @@ function MeetingPanel({ session, users, meeting, history, onSave, onDelete }) {
   const [syncingDraft, setSyncingDraft] = useState(false);
   const [draftSavedAt, setDraftSavedAt] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [exportingMeetingId, setExportingMeetingId] = useState("");
   const [deletingMeetingId, setDeletingMeetingId] = useState("");
   const [error, setError] = useState("");
   const initializedRef = useRef(false);
@@ -2071,27 +2072,33 @@ function MeetingPanel({ session, users, meeting, history, onSave, onDelete }) {
     } finally { setDeletingMeetingId(""); }
   }
 
-  async function createGoogleDocument() {
+  async function createGoogleDocument(meetingSource = form, savedMeetingId = "") {
     setExporting(true); setError("");
+    setExportingMeetingId(savedMeetingId);
     try {
-      const sourceDate = new Date(form.occurredAt);
+      const sourceDate = new Date(meetingSource?.occurredAt);
       const meetingDate = Number.isNaN(sourceDate.getTime()) ? new Date() : sourceDate;
       const meetingDateLabel = new Intl.DateTimeFormat("fr-FR", { dateStyle: "full", timeStyle: "short", timeZone: "Europe/Paris" }).format(meetingDate);
-      const author = `${session.grade || GRADES[0]} ${session.firstName || ""} ${session.lastName || ""}`.trim() || "Responsable SO";
-      const attendance = members.map((user) => {
-        const entry = form.attendance.find((item) => item.userId === user.id) || { status: "present", note: "" };
-        const status = user.presence === "absent" ? "absent" : entry.status;
-        return `${user.grade || GRADES[0]} ${user.firstName || ""} ${user.lastName || ""}`.trim() + ` — ${MEETING_STATUS_LABELS[status] || "Présent"}\n${entry.note || "Aucun mot renseigné."}`;
-      });
+      const author = savedMeetingId
+        ? meetingSource?.savedByName || "Responsable SO"
+        : `${session.grade || GRADES[0]} ${session.firstName || ""} ${session.lastName || ""}`.trim() || "Responsable SO";
+      const attendance = savedMeetingId
+        ? (Array.isArray(meetingSource?.attendance) ? meetingSource.attendance : []).map((entry) => `${memberLabel(entry.userId)} — ${MEETING_STATUS_LABELS[entry.status] || "Présent"}\n${entry.note || "Aucun mot renseigné."}`)
+        : members.map((user) => {
+          const entry = form.attendance.find((item) => item.userId === user.id) || { status: "present", note: "" };
+          const status = user.presence === "absent" ? "absent" : entry.status;
+          return `${user.grade || GRADES[0]} ${user.firstName || ""} ${user.lastName || ""}`.trim() + ` — ${MEETING_STATUS_LABELS[status] || "Présent"}\n${entry.note || "Aucun mot renseigné."}`;
+        });
       const voteLabels = { favorable: "Favorable", mitige: "Mitigé", defavorable: "Défavorable", sanction: "Sanction" };
-      const votes = form.caporalVotes.length
-        ? form.caporalVotes.map((entry) => `${entry.name || "Caporal-Chef"} — ${voteLabels[entry.vote] || "Favorable"}\n${entry.note || "Aucune remarque."}`)
+      const caporalVotes = Array.isArray(meetingSource?.caporalVotes) ? meetingSource.caporalVotes : [];
+      const votes = caporalVotes.length
+        ? caporalVotes.map((entry) => `${entry.name || "Caporal-Chef"} — ${voteLabels[entry.vote] || "Favorable"}\n${entry.note || "Aucune remarque."}`)
         : ["Aucun vote renseigné."];
       const sections = [
         { title: "PRÉSENCES ET MOTS DE L’EFFECTIF", body: attendance.length ? attendance.join("\n\n") : "Aucun Sous-Officier ou Sous-Officier Supérieur validé." },
-        { title: "AXES D’AMÉLIORATION", body: form.improvementAxes || "Aucun axe renseigné." },
+        { title: "AXES D’AMÉLIORATION", body: meetingSource?.improvementAxes || "Aucun axe renseigné." },
         { title: "VOTES DES CAPORAUX-CHEFS", body: votes.join("\n\n") },
-        { title: "SUGGESTIONS ET IDÉES", body: form.suggestions || "Aucune suggestion renseignée." },
+        { title: "SUGGESTIONS ET IDÉES", body: meetingSource?.suggestions || "Aucune suggestion renseignée." },
       ];
       const title = "RÉUNION SO\n";
       const subtitle = "COMPTE RENDU OFFICIEL\n";
@@ -2175,10 +2182,11 @@ function MeetingPanel({ session, users, meeting, history, onSave, onDelete }) {
       }
 
       const documentUrl = `https://docs.google.com/document/d/${documentId}/edit`;
+      if (savedMeetingId) await onSetDocument(savedMeetingId, documentUrl);
       window.location.assign(documentUrl);
     } catch (googleError) {
       setError(googleError instanceof Error ? googleError.message : "Le document Google Docs n’a pas pu être créé.");
-    } finally { setExporting(false); }
+    } finally { setExporting(false); setExportingMeetingId(""); }
   }
 
   return <div className="meeting-page"><form className="meeting-card" onSubmit={save}>
@@ -2191,7 +2199,7 @@ function MeetingPanel({ session, users, meeting, history, onSave, onDelete }) {
   </form>
   <section className="meeting-history-card">
     <div className="meeting-history-head"><div><p className="eyebrow dark">ARCHIVES PARTAGÉES</p><h2>Historique des réunions SO</h2><p className="muted">Chaque enregistrement final est conservé ici. Les brouillons n’y apparaissent pas.</p></div><span className="meeting-history-count"><CalendarDays size={16} /> {savedMeetings.length}</span></div>
-    <div className="meeting-history-list">{savedMeetings.map((savedMeeting) => { const presentCount = savedMeeting.attendance.filter((entry) => entry.status === "present").length; const absentCount = savedMeeting.attendance.filter((entry) => entry.status === "absent").length; return <article key={savedMeeting.id} className="meeting-history-item"><div className="meeting-history-summary"><span className="category-icon blue"><CalendarDays size={20} /></span><div><h3>Réunion du {historyDateLabel(savedMeeting.occurredAt)}</h3><p>Enregistrée par {savedMeeting.savedByName} le {historyDateLabel(savedMeeting.savedAt)}</p></div><div className="meeting-history-actions"><div className="meeting-history-stats"><span>{presentCount} présent{presentCount > 1 ? "s" : ""}</span><span>{absentCount} absent{absentCount > 1 ? "s" : ""}</span></div><button className="icon-button danger meeting-history-delete" type="button" title="Supprimer ce compte rendu" aria-label="Supprimer ce compte rendu" disabled={deletingMeetingId === savedMeeting.id} onClick={() => deleteSavedMeeting(savedMeeting.id)}><Trash2 size={16} /></button></div></div><details><summary>Voir le compte rendu</summary><div className="meeting-history-details"><section><h4>Présences et mots</h4><div className="meeting-history-attendance">{savedMeeting.attendance.map((entry) => <article key={entry.userId}><strong>{memberLabel(entry.userId)}</strong><span className={`history-status ${MEETING_STATUS_TONES[entry.status] || "green"}`}>{MEETING_STATUS_LABELS[entry.status] || "Présent"}</span><p>{entry.note || "Aucun mot renseigné."}</p></article>)}{!savedMeeting.attendance.length && <p>Aucune présence renseignée.</p>}</div></section><section><h4>Axes d’amélioration</h4><p>{savedMeeting.improvementAxes || "Aucun axe renseigné."}</p></section><section><h4>Votes des Caporaux-Chefs</h4><div className="meeting-history-votes">{savedMeeting.caporalVotes.map((entry) => <p key={entry.id}><strong>{entry.name || "Caporal-Chef"}</strong> · {entry.vote === "mitige" ? "Mitigé" : entry.vote === "defavorable" ? "Défavorable" : entry.vote === "sanction" ? "Sanction" : "Favorable"}<br />{entry.note || "Aucune remarque."}</p>)}{!savedMeeting.caporalVotes.length && <p>Aucun vote renseigné.</p>}</div></section><section><h4>Suggestions et idées</h4><p>{savedMeeting.suggestions || "Aucune suggestion renseignée."}</p></section></div></details></article>; })}{!savedMeetings.length && <p className="meeting-empty">Aucune réunion SO n’a encore été enregistrée.</p>}</div>
+    <div className="meeting-history-list">{savedMeetings.map((savedMeeting) => { const presentCount = savedMeeting.attendance.filter((entry) => entry.status === "present").length; const absentCount = savedMeeting.attendance.filter((entry) => entry.status === "absent").length; const isGeneratingDocument = exportingMeetingId === savedMeeting.id; return <article key={savedMeeting.id} className="meeting-history-item"><div className="meeting-history-summary"><span className="category-icon blue"><CalendarDays size={20} /></span><div><h3>Réunion du {historyDateLabel(savedMeeting.occurredAt)}</h3><p>Enregistrée par {savedMeeting.savedByName} le {historyDateLabel(savedMeeting.savedAt)}</p></div><div className="meeting-history-actions"><div className="meeting-history-stats"><span>{presentCount} présent{presentCount > 1 ? "s" : ""}</span><span>{absentCount} absent{absentCount > 1 ? "s" : ""}</span></div>{savedMeeting.googleDocumentUrl ? <a className="secondary meeting-history-document" href={savedMeeting.googleDocumentUrl} target="_blank" rel="noreferrer"><FileText size={15} />Ouvrir le Google Doc</a> : <button className="secondary meeting-history-document" type="button" onClick={() => createGoogleDocument(savedMeeting, savedMeeting.id)} disabled={exporting}><FileText size={15} />{isGeneratingDocument ? "Création…" : "Créer le Google Doc"}</button>}<button className="icon-button danger meeting-history-delete" type="button" title="Supprimer ce compte rendu" aria-label="Supprimer ce compte rendu" disabled={deletingMeetingId === savedMeeting.id} onClick={() => deleteSavedMeeting(savedMeeting.id)}><Trash2 size={16} /></button></div></div><details><summary>Voir le compte rendu</summary><div className="meeting-history-details"><section><h4>Présences et mots</h4><div className="meeting-history-attendance">{savedMeeting.attendance.map((entry) => <article key={entry.userId}><strong>{memberLabel(entry.userId)}</strong><span className={`history-status ${MEETING_STATUS_TONES[entry.status] || "green"}`}>{MEETING_STATUS_LABELS[entry.status] || "Présent"}</span><p>{entry.note || "Aucun mot renseigné."}</p></article>)}{!savedMeeting.attendance.length && <p>Aucune présence renseignée.</p>}</div></section><section><h4>Axes d’amélioration</h4><p>{savedMeeting.improvementAxes || "Aucun axe renseigné."}</p></section><section><h4>Votes des Caporaux-Chefs</h4><div className="meeting-history-votes">{savedMeeting.caporalVotes.map((entry) => <p key={entry.id}><strong>{entry.name || "Caporal-Chef"}</strong> · {entry.vote === "mitige" ? "Mitigé" : entry.vote === "defavorable" ? "Défavorable" : entry.vote === "sanction" ? "Sanction" : "Favorable"}<br />{entry.note || "Aucune remarque."}</p>)}{!savedMeeting.caporalVotes.length && <p>Aucun vote renseigné.</p>}</div></section><section><h4>Suggestions et idées</h4><p>{savedMeeting.suggestions || "Aucune suggestion renseignée."}</p></section></div></details></article>; })}{!savedMeetings.length && <p className="meeting-empty">Aucune réunion SO n’a encore été enregistrée.</p>}</div>
   </section>
   </div>;
 }
@@ -2249,9 +2257,14 @@ function MeetingTransmissionPanel({ session, absences = [] }) {
     if (Array.isArray(state?.soMeetingHistory)) setHistory(state.soMeetingHistory);
   }
 
+  async function setSavedMeetingDocument(meetingId, googleDocumentUrl) {
+    const state = await portalRequest("POST", { action: "set_so_meeting_history_document", meetingId, googleDocumentUrl });
+    if (Array.isArray(state?.soMeetingHistory)) setHistory(state.soMeetingHistory);
+  }
+
   const meetingUsers = useMemo(() => usersWithCurrentAbsences(users, sharedAbsences), [users, sharedAbsences]);
   if (loading) return <div className="meeting-card"><p className="muted">Chargement de la réunion SO…</p></div>;
-  return <MeetingPanel session={session} users={meetingUsers} meeting={meeting} history={history} onSave={save} onDelete={removeSavedMeeting} />;
+  return <MeetingPanel session={session} users={meetingUsers} meeting={meeting} history={history} onSave={save} onDelete={removeSavedMeeting} onSetDocument={setSavedMeetingDocument} />;
 }
 
 function App() {
