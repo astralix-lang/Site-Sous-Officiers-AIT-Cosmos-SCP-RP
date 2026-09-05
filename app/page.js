@@ -595,6 +595,62 @@ function ThemePicker({ themeId, onChange }) {
   );
 }
 
+function ThemedCursor() {
+  const cursorRef = useRef(null);
+  const [enabled, setEnabled] = useState(false);
+
+  useEffect(() => {
+    const finePointer = window.matchMedia("(pointer: fine)");
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const syncAvailability = () => {
+      const available = finePointer.matches && !reducedMotion.matches;
+      setEnabled(available);
+      document.documentElement.classList.toggle("has-themed-cursor", available);
+    };
+    syncAvailability();
+    finePointer.addEventListener("change", syncAvailability);
+    reducedMotion.addEventListener("change", syncAvailability);
+    return () => {
+      finePointer.removeEventListener("change", syncAvailability);
+      reducedMotion.removeEventListener("change", syncAvailability);
+      document.documentElement.classList.remove("has-themed-cursor");
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const cursor = cursorRef.current;
+    if (!cursor) return undefined;
+    const interactiveSelector = "button, a, select, input:not([type='text']):not([type='search']):not([type='email']):not([type='password']), [role='button'], label";
+    const textSelector = "input[type='text'], input[type='search'], input[type='email'], input[type='password'], textarea, [contenteditable='true']";
+    const hide = () => cursor.classList.remove("is-visible", "is-interactive", "is-pressed", "is-text");
+    const move = (event) => {
+      cursor.style.setProperty("--cursor-x", `${event.clientX}px`);
+      cursor.style.setProperty("--cursor-y", `${event.clientY}px`);
+      cursor.classList.add("is-visible");
+      if (!(event.target instanceof Element)) return;
+      cursor.classList.toggle("is-interactive", Boolean(event.target.closest(interactiveSelector)));
+      cursor.classList.toggle("is-text", Boolean(event.target.closest(textSelector)));
+    };
+    const press = () => cursor.classList.add("is-pressed");
+    const release = () => cursor.classList.remove("is-pressed");
+    window.addEventListener("pointermove", move, { passive: true });
+    window.addEventListener("pointerdown", press, { passive: true });
+    window.addEventListener("pointerup", release, { passive: true });
+    window.addEventListener("blur", hide);
+    document.addEventListener("mouseleave", hide);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerdown", press);
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("blur", hide);
+      document.removeEventListener("mouseleave", hide);
+    };
+  }, [enabled]);
+
+  return enabled ? <span className="portal-cursor" ref={cursorRef} aria-hidden="true" /> : null;
+}
+
 function Login({ configurationError, error }) {
   const previewEnabled = OPENAI_PREVIEW_ENABLED;
   const status = typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("discord") || "";
@@ -3316,6 +3372,7 @@ function App() {
         </section>
         </> : activeSection === "absence_table" ? <AbsenceTablePanel absences={absences} users={users} onDelete={deleteAbsence} /> : activeSection === "quotas" ? <QuotaPanel users={usersWithAbsenceStatus} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onUpdateGroup={updateChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} assignments={sergeantAssignments} onSuccess={sergeantReportSuccess} history={submissionHistory.filter((entry) => entry.type === "sergeant_report")} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} /> : <TransmissionPanel key={activeSection} session={session} absences={absences} onSuccess={transmissionSuccess} type={activeSection} history={submissionHistory.filter((entry) => entry.type === activeSection)} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} />}
       </main>
+      <ThemedCursor />
       {notice && <div className="toast"><BadgeCheck size={19} />{notice}</div>}
       {modal && <UserModal actor={session} editing={modal.id ? modal : null} onClose={() => setModal(null)} onSave={saveUser} />}
       {profileOpen && <ProfileModal user={session} onClose={() => setProfileOpen(false)} onSave={saveProfile} soundEnabled={soundEnabled} onSoundEnabledChange={setSoundEnabled} />}

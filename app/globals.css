@@ -8,6 +8,14 @@ button,input,select,textarea { font:inherit; }
 button { cursor:pointer; }
 h1,h2,strong { font-family:"Manrope",sans-serif; }
 h1,h2,p { margin-top:0; }
+.portal-cursor { --cursor-x:-100px; --cursor-y:-100px; width:34px; height:34px; position:fixed; top:0; left:0; z-index:9999; pointer-events:none; opacity:0; border:1px solid color-mix(in srgb,var(--theme-accent) 84%,#ffffff); border-radius:50%; background:radial-gradient(circle,var(--theme-accent) 0 10%,color-mix(in srgb,var(--theme-accent) 18%,transparent) 12%,transparent 42%); box-shadow:0 0 0 5px color-mix(in srgb,var(--theme-accent) 9%,transparent),0 0 22px color-mix(in srgb,var(--theme-accent) 36%,transparent); transform:translate3d(var(--cursor-x),var(--cursor-y),0) translate(-50%,-50%); transition:width .16s ease,height .16s ease,opacity .16s ease,border-color .2s ease,background .2s ease,box-shadow .2s ease; }
+.portal-cursor::after { width:5px; height:5px; content:""; position:absolute; top:50%; left:50%; border-radius:50%; background:#fff; box-shadow:0 0 10px color-mix(in srgb,var(--theme-accent) 88%,#fff); transform:translate(-50%,-50%); }
+.portal-cursor.is-visible { opacity:1; }
+.portal-cursor.is-interactive { width:43px; height:43px; border-color:var(--theme-accent); background:radial-gradient(circle,var(--theme-accent) 0 8%,color-mix(in srgb,var(--theme-accent) 26%,transparent) 10%,transparent 46%); box-shadow:0 0 0 7px color-mix(in srgb,var(--theme-accent) 11%,transparent),0 0 26px color-mix(in srgb,var(--theme-accent) 46%,transparent); }
+.portal-cursor.is-pressed { width:25px; height:25px; }
+.portal-cursor.is-text { opacity:0; }
+@media (pointer:fine) and (prefers-reduced-motion:no-preference) { html.has-themed-cursor,html.has-themed-cursor body,html.has-themed-cursor :is(button,a,select,input[type="checkbox"],input[type="radio"],input[type="date"],input[type="time"],input[type="file"],label,[role="button"]) { cursor:none; } html.has-themed-cursor :is(input[type="text"],input[type="search"],input[type="email"],input[type="password"],textarea,[contenteditable="true"]) { cursor:text; } }
+@media (prefers-reduced-motion:reduce),(pointer:coarse) { .portal-cursor { display:none; } }
 .eyebrow { color:#8ea9ca; font-size:11px; font-weight:700; letter-spacing:.17em; margin-bottom:15px; }
 .eyebrow.dark { color:#42658e; }
 .muted { color:var(--muted); }
