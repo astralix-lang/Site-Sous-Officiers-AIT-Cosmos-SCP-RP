@@ -142,6 +142,27 @@ export async function updateDiscordSubmission({ type, values, senderName, sender
   return { updated: true };
 }
 
+// Les messages envoyés par un webhook peuvent être relus avec ce même webhook.
+// Cela permet au portail de réagir à une décision prise directement dans le
+// salon Discord, sans exposer de jeton de bot dans le navigateur.
+export async function discordMessageHasRefusalReaction({ type, messageId }) {
+  if (!/^\d{17,20}$/.test(String(messageId || ""))) return false;
+  const { webhookUrl } = configFor(type);
+  const endpoint = new URL(webhookUrl);
+  endpoint.pathname = `${endpoint.pathname}/messages/${encodeURIComponent(String(messageId))}`;
+  const response = await fetch(endpoint.toString(), {
+    method: "GET",
+    redirect: "manual",
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!response.ok) {
+    if (response.status === 404) return false;
+    throw new Error("DISCORD_REJECTED");
+  }
+  const message = await response.json().catch(() => null);
+  return Array.isArray(message?.reactions) && message.reactions.some((reaction) => reaction?.emoji?.name === "❌" && Number(reaction?.count || 0) > 0);
+}
+
 export function discordErrorMessage(error) {
   if (error instanceof Error && error.message === "DISCORD_WEBHOOK_UNAVAILABLE") return "Le salon Discord de cette catégorie n’est pas configuré.";
   if (error instanceof Error && error.message === "DISCORD_SUBMISSION_INVALID") return "Les données du formulaire sont invalides.";

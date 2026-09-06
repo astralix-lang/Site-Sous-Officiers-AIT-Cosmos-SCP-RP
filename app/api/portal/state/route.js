@@ -1,5 +1,5 @@
 import { adminAccess, database, json, readJson, recordAuditLog, requireSession, validCsrfRequest } from "../../auth/_shared";
-import { discordErrorMessage, updateDiscordSubmission } from "../../submissions/discord";
+import { discordErrorMessage, discordMessageHasRefusalReaction, updateDiscordSubmission } from "../../submissions/discord";
 
 export const runtime = "edge";
 
@@ -32,6 +32,10 @@ const SO_MEETING_HISTORY_ID = "4e59f012-30d6-4e63-8092-5d4eb2c60262";
 const SO_MEETING_HISTORY_TARGET = "__portal_so_meeting_history";
 const MEETING_ATTENDANCE_STATUSES = new Set(["present", "absent", "late"]);
 const CAPORAL_VOTE_VALUES = new Set(["favorable", "mitige", "defavorable", "sanction"]);
+const DISCORD_REJECTION_TYPES = new Set(["recommendation", "pcs_exp", "observation_hdr", "observation_so"]);
+const DISCORD_REJECTION_CHECK_INTERVAL = 45_000;
+let discordRejectionCheckAt = 0;
+let discordRejectionCheckPromise = null;
 const FILE_TYPES = new Set([
   "image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf", "text/plain",
   "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -262,6 +266,8 @@ function submissionFromRow(row) {
     displayAt: label(row.created_at),
     editedAt: payload.editedAt || null,
     editedBy: payload.editedBy || null,
+    discordMessageId: /^\d{17,20}$/.test(String(payload.discordMessageId || "")) ? String(payload.discordMessageId) : "",
+    discordDelivered: payload.discordDelivered === true,
   };
 }
 
@@ -383,6 +389,46 @@ async function removeSubmissionsByType(type) {
   return rows.length;
 }
 
+// Une réaction ❌ sur Discord représente un refus. On ne vérifie que les
+// derniers messages, par petites séries et avec un délai, afin de respecter
+// les limites Discord même lorsqu’il y a plusieurs utilisateurs connectés.
+async function syncDiscordRejections(submissions) {
+  const now = Date.now();
+  if (discordRejectionCheckPromise) return discordRejectionCheckPromise;
+  if (now - discordRejectionCheckAt < DISCORD_REJECTION_CHECK_INTERVAL) return [];
+  discordRejectionCheckAt = now;
+  const checkedByType = {};
+  const candidates = (Array.isArray(submissions) ? submissions : [])
+    .filter((submission) => DISCORD_REJECTION_TYPES.has(submission.type) && submission.discordDelivered && /^\d{17,20}$/.test(submission.discordMessageId))
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .filter((submission) => {
+      checkedByType[submission.type] = (checkedByType[submission.type] || 0) + 1;
+      return checkedByType[submission.type] <= 4;
+    });
+  discordRejectionCheckPromise = (async () => {
+    const removed = [];
+    for (const submission of candidates) {
+      try {
+        const refused = await discordMessageHasRefusalReaction({ type: submission.type, messageId: submission.discordMessageId });
+        if (!refused) continue;
+        const deleted = await removeSubmission(submission.id, submission.type);
+        if (!deleted) continue;
+        removed.push(deleted.id);
+        await recordAuditLog({ category: "form", action: "Formulaire refusé sur Discord", details: `${deleted.type} • réaction ❌` });
+      } catch {
+        // Une indisponibilité Discord ne doit pas empêcher le portail de
+        // fonctionner. La prochaine vérification reprendra automatiquement.
+      }
+    }
+    return removed;
+  })();
+  try {
+    return await discordRejectionCheckPromise;
+  } finally {
+    discordRejectionCheckPromise = null;
+  }
+}
+
 function normalizeQuotaTargets(value) {
   const source = objectValue(value);
   return Object.fromEntries(Object.keys(DEFAULT_QUOTA_TARGETS).map((key) => [key, numberInRange(source[key] ?? DEFAULT_QUOTA_TARGETS[key]) ]));
@@ -420,9 +466,11 @@ async function quotaState(submissions) {
 }
 
 async function stateFor(user) {
-  const [chats, notifications, announcements, auditLogs, allSubmissions, summarySettings, sergeantAssignments, allMissions, allManagementReports, managementReportSettings, loadedMeeting, soMeetingHistory, allAbsences] = await Promise.all([
+  let [chats, notifications, announcements, auditLogs, allSubmissions, summarySettings, sergeantAssignments, allMissions, allManagementReports, managementReportSettings, loadedMeeting, soMeetingHistory, allAbsences] = await Promise.all([
     allChats(user), notificationsFor(user), announcementsFor(user), auditLogsFor(user), submissionsFor(), summarySettingsFor(), assignmentsFor(), missionsFor(), managementReportsFor(), managementReportSettingsFor(), meetingFor(), meetingHistoryFor(), absencesFor(),
   ]);
+  const refusedSubmissionIds = await syncDiscordRejections(allSubmissions);
+  if (refusedSubmissionIds.length) allSubmissions = allSubmissions.filter((submission) => !refusedSubmissionIds.includes(submission.id));
   const soMeeting = await resetArchivedMeetingDraft(loadedMeeting, soMeetingHistory);
   const assignedSergeants = new Set(sergeantAssignments.filter((assignment) => assignment.observerId === user.id).map((assignment) => assignment.sergeantId));
   const managementReports = isManager(user) ? allManagementReports : allManagementReports.filter((report) => report.authorId === user.id || (user.role === "senior" && assignedSergeants.has(report.authorId)));
