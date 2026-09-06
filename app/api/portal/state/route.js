@@ -323,6 +323,24 @@ async function saveAbsence(absence) {
   });
 }
 
+async function updateAbsence(absence) {
+  const values = absenceValues(absence);
+  if (!values || !UUID.test(String(absence?.id || "")) || !UUID.test(String(absence?.authorId || ""))) throw new Error("Absence invalide.");
+  const target = `${ABSENCE_TARGET_PREFIX}${absence.id}`;
+  const body = JSON.stringify({ ...values, authorId: absence.authorId, authorName: clean(absence.authorName, 120), authorGrade: clean(absence.authorGrade, 60), authorRole: clean(absence.authorRole, 40) });
+  const rows = await database(`portal_notifications?id=eq.${encodeURIComponent(absence.id)}&target=eq.${encodeURIComponent(target)}&select=*`);
+  if (!parseArray(rows)[0]) throw new Error("Absence introuvable.");
+  await database(`portal_notifications?id=eq.${encodeURIComponent(absence.id)}&target=eq.${encodeURIComponent(target)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ title: `Absence — ${clean(absence.authorName, 120) || "Membre du portail"}`, body }),
+  });
+  const updatedRows = await database(`portal_notifications?id=eq.${encodeURIComponent(absence.id)}&target=eq.${encodeURIComponent(target)}&select=*`);
+  const updated = absenceFromRow(parseArray(updatedRows)[0]);
+  if (!updated || updated.endDate !== values.endDate) throw new Error("ABSENCE_UPDATE_NOT_CONFIRMED");
+  return updated;
+}
+
 // Les absences sont une source commune pour l'effectif et la réunion SO.
 // Leur suppression passe par ce point unique afin de retirer aussi les
 // éventuels accusés de lecture liés à la déclaration.
@@ -849,6 +867,20 @@ export async function POST(request) {
       };
       await saveAbsence(absence);
       await recordAuditLog({ actor, category: "absence", action: requestedUserId === actor.id ? "Absence déclarée" : "Absence déclarée pour un membre", details: `${absence.authorName} · du ${values.startDate} au ${values.endDate}` });
+    } else if (action === "extend_absence") {
+      const absenceId = String(body?.absenceId || "");
+      const endDate = calendarDate(body?.endDate);
+      const extensionReason = cleanMultiline(body?.reason, 1_000);
+      if (!UUID.test(absenceId) || !endDate) return json({ error: "Choisissez une nouvelle date de fin valide." }, 400);
+      const currentAbsence = (await absencesFor()).find((absence) => absence.id === absenceId);
+      if (!currentAbsence) return json({ error: "Absence introuvable ou déjà supprimée." }, 404);
+      if (currentAbsence.authorId !== actor.id) return json({ error: "Vous pouvez uniquement prolonger votre propre absence." }, 403);
+      if (!absenceIsActive(currentAbsence)) return json({ error: "Seule une absence actuellement en cours peut être prolongée." }, 400);
+      if (endDate <= currentAbsence.endDate) return json({ error: "La nouvelle date de fin doit être postérieure à la date actuelle." }, 400);
+      const reason = extensionReason ? cleanMultiline(`${currentAbsence.reason}\n\nProlongation : ${extensionReason}`, 1_500) : currentAbsence.reason;
+      const updated = await updateAbsence({ ...currentAbsence, endDate, reason });
+      result.extendedAbsenceId = updated.id;
+      await recordAuditLog({ actor, category: "absence", action: "Absence prolongée", details: `${updated.authorName} · jusqu’au ${endDate}` });
     } else if (action === "delete_absence") {
       if (!isManager(actor)) return json({ error: "Seuls les Référents SO et les accès supérieurs peuvent supprimer une absence." }, 403);
       const absenceId = String(body?.absenceId || "");

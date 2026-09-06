@@ -373,6 +373,13 @@ function absenceDateLabel(value) {
   return new Intl.DateTimeFormat("fr-FR", { dateStyle: "long", timeZone: "Europe/Paris" }).format(new Date(`${value}T12:00:00Z`));
 }
 
+function nextCalendarDay(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) return parisDayValue();
+  const date = new Date(`${value}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
 function readFormDraft(userId, type) {
   if (typeof window === "undefined") return null;
   const drafts = readStoredJson(DRAFTS_KEY, {});
@@ -818,7 +825,7 @@ function InitialIdentityModal({ user, onSave }) {
   );
 }
 
-function AbsenceRequestPanel({ session, users, onSubmit }) {
+function AbsenceRequestPanel({ session, users, absences, onSubmit, onExtend }) {
   const today = parisDayValue();
   const canDeclareForOthers = hasManagerAccess(session.role);
   const availableMembers = useMemo(() => users.filter((user) => user.approvalStatus === "approved" && !user.blocked).sort(compareUsersByGrade), [users]);
@@ -827,9 +834,38 @@ function AbsenceRequestPanel({ session, users, onSubmit }) {
   const [error, setError] = useState("");
   const selectedMember = availableMembers.find((user) => user.id === form.userId) || session;
   const memberName = `${selectedMember.grade || GRADES[0]} ${selectedMember.firstName} ${selectedMember.lastName}`.trim();
+  const activeOwnAbsence = useMemo(() => (Array.isArray(absences) ? absences : [])
+    .filter((absence) => String(absence.authorId) === String(session.id) && absenceState(absence) === "active")
+    .sort((left, right) => right.endDate.localeCompare(left.endDate) || new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0] || null, [absences, session.id]);
+  const extendingOwnAbsence = String(form.userId) === String(session.id) && Boolean(activeOwnAbsence);
+  const extensionMinDate = nextCalendarDay(activeOwnAbsence?.endDate);
+
+  useEffect(() => {
+    if (!extendingOwnAbsence) return;
+    setForm((current) => current.endDate <= activeOwnAbsence.endDate
+      ? { ...current, startDate: activeOwnAbsence.startDate, endDate: extensionMinDate }
+      : current);
+  }, [activeOwnAbsence?.endDate, activeOwnAbsence?.startDate, extendingOwnAbsence, extensionMinDate]);
 
   async function submit(event) {
     event.preventDefault();
+    if (extendingOwnAbsence) {
+      if (form.endDate <= activeOwnAbsence.endDate) {
+        setError("Choisissez une date de fin postérieure à la fin actuelle de votre absence.");
+        return;
+      }
+      setSending(true);
+      setError("");
+      try {
+        await onExtend({ absenceId: activeOwnAbsence.id, endDate: form.endDate, reason: form.reason });
+        setForm((current) => ({ ...current, reason: "" }));
+      } catch (submissionError) {
+        setError(submissionError instanceof Error ? submissionError.message : "La prolongation n’a pas pu être enregistrée.");
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
     if (form.endDate < form.startDate) {
       setError("La date de fin doit être égale ou postérieure à la date de début.");
       return;
@@ -849,14 +885,13 @@ function AbsenceRequestPanel({ session, users, onSubmit }) {
 
   return (
     <section className="transmission-card absence-request-card">
-      <div className="transmission-head"><span className="category-icon large gold"><UserX size={25} /></span><div><p className="eyebrow dark">NOUVELLE DÉCLARATION</p><h2>Absence</h2><p className="muted">Le suivi de l’équipe et la réunion SO seront automatiquement mis à jour.</p></div></div>
+      <div className="transmission-head"><span className="category-icon large gold"><UserX size={25} /></span><div><p className="eyebrow dark">{extendingOwnAbsence ? "PROLONGATION D’ABSENCE" : "NOUVELLE DÉCLARATION"}</p><h2>{extendingOwnAbsence ? "Prolonger mon absence" : "Absence"}</h2><p className="muted">{extendingOwnAbsence ? "Votre déclaration en cours sera mise à jour sans créer de doublon." : "Le suivi de l’équipe et la réunion SO seront automatiquement mis à jour."}</p></div></div>
       <form onSubmit={submit}>
         <label>Nom du membre absent</label>
         {canDeclareForOthers ? <select value={form.userId} onChange={(event) => setForm((current) => ({ ...current, userId: event.target.value }))}>{availableMembers.map((user) => <option value={user.id} key={user.id}>{user.grade || GRADES[0]} {user.firstName} {user.lastName}</option>)}</select> : <input value={memberName} readOnly aria-readonly="true" />}
-        <div className="absence-form-grid"><label>Date de début<input type="date" value={form.startDate} onChange={(event) => setForm((current) => ({ ...current, startDate: event.target.value }))} required /></label><label>Date de fin<input type="date" min={form.startDate || undefined} value={form.endDate} onChange={(event) => setForm((current) => ({ ...current, endDate: event.target.value }))} required /></label></div>
-        <label>Raison<textarea value={form.reason} onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))} rows={6} maxLength={1500} required placeholder="Expliquez brièvement la raison de votre absence…" /></label>
+        {extendingOwnAbsence ? <><div className="absence-extension-current"><CalendarDays size={19} /><div><strong>Absence en cours</strong><span>Du {absenceDateLabel(activeOwnAbsence.startDate)} au {absenceDateLabel(activeOwnAbsence.endDate)}</span></div></div><label>Nouvelle date de fin<input type="date" min={extensionMinDate} value={form.endDate} onChange={(event) => setForm((current) => ({ ...current, endDate: event.target.value }))} required /></label><label>Précision <span className="optional">(facultatif)</span><textarea value={form.reason} onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))} rows={4} maxLength={1000} placeholder="Ajoutez une précision à votre prolongation si nécessaire…" /></label></> : <><div className="absence-form-grid"><label>Date de début<input type="date" value={form.startDate} onChange={(event) => setForm((current) => ({ ...current, startDate: event.target.value }))} required /></label><label>Date de fin<input type="date" min={form.startDate || undefined} value={form.endDate} onChange={(event) => setForm((current) => ({ ...current, endDate: event.target.value }))} required /></label></div><label>Raison<textarea value={form.reason} onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))} rows={6} maxLength={1500} required placeholder="Expliquez brièvement la raison de votre absence…" /></label></>}
         {error && <p className="form-error">{error}</p>}
-        <div className="transmission-actions"><span><ShieldCheck size={15} /> {canDeclareForOthers ? "La déclaration apparaît immédiatement dans le suivi des absences." : "Votre déclaration est transmise aux responsables SO."}</span><button className="primary" type="submit" disabled={sending}><Send size={17} />{sending ? "Enregistrement…" : canDeclareForOthers && selectedMember.id !== session.id ? "Déclarer cette absence" : "Déclarer mon absence"}</button></div>
+        <div className="transmission-actions"><span><ShieldCheck size={15} /> {extendingOwnAbsence ? "La même absence sera prolongée dans le suivi des responsables." : canDeclareForOthers ? "La déclaration apparaît immédiatement dans le suivi des absences." : "Votre déclaration est transmise aux responsables SO."}</span><button className="primary" type="submit" disabled={sending}><Send size={17} />{sending ? "Enregistrement…" : extendingOwnAbsence ? "Prolonger mon absence" : canDeclareForOthers && selectedMember.id !== session.id ? "Déclarer cette absence" : "Déclarer mon absence"}</button></div>
       </form>
     </section>
   );
@@ -2718,6 +2753,12 @@ function App() {
     applySharedPortalState(state);
     flash("Votre absence a été déclarée et apparaît dans le suivi des responsables.");
   }
+  async function extendAbsence(values) {
+    if (!session) throw new Error("Votre session n’est plus active.");
+    const state = await portalRequest("POST", { action: "extend_absence", ...values });
+    applySharedPortalState(state);
+    flash("Votre absence a été prolongée dans le suivi des responsables.");
+  }
   function deleteAbsence(absenceId) {
     if (!hasManagerAccess(session?.role) || !confirm("Supprimer définitivement cette absence ?")) return;
     if (portalRemote) {
@@ -3359,7 +3400,7 @@ function App() {
         })}{PORTAL_SECTION_REGISTRY.filter((item) => item.group === "logs" && hasSectionAccess(session.role, item.access)).length > 0 && <optgroup label="Journal">{PORTAL_SECTION_REGISTRY.filter((item) => item.group === "logs" && hasSectionAccess(session.role, item.access)).map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</optgroup>}</select></div>
         {activeSection === "home" ? <header><div><p className="eyebrow dark">MENU PRINCIPAL</p><h1>Accueil</h1><p className="muted">Retrouvez vos informations importantes et vos raccourcis.</p></div><span className="all-access"><Bell size={16} /> Centre d’informations</span></header> : activeSection === "summary" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Résumé</h1><p className="muted">Analysez les recommandations, observations et l’activité de l’équipe.</p></div><span className="all-access"><BarChart3 size={16} /> Statistiques en temps réel</span></header> : activeSection === "management_report" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Rapport de gérance</h1><p className="muted">Auto-évaluez vos gérances et consultez les avis des responsables.</p></div><span className={hasManagerAccess(session.role) ? "referent-access" : "all-access"}><FileText size={16} /> {hasManagerAccess(session.role) ? "Suivi responsable" : "Auto-évaluation"}</span></header> : activeSection === "absence_request" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Absences</h1><p className="muted">Déclarez votre absence pour que le suivi de l’équipe soit automatiquement actualisé.</p></div><span className="all-access"><UserX size={16} /> Déclaration personnelle</span></header> : activeSection === "workforce" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Effectif</h1><p className="muted">Consultez l’organisation complète des membres par accès et par grade.</p></div><span className="referent-access"><UsersRound size={16} /> Vue des effectifs</span></header> : activeSection === "specializations" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Spécialisations</h1><p className="muted">Consultez les spécialités, Steam ID et Discord ID de l’effectif.</p></div><span className="referent-access"><BadgeCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "absence_table" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Absences</h1><p className="muted">Consultez les périodes et motifs d’absence déclarés par l’équipe.</p></div><span className="referent-access"><UserX size={16} /> Suivi Référent SO</span></header> : activeSection === "meeting_so" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Réunion SO</h1><p className="muted">Préparez le suivi de l’effectif et les comptes rendus de réunion.</p></div><span className="referent-access"><ClipboardCheck size={16} /> Gestion Référent SO</span></header> : activeSection === "sergeant_assignments" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Référent</h1><p className="muted">Attribuez et suivez les référents des nouveaux Sergents.</p></div><span className="senior-access"><BadgeCheck size={16} /> Suivi des semaines de test</span></header> : activeSection === "logs" ? <header><div><p className="eyebrow dark">SUIVI DU PORTAIL</p><h1>Logs</h1><p className="muted">Consultez les actions importantes réalisées sur le portail.</p></div><span className="referent-access"><ScrollText size={16} /> Admin & Référent SO</span></header> : activeSection === "dashboard" ? <header><div><p className="eyebrow dark">PORTAIL DE GESTION</p><h1>{getTimeGreeting()}, {session.grade || GRADES[0]} {session.lastName}</h1><p className="muted">Validez les demandes Discord et gardez une vue claire sur votre équipe.</p></div><span className="all-access"><MessageSquareText size={16} /> Connexion Discord</span></header> : activeSection === "quotas" ? <header><div><p className="eyebrow dark">RÉFÉRENT SO</p><h1>Quotas</h1><p className="muted">Suivez le volume de transmissions réalisé par chaque Sous-Officier.</p></div><span className="referent-access"><Gauge size={16} /> Gestion Référent SO</span></header> : activeSection === "mission_internal" ? <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>Mission interne</h1><p className="muted">Déposez et validez les Google Docs des missions internes.</p></div><span className="all-access"><FileText size={16} /> Dépôt et validation</span></header> : activeSection === "chat" ? <header><div><p className="eyebrow dark">CHAT INTERNE</p><h1>Messagerie</h1><p className="muted">Échangez avec un membre du portail ou contactez un Référent SO.</p></div><span className="all-access"><MessageSquareText size={16} /> Accessible à tous les comptes</span></header> : activeSection === "observation_so" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : activeSection === "sergeant_report" ? <header><div><p className="eyebrow dark">SOUS-OFFICIER SUPÉRIEUR</p><h1>Rapport nouveau Sous-Officier</h1><p className="muted">Évaluez et concluez la semaine de test d’un nouveau Sergent.</p></div><span className="senior-access"><BadgeCheck size={16} /> Accès Sous-Officiers Supérieurs</span></header> : <header><div><p className="eyebrow dark">ESPACE PARTAGÉ</p><h1>{TRANSMISSION_TYPES[activeSection].title}</h1><p className="muted">{TRANSMISSION_TYPES[activeSection].description}</p></div><span className="all-access"><UsersRound size={16} /> Accessible à tous les rôles</span></header>}
 
-        {activeSection === "home" ? <HomePanel session={sessionWithAbsenceStatus} users={usersWithAbsenceStatus} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} announcements={announcements} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={navigateFromHome} onDismissNotification={dismissPortalNotification} onClearNotifications={clearPortalNotifications} onCreateAnnouncement={createAnnouncement} onUpdateAnnouncement={updateAnnouncement} onDeleteAnnouncement={deleteAnnouncement} onAcknowledgeAnnouncement={acknowledgeAnnouncement} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} submissions={submissionHistory} activityResetAt={summarySettings.activityResetAt} rankingResetAt={summarySettings.rankingResetAt} quotaResetAt={quotas.resetAt} onResetActivity={resetActivitySummary} onResetRanking={resetActivityRanking} /> : activeSection === "management_report" ? <ManagementReportPanel session={session} users={users} reports={managementReports} assignments={sergeantAssignments} settings={managementReportSettings} onSubmit={submitManagementReport} onComment={commentManagementReport} onUpdateComment={updateManagementComment} onDeleteComment={deleteManagementComment} onDeleteReport={deleteManagementReport} onResetRanking={resetManagementRanking} /> : activeSection === "absence_request" ? <AbsenceRequestPanel session={session} users={users} onSubmit={createAbsence} /> : activeSection === "workforce" ? <WorkforcePanel users={usersWithAbsenceStatus} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
+        {activeSection === "home" ? <HomePanel session={sessionWithAbsenceStatus} users={usersWithAbsenceStatus} missions={missions} chats={chats} quotas={quotas} logs={auditLogs} assignments={sergeantAssignments} portalNotifications={portalNotifications} announcements={announcements} shortcutIds={shortcutPreferences[session.id]} onSaveShortcuts={saveHomeShortcuts} onNavigate={navigateFromHome} onDismissNotification={dismissPortalNotification} onClearNotifications={clearPortalNotifications} onCreateAnnouncement={createAnnouncement} onUpdateAnnouncement={updateAnnouncement} onDeleteAnnouncement={deleteAnnouncement} onAcknowledgeAnnouncement={acknowledgeAnnouncement} /> : activeSection === "summary" ? <SummaryPanel session={session} users={users} submissions={submissionHistory} activityResetAt={summarySettings.activityResetAt} rankingResetAt={summarySettings.rankingResetAt} quotaResetAt={quotas.resetAt} onResetActivity={resetActivitySummary} onResetRanking={resetActivityRanking} /> : activeSection === "management_report" ? <ManagementReportPanel session={session} users={users} reports={managementReports} assignments={sergeantAssignments} settings={managementReportSettings} onSubmit={submitManagementReport} onComment={commentManagementReport} onUpdateComment={updateManagementComment} onDeleteComment={deleteManagementComment} onDeleteReport={deleteManagementReport} onResetRanking={resetManagementRanking} /> : activeSection === "absence_request" ? <AbsenceRequestPanel session={session} users={users} absences={absences} onSubmit={createAbsence} onExtend={extendAbsence} /> : activeSection === "workforce" ? <WorkforcePanel users={usersWithAbsenceStatus} quotas={quotas} /> : activeSection === "sergeant_assignments" ? <SergeantAssignmentPanel users={users} session={session} assignments={sergeantAssignments} onAssign={assignSergeant} onReminder={remindSergeantAssignment} onDelete={deleteSergeantAssignment} /> : activeSection === "logs" ? <LogsPanel session={session} logs={auditLogs} onClear={clearAuditLogs} /> : activeSection === "dashboard" ? <>
         <section className="stats">
           <article><span className="stat-icon blue"><UsersRound /></span><div><strong>{users.length}</strong><small>Comptes au total</small></div><span className="trend">Tous niveaux</span></article>
           <article><span className="stat-icon gold"><UserRound /></span><div><strong>{users.filter((user) => user.approvalStatus === "pending").length}</strong><small>Demandes en attente</small></div><span className="trend">À valider</span></article>
