@@ -1,0 +1,72 @@
+-- Run inside a transaction and ROLLBACK: fixtures must never be committed.
+DO $$
+DECLARE admin_id uuid := gen_random_uuid(); member_a uuid := gen_random_uuid(); member_b uuid := gen_random_uuid();
+  r jsonb; d jsonb; slot_a uuid; slot_b uuid; booking uuid; tomorrow text := ((now() AT TIME ZONE 'Europe/Paris')::date + 1)::text;
+BEGIN
+  INSERT INTO portal_users(id,email,first_name,last_name,role,grade) VALUES
+    (admin_id,admin_id || '@interview-test.invalid','Test','Responsable','referent','Major'),
+    (member_a,member_a || '@interview-test.invalid','Test','SO A','officer','Sergent'),
+    (member_b,member_b || '@interview-test.invalid','Test','SO B','officer','Sergent');
+  d := portal_interview_due(member_a);
+  ASSERT d->>'reason' = 'monthly', 'new officer monthly cycle';
+  ASSERT (d->>'daysUntil')::int BETWEEN 28 AND 31, 'calendar month due date';
+  r := portal_interview_action(member_a,'add_slots',jsonb_build_object('date',tomorrow,'from','15:00','to','16:00'));
+  ASSERT (r->>'status')::int = 403, 'officer cannot publish availability';
+  r := portal_interview_action(admin_id,'add_slots',jsonb_build_object('date',tomorrow,'from','15:07','to','16:00'));
+  ASSERT (r->>'status')::int = 400, 'quarter hours required';
+  r := portal_interview_action(admin_id,'add_slots',jsonb_build_object('date',tomorrow,'from','15:00','to','16:00'));
+  ASSERT r->>'ok' = 'true', 'manager can publish';
+  ASSERT (SELECT count(*) FROM portal_interview_slots WHERE interviewer_id = admin_id) = 4, 'four 15-minute slots';
+  PERFORM portal_interview_action(admin_id,'add_slots',jsonb_build_object('date',tomorrow,'from','15:00','to','16:00'));
+  ASSERT (SELECT count(*) FROM portal_interview_slots WHERE interviewer_id = admin_id) = 4, 'duplicate availability idempotent';
+  SELECT id INTO slot_a FROM portal_interview_slots WHERE interviewer_id = admin_id ORDER BY starts_at LIMIT 1;
+  SELECT id INTO slot_b FROM portal_interview_slots WHERE interviewer_id = admin_id ORDER BY starts_at OFFSET 1 LIMIT 1;
+  r := portal_interview_action(member_a,'book',jsonb_build_object('slotId',slot_a));
+  ASSERT r->>'ok' = 'true', 'member can book'; booking := (r->>'id')::uuid;
+  r := portal_interview_action(member_b,'book',jsonb_build_object('slotId',slot_a));
+  ASSERT (r->>'status')::int = 409, 'double booking prevented';
+  r := portal_interview_action(member_a,'book',jsonb_build_object('slotId',slot_b));
+  ASSERT (r->>'status')::int = 409, 'one active booking per member';
+  r := portal_interview_snapshot(member_b);
+  ASSERT jsonb_array_length(r->'members') = 1, 'personal member list scoped';
+  ASSERT jsonb_array_length(r->'bookings') = 0, 'other members history private';
+  r := portal_interview_action(member_b,'cancel',jsonb_build_object('bookingId',booking));
+  ASSERT (r->>'status')::int = 403, 'other member cancellation denied';
+  r := portal_interview_action(member_a,'complete',jsonb_build_object('bookingId',booking));
+  ASSERT (r->>'status')::int = 403, 'self completion denied';
+  r := portal_interview_action(admin_id,'complete',jsonb_build_object('bookingId',booking));
+  ASSERT (r->>'status')::int = 400, 'future completion denied';
+  r := portal_interview_action(member_a,'cancel',jsonb_build_object('bookingId',booking));
+  ASSERT r->>'ok' = 'true', 'self cancellation';
+  r := portal_interview_action(member_b,'book',jsonb_build_object('slotId',slot_a));
+  ASSERT r->>'ok' = 'true', 'cancelled slot available again';
+  booking := (r->>'id')::uuid;
+  UPDATE portal_interview_slots SET starts_at = date_trunc('hour',now()) - interval '1 hour' WHERE id = slot_a;
+  r := portal_interview_action(admin_id,'complete',jsonb_build_object('bookingId',booking,'notes','Bilan partagé de test'));
+  ASSERT r->>'ok' = 'true', 'completion';
+  r := portal_interview_snapshot(member_b);
+  ASSERT r->'bookings'->0->>'notes' = 'Bilan partagé de test', 'shared feedback';
+  d := portal_interview_due(member_b);
+  ASSERT d->>'reason' = 'monthly' AND (d->>'daysUntil')::int BETWEEN 28 AND 31, 'completion resets month';
+  UPDATE portal_users SET role = 'senior' WHERE id = member_b;
+  d := portal_interview_due(member_b);
+  ASSERT d->>'reason' = 'senior_entry' AND (d->>'daysUntil')::int = 0, 'promotion triggers entry interview';
+  r := portal_interview_action(admin_id,'set_test_end',jsonb_build_object('memberId',member_a,'date',((now() AT TIME ZONE 'Europe/Paris')::date+10)::text));
+  ASSERT r->>'ok' = 'true', 'test date configured';
+  d := portal_interview_due(member_a);
+  ASSERT d->>'reason' = 'test_end' AND (d->>'daysUntil')::int = 10, 'test deadline';
+  r := portal_interview_action(member_a,'book',jsonb_build_object('slotId',slot_b));
+  ASSERT (r->>'status')::int = 400, 'cannot interview before test end';
+  r := portal_interview_action(member_b,'book',jsonb_build_object('slotId',slot_b));
+  booking := (r->>'id')::uuid;
+  UPDATE portal_interview_slots SET starts_at = date_trunc('hour',now()) - interval '30 minutes' WHERE id = slot_b;
+  r := portal_interview_action(admin_id,'no_show',jsonb_build_object('bookingId',booking));
+  ASSERT r->>'ok' = 'true', 'no show supported';
+  d := portal_interview_due(member_b);
+  ASSERT d->>'reason' = 'senior_entry', 'missed interview remains due';
+  UPDATE portal_users SET blocked = true WHERE id = member_b;
+  ASSERT portal_interview_due(member_b) IS NULL, 'blocked users excluded';
+  r := portal_interview_snapshot(member_b);
+  ASSERT (r->>'status')::int = 403, 'blocked access denied';
+  RAISE NOTICE 'PASS: permissions, privacy, slots, conflicts, cancellations, monthly/test/promotion deadlines and feedback';
+END $$;

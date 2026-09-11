@@ -867,3 +867,43 @@ body { font-size:15px; line-height:1.5; }
 
 .absence-table th:last-child,.absence-table td:last-child { width:54px; text-align:center; }
 .absence-delete { margin:auto; }
+
+/* Entretiens : couleurs héritées du thème et taille de lecture indépendante des anciens tableaux. */
+.interviews-panel { --iv-bg:color-mix(in srgb,var(--surface) 94%,var(--ink) 6%); display:grid; gap:22px; min-width:0; }
+.iv-card { padding:26px; border:1px solid var(--line); border-radius:8px; background:var(--iv-bg); }
+.iv-topline,.iv-topline>span,.iv-heading,.iv-personal-due,.iv-dialog-actions { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.iv-topline>span { justify-content:flex-start; font-size:13px; color:var(--muted); }
+.iv-heading { margin-bottom:22px; align-items:flex-start; }
+.iv-heading>svg { flex-shrink:0; color:var(--theme-accent); }
+.iv-heading h2,.iv-dialog h2 { font-family:"Barlow Condensed",sans-serif; font-size:27px; line-height:1.2; margin:0 0 7px; }
+.iv-heading p { margin-bottom:0; }.iv-heading .eyebrow { margin-bottom:9px; color:var(--theme-accent); }
+.interviews-panel .iv-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; border:1px solid var(--line); padding:9px 14px; min-height:40px; background:var(--surface); color:var(--ink); border-radius:6px; font:600 14px "DM Sans",sans-serif; }
+.interviews-panel .iv-button.primary { border-color:var(--theme-accent); background:var(--theme-accent); color:#101410; }
+.interviews-panel button:disabled { opacity:.48; cursor:not-allowed; }
+.interviews-panel :is(button,input,select,textarea,summary):focus-visible { outline:2px solid var(--theme-accent); outline-offset:3px; }
+.interviews-panel .iv-button:not(:disabled):hover { border-color:var(--theme-accent); }
+.iv-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
+.iv-stats article { display:grid; gap:9px; padding:20px; }.iv-stats span { color:var(--muted); font-size:13px; }.iv-stats strong { font:600 32px "Barlow Condensed",sans-serif; color:var(--theme-accent); }
+.interviews-panel label { display:grid; gap:8px; font-size:14px; font-weight:600; }
+.interviews-panel :is(input,select,textarea) { width:100%; padding:11px 13px; color:var(--ink); background:var(--surface); border:1px solid var(--line); border-radius:5px; min-width:0; font:500 14px "DM Sans",sans-serif; }
+.interviews-panel textarea { resize:vertical; }.iv-availability { display:grid; grid-template-columns:1.3fr 1fr 1fr auto; gap:14px; align-items:end; }
+.iv-details { margin-top:23px; border-top:1px solid var(--line); padding-top:18px; }.interviews-panel summary { cursor:pointer; font-size:14px; }
+.iv-slot-list { margin-top:15px; max-height:340px; overflow:auto; }.iv-slot-list article { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 0; border-bottom:1px solid var(--line); }.iv-slot-list strong { font:600 14px "DM Sans",sans-serif; }
+.interviews-panel small { display:block; font-size:13px; line-height:1.5; color:var(--muted); margin-top:4px; }
+.iv-table-card { padding:0; overflow:hidden; }.iv-table-card .iv-heading { padding:26px 26px 0; }
+.iv-filters { display:flex; gap:14px; padding:0 26px 22px; }.iv-filters label { flex:1; position:relative; }.iv-filters label svg { position:absolute; left:12px; top:14px; color:var(--muted); }.iv-filters input { padding-left:38px; }.iv-filters>select { max-width:235px; }
+.iv-table-scroll { width:100%; overflow:auto; }.iv-table-scroll table { width:100%; min-width:850px; border-collapse:collapse; text-align:left; }
+.content .iv-table-scroll :is(td,th) { padding:17px 20px; font:500 14px "DM Sans",sans-serif !important; border-bottom:1px solid var(--line); color:var(--ink); vertical-align:middle; }
+.content .iv-table-scroll th { font-size:12px !important; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); background:var(--surface); }
+.content .iv-table-scroll td small { font-size:13px !important; }.content .iv-table-scroll .iv-member-name { font:600 17px "Barlow Condensed",sans-serif; }
+.iv-row-actions { display:flex; flex-wrap:wrap; gap:7px; min-width:150px; }.iv-row-actions .iv-button { padding:6px 10px; font-size:13px; min-height:34px; }
+.iv-status { display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:6px 10px; border:1px solid var(--line); border-radius:30px; font-size:12px; font-weight:600; background:var(--surface); white-space:nowrap; }
+.iv-status.late,.iv-status.no_show { color:#ff8f9c; background:#51272e; border-color:#73404b; }.iv-status.soon { color:#f4d469; background:#403717; border-color:#655526; }.iv-status.booked { color:var(--theme-accent); background:color-mix(in srgb,var(--theme-accent) 9%,var(--surface)); border-color:color-mix(in srgb,var(--theme-accent) 40%,var(--line)); }.iv-status.completed { color:#8be3bd; background:#173e30; border-color:#285c48; }
+.iv-personal { border-top:3px solid var(--theme-accent); }.iv-personal-due { margin:22px 0; padding:20px 0; border-block:1px solid var(--line); }.iv-personal-due>div { display:grid; gap:6px; }.iv-personal-due>div>span { color:var(--muted); font-size:13px; }.iv-personal-due strong { font:600 28px "Barlow Condensed",sans-serif; }
+.iv-appointment { display:flex; align-items:center; gap:16px; padding:18px; border-radius:6px; background:color-mix(in srgb,var(--theme-accent) 8%,var(--surface)); }.iv-appointment>svg { color:var(--theme-accent); flex-shrink:0; }.iv-appointment>div { flex:1; }.iv-appointment strong { font:600 17px "DM Sans",sans-serif; }.iv-appointment p { color:var(--muted); margin:6px 0 0; font-size:14px; }
+.iv-date-picker { max-width:340px; margin-bottom:18px; }.iv-booking-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px; }.iv-slot { display:grid; gap:10px; text-align:left; padding:20px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--ink); }.iv-slot:not(:disabled):hover { border-color:var(--theme-accent); background:color-mix(in srgb,var(--theme-accent) 7%,var(--surface)); }.iv-slot strong { font:600 22px "Barlow Condensed",sans-serif; }.iv-slot span { font-size:13px; }.iv-slot small { color:var(--theme-accent); }
+.iv-history details { border-bottom:1px solid var(--line); padding:15px 0; }.iv-history summary { display:flex; align-items:center; justify-content:space-between; gap:15px; }.iv-history strong { font:600 16px "DM Sans",sans-serif; }.iv-history details>p { margin:16px 0 0; }.iv-notes { white-space:pre-wrap; overflow-wrap:anywhere; color:var(--muted); font-size:14px; }
+.iv-notice { margin:0; padding:13px 17px; border-radius:6px; font-size:14px; }.iv-notice.error { background:#48252d; color:#ffadb8; }.iv-notice.success { background:#193d30; color:#9be6c4; }.iv-empty { padding:32px 22px; text-align:center; }.iv-help { color:var(--muted); font-size:12px; line-height:1.7; margin:0; }.iv-accent { color:var(--theme-accent) !important; }
+.iv-overlay { position:fixed; inset:0; z-index:1100; padding:24px; background:#000a; backdrop-filter:blur(4px); display:flex; align-items:center; justify-content:center; }.iv-dialog { position:relative; max-height:90vh; overflow:auto; background:var(--iv-bg); color:var(--ink); border:1px solid var(--line); width:540px; max-width:100%; padding:32px; border-radius:9px; box-shadow:0 20px 80px #0006; }.iv-dialog h2 { padding-right:28px; }.iv-close { position:absolute; right:15px; top:15px; padding:6px !important; min-height:32px !important; }.iv-dialog form { display:grid; gap:18px; }.iv-dialog-actions { justify-content:flex-end; margin-top:5px; }
+@media(max-width:1050px) { .iv-availability { grid-template-columns:repeat(3,1fr); }.iv-availability>.primary { grid-column:1/-1; }.iv-stats { grid-template-columns:repeat(2,1fr); } }
+@media(max-width:600px) { .iv-card { padding:18px; }.iv-table-card { padding:0; }.iv-topline { align-items:flex-start; }.iv-topline>span { font-size:12px; }.iv-availability { grid-template-columns:1fr 1fr; }.iv-availability>label:first-child { grid-column:1/-1; }.iv-personal-due,.iv-appointment,.iv-history summary { flex-wrap:wrap; }.iv-filters { flex-direction:column; padding-inline:18px; }.iv-filters>select { max-width:none; }.iv-dialog { padding:24px; }.iv-overlay { padding:12px; }.iv-stats article { padding:15px; }.iv-appointment>.iv-button { width:100%; } }
