@@ -907,3 +907,81 @@ body { font-size:15px; line-height:1.5; }
 .iv-overlay { position:fixed; inset:0; z-index:1100; padding:24px; background:#000a; backdrop-filter:blur(4px); display:flex; align-items:center; justify-content:center; }.iv-dialog { position:relative; max-height:90vh; overflow:auto; background:var(--iv-bg); color:var(--ink); border:1px solid var(--line); width:540px; max-width:100%; padding:32px; border-radius:9px; box-shadow:0 20px 80px #0006; }.iv-dialog h2 { padding-right:28px; }.iv-close { position:absolute; right:15px; top:15px; padding:6px !important; min-height:32px !important; }.iv-dialog form { display:grid; gap:18px; }.iv-dialog-actions { justify-content:flex-end; margin-top:5px; }
 @media(max-width:1050px) { .iv-availability { grid-template-columns:repeat(3,1fr); }.iv-availability>.primary { grid-column:1/-1; }.iv-stats { grid-template-columns:repeat(2,1fr); } }
 @media(max-width:600px) { .iv-card { padding:18px; }.iv-table-card { padding:0; }.iv-topline { align-items:flex-start; }.iv-topline>span { font-size:12px; }.iv-availability { grid-template-columns:1fr 1fr; }.iv-availability>label:first-child { grid-column:1/-1; }.iv-personal-due,.iv-appointment,.iv-history summary { flex-wrap:wrap; }.iv-filters { flex-direction:column; padding-inline:18px; }.iv-filters>select { max-width:none; }.iv-dialog { padding:24px; }.iv-overlay { padding:12px; }.iv-stats article { padding:15px; }.iv-appointment>.iv-button { width:100%; } }
+
+/* Entretiens individuels : mêmes panneaux et contrôles que les autres rubriques. */
+.interviews-panel { --iv-bg:#111611; max-width:1240px; gap:22px; }
+.interviews-panel .iv-card {
+  color:var(--command-text);
+  background:linear-gradient(145deg,#151b16,#111611);
+  border:1px solid var(--command-line);
+  border-radius:7px;
+  box-shadow:0 13px 35px #0000002e;
+}
+.interviews-panel .iv-topline { min-height:33px; padding:0 2px; }
+.interviews-panel .iv-topline>span { color:#aeb8aa; font-family:"DM Mono",monospace; font-size:10px; letter-spacing:.02em; }
+.interviews-panel .iv-button {
+  color:#d1d8ce;
+  background:#192019;
+  border:1px solid #334033;
+  border-radius:5px;
+  box-shadow:none;
+  font-size:13px;
+  font-weight:700;
+}
+.interviews-panel .iv-button:not(:disabled):hover { color:#fff9df; border-color:var(--theme-accent); background:#222a20; }
+.interviews-panel .iv-button.primary {
+  color:#15170f;
+  background:linear-gradient(135deg,#e1c248,var(--theme-accent));
+  border-color:#f2db7e55;
+  box-shadow:0 7px 20px color-mix(in srgb,var(--theme-accent) 16%,transparent);
+}
+.interviews-panel .iv-button.primary:not(:disabled):hover { color:#15170f; background:linear-gradient(135deg,#f0d66a,var(--theme-accent)); }
+.interviews-panel .iv-heading { gap:15px; padding-bottom:18px; border-bottom:1px solid #293329; }
+.interviews-panel .iv-heading.transmission-head { align-items:center; }
+.interviews-panel .iv-heading .category-icon { flex:0 0 52px; width:52px; height:52px; }
+.interviews-panel .iv-heading h2,.iv-dialog h2 { color:#f0f2eb; font-family:"Barlow Condensed","DM Sans",sans-serif; font-size:26px; }
+.interviews-panel .iv-heading .eyebrow { color:var(--theme-accent); }
+.interviews-panel .iv-heading .muted,.interviews-panel small { color:#9ca79a; }
+.interviews-panel :is(input,select,textarea) { color:#e4e9e1; background:#0d120e; border-color:#2a3429; border-radius:6px; }
+.interviews-panel :is(input,select,textarea):focus { border-color:var(--theme-accent); box-shadow:0 0 0 2px color-mix(in srgb,var(--theme-accent) 17%,transparent); }
+.interviews-panel label { color:#e1e6de; font-size:14px; }
+.interviews-panel .iv-stats article { padding:17px 19px; color:#e7ece4; background:#151b16; border-color:#293228; border-radius:6px; box-shadow:none; }
+.interviews-panel .iv-stats span { color:#8e998d; font-family:"DM Mono",monospace; font-size:10px; text-transform:uppercase; letter-spacing:.04em; }
+.interviews-panel .iv-stats strong { color:#edf0e9; font-family:"Barlow Condensed","DM Sans",sans-serif; font-size:30px; }
+.interviews-panel .iv-availability-card,.interviews-panel .iv-personal,.interviews-panel .iv-booking-card { border-top:2px solid var(--theme-accent); }
+.interviews-panel .iv-details { border-color:#293329; }
+.interviews-panel .iv-details summary { color:#e6d06d; font-family:"DM Mono",monospace; font-size:11px; font-weight:700; }
+.interviews-panel .iv-slot-list article { border-color:#273027; }
+.interviews-panel .iv-slot-list strong,.interviews-panel .iv-history strong { color:#edf1ea; }
+.interviews-panel .iv-table-card { background:linear-gradient(180deg,#151a15,#0e130f); border-top:2px solid color-mix(in srgb,var(--theme-accent) 78%,#5d6a5a); }
+.interviews-panel .iv-table-card .iv-heading { margin-bottom:0; padding:19px 20px 15px; }
+.interviews-panel .iv-filters { padding:14px 20px; border-bottom:1px solid #293329; background:#141a14; }
+.interviews-panel .iv-table-scroll { background:#101510; }
+.interviews-panel .iv-table-scroll table { min-width:840px; }
+.content .interviews-panel .iv-table-scroll :is(td,th) { border-color:#273027; }
+.content .interviews-panel .iv-table-scroll th { color:#aeb8aa; background:#1a211a; font-family:"DM Mono",monospace !important; font-size:10px !important; }
+.content .interviews-panel .iv-table-scroll td { color:#c5cdc1; background:#101510; }
+.content .interviews-panel .iv-table-scroll .iv-member-name { color:#edf1ea; font-family:"Barlow Condensed","DM Sans",sans-serif; font-size:18px; }
+.interviews-panel .iv-status { border-radius:4px; font-family:"DM Mono",monospace; font-size:10px; letter-spacing:.01em; }
+.interviews-panel .iv-status.upcoming { color:#b8c0b5; background:#202820; border-color:#394139; }
+.interviews-panel .iv-status.soon { color:#f0d67a; background:#352d14; border-color:#716020; }
+.interviews-panel .iv-status.booked { color:#dfcf87; background:#242312; border-color:#4b4320; }
+.interviews-panel .iv-status.late,.interviews-panel .iv-status.no_show { color:#ffb6b2; background:#391b1c; border-color:#743739; }
+.interviews-panel .iv-status.completed { color:#93dfb6; background:#123124; border-color:#2b6248; }
+.interviews-panel .iv-personal-due { border-color:#293329; }
+.interviews-panel .iv-personal-due>div>span { color:#9ca79a; font-family:"DM Mono",monospace; font-size:10px; text-transform:uppercase; }
+.interviews-panel .iv-personal-due strong { color:#edf0e9; font-family:"Barlow Condensed","DM Sans",sans-serif; }
+.interviews-panel .iv-appointment { border:1px solid #2b6248; border-radius:5px; background:#123124; }
+.interviews-panel .iv-appointment>svg { color:#93dfb6; }.interviews-panel .iv-appointment p { color:#b9c7b9; }
+.interviews-panel .iv-slot { color:#c5cdc1; background:#0f150f; border-color:#293329; border-radius:5px; box-shadow:inset 0 1px #ffffff025; }
+.interviews-panel .iv-slot:not(:disabled):hover { color:#f6e8a8; border-color:#5f5422; background:#1b2119; }
+.interviews-panel .iv-slot strong { color:#f0f2eb; font-family:"Barlow Condensed","DM Sans",sans-serif; font-size:23px; }
+.interviews-panel .iv-slot small { color:#e3d089; font-family:"DM Mono",monospace; font-size:10px; }
+.interviews-panel .iv-history { padding:0 14px 14px; }
+.interviews-panel .iv-history details { padding:14px 12px; border:1px solid #293329; border-left:2px solid color-mix(in srgb,var(--theme-accent) 75%,#343f33); border-radius:5px; background:#0f150f; }
+.interviews-panel .iv-history details+details { margin-top:10px; }
+.interviews-panel .iv-history summary { color:#edf1ea; }.interviews-panel .iv-notes { color:#bdc6ba; }
+.interviews-panel .iv-help { padding:0 4px; color:#899489; font-family:"DM Mono",monospace; font-size:10px; }
+.interviews-panel .iv-notice { border-radius:5px; font-size:13px; }.interviews-panel .iv-notice.error { color:#ffc0bd; background:#3a1919; border:1px solid #713c40; }.interviews-panel .iv-notice.success { color:#a4e9c0; background:#143325; border:1px solid #2f6a4b; }
+.interviews-panel .iv-empty { color:#899489; background:#0f150f; }
+.iv-overlay.modal-backdrop { background:#030504c7; }.iv-dialog.modal { color:var(--command-text); background:#141a14; border-color:#344033; border-radius:8px; }
