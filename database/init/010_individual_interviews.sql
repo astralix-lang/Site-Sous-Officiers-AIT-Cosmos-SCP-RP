@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS portal_interview_bookings (
 
 CREATE INDEX IF NOT EXISTS portal_interview_requirements_member_status_idx
   ON portal_interview_requirements (member_id, status, due_date);
+CREATE UNIQUE INDEX IF NOT EXISTS portal_interview_requirements_one_open_per_member_idx
+  ON portal_interview_requirements (member_id)
+  WHERE status IN ('to_book', 'booked');
 CREATE INDEX IF NOT EXISTS portal_interview_slots_status_starts_idx
   ON portal_interview_slots (status, starts_at);
 CREATE UNIQUE INDEX IF NOT EXISTS portal_interview_slots_interviewer_starts_idx

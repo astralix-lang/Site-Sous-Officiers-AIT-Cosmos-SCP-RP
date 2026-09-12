@@ -605,7 +605,11 @@ async function createInterviewRequirement(memberId, reason, dueDate) {
     status: "to_book",
     updated_at: new Date().toISOString(),
   };
-  await database("portal_interview_requirements", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(requirement) });
+  // L’index partiel en base garantit qu’un membre n’a qu’un seul entretien
+  // ouvert. Avec l’upsert sans doublon, deux actualisations simultanées ne
+  // peuvent donc jamais créer deux lignes ni deux notifications.
+  const created = parseArray(await database("portal_interview_requirements", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates, return=representation" }, body: JSON.stringify(requirement) }));
+  if (!created.length) return null;
   await createNotification({
     recipients: [memberId],
     kind: "info",
@@ -613,7 +617,7 @@ async function createInterviewRequirement(memberId, reason, dueDate) {
     text: `${INTERVIEW_REASON_LABELS[reason]} · échéance ${dueDate.split("-").reverse().join("/")}`,
     target: "interviews",
   });
-  return requirement;
+  return interviewRequirementFromRow(created[0]);
 }
 
 // Le suivi ne déduit jamais rétrospectivement un changement passé. À la première
@@ -625,10 +629,25 @@ async function syncInterviewRequirements() {
   ]);
   const profilesByMember = new Map(profiles.map((profile) => [String(profile.member_id), profile]));
   const requirementsByMember = new Map();
+  const duplicateRequirementIds = [];
   requirements.forEach((requirement) => {
     if (requirement.status === "completed") return;
-    requirementsByMember.set(String(requirement.memberId), requirement);
+    const memberId = String(requirement.memberId);
+    const current = requirementsByMember.get(memberId);
+    if (!current) {
+      requirementsByMember.set(memberId, requirement);
+      return;
+    }
+    const currentBooked = current.status === "booked";
+    const candidateBooked = requirement.status === "booked";
+    const keepCandidate = candidateBooked !== currentBooked
+      ? candidateBooked
+      : String(requirement.createdAt || requirement.id).localeCompare(String(current.createdAt || current.id)) < 0;
+    const duplicate = keepCandidate ? current : requirement;
+    requirementsByMember.set(memberId, keepCandidate ? requirement : current);
+    duplicateRequirementIds.push(duplicate.id);
   });
+  await Promise.all(duplicateRequirementIds.map((id) => database(`portal_interview_requirements?id=eq.${encodeURIComponent(id)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } })));
   const today = todayInParis();
 
   for (const member of members) {
@@ -648,7 +667,7 @@ async function syncInterviewRequirements() {
           updated_at: now,
         }),
       });
-      await createInterviewRequirement(member.id, "monthly", dateAfterDays(today, 14));
+      await createInterviewRequirement(member.id, "monthly", today);
       continue;
     }
 
@@ -690,10 +709,10 @@ async function syncInterviewRequirements() {
 
     const anchor = profile.last_completed_at || profile.baseline_at || new Date().toISOString();
     const anchorDay = calendarDate(new Date(anchor).toISOString().slice(0, 10)) || today;
-    const periodicDueDate = dateAfterDays(anchorDay, 14);
+    const periodicDueDate = profile.last_completed_at ? dateAfterDays(anchorDay, 14) : today;
     if (!openRequirement) {
       await createInterviewRequirement(member.id, "monthly", periodicDueDate);
-    } else if (openRequirement.reason === "monthly" && openRequirement.status === "to_book" && openRequirement.dueDate !== periodicDueDate) {
+    } else if (openRequirement.status === "to_book" && openRequirement.dueDate !== periodicDueDate) {
       await database(`portal_interview_requirements?id=eq.${encodeURIComponent(openRequirement.id)}`, {
         method: "PATCH",
         headers: { Prefer: "return=minimal" },
