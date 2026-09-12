@@ -1015,3 +1015,53 @@ body { font-size:15px; line-height:1.5; }
   .content > header:not(:has(+ .interview-page)) h1 { font-size:22px; }
   .interview-booking-owner { align-items:flex-end; flex-direction:column; }
 }
+
+/* Une rubrique conserve son véritable pictogramme du menu, plutôt qu’une icône générique. */
+.section-heading {
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr) auto;
+  align-items:center;
+  gap:15px;
+  min-height:86px;
+  margin-bottom:18px;
+  padding:19px 23px;
+  color:#fff;
+  background:linear-gradient(120deg,color-mix(in srgb,var(--theme-accent) 30%,#172118),#101913 68%);
+  border:1px solid color-mix(in srgb,var(--theme-accent) 36%,#29372b);
+  border-radius:15px;
+  box-shadow:0 8px 25px #0000001e;
+}
+.section-heading > header { display:contents; }
+.section-heading:has(+ .interview-page) { display:none; }
+.section-category-icon {
+  width:46px;
+  height:46px;
+  display:grid;
+  place-items:center;
+  color:var(--theme-accent);
+  background:color-mix(in srgb,var(--theme-accent) 13%,#0b120d);
+  border:1px solid color-mix(in srgb,var(--theme-accent) 35%,transparent);
+  border-radius:12px;
+}
+.section-heading > header > div { min-width:0; }
+.section-heading > header h1 { margin:2px 0 4px; color:#f5f6ef; font-size:25px; line-height:1; }
+.section-heading > header p { margin:0; color:#b9c2b6; font-size:13px; line-height:1.45; }
+.section-heading > header .eyebrow { margin:0 0 5px; color:var(--theme-accent); }
+.section-heading > header :is(.all-access,.referent-access,.senior-access) {
+  min-height:38px;
+  align-self:center;
+  color:#d8e0d5 !important;
+  background:#ffffff0b !important;
+  border:1px solid #ffffff18 !important;
+  border-radius:9px !important;
+  font-family:"DM Sans",sans-serif;
+  font-size:11px !important;
+}
+
+@media(max-width:800px) {
+  .section-heading { grid-template-columns:auto minmax(0,1fr); padding:18px; }
+  .section-heading > header :is(.all-access,.referent-access,.senior-access) { grid-column:1/-1; justify-self:start; }
+}
+@media(max-width:620px) {
+  .section-heading > header h1 { font-size:22px; }
+}
