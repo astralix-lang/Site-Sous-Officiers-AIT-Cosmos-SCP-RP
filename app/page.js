@@ -37,6 +37,7 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
+import { InterviewBookingPanel, InterviewManagementPanel } from "./components/InterviewPanels";
 
 const ROLES = {
   admin: { label: "Admin", short: "AD", tone: "violet" },
@@ -72,11 +73,13 @@ const PORTAL_SECTION_REGISTRY = [
   { id: "workforce", group: "referent", label: "Effectif", description: "Voir l’organisation de l’équipe", icon: UsersRound, access: "manager" },
   { id: "specializations", group: "referent", label: "Spécialisations", description: "Consulter les spécialités de l’effectif", icon: BadgeCheck, access: "manager" },
   { id: "absence_table", group: "referent", label: "Absences", description: "Consulter les absences de l’équipe", icon: UserX, access: "manager" },
+  { id: "interview_management", group: "referent", label: "Gestion des entretiens", description: "Ouvrir des créneaux et suivre les rendez-vous", icon: CalendarDays, access: "manager" },
   { id: "meeting_so", group: "referent", label: "Réunion SO", description: "Préparer et suivre une réunion SO", icon: ClipboardCheck, access: "manager" },
   { id: "quotas", group: "referent", label: "Quotas", shortcutLabel: "Gestion des quotas", description: "Consulter les objectifs de l’équipe", icon: Gauge, access: "manager" },
   { id: "summary", group: "global", label: "Résumé", description: "Consulter les statistiques", icon: BarChart3, access: "all" },
   { id: "management_report", group: "global", label: "Rapport de gérance", description: "Rédiger ou consulter les rapports de gérance", icon: FileText, access: "all" },
   { id: "absence_request", group: "global", label: "Absences", description: "Déclarer une absence", icon: CalendarDays, access: "all" },
+  { id: "interviews", group: "global", label: "Entretiens", description: "Consulter son suivi et réserver un créneau", icon: CalendarDays, access: "all" },
   { id: "recommendation", group: "global", label: "Recommandation", description: "Envoyer une recommandation", icon: Medal, access: "all" },
   { id: "pcs_exp", group: "global", label: "Recommandation PCS EXP", shortcutLabel: "Reco PCS EXP", description: "Ouvrir le formulaire PCS EXP", icon: ClipboardCheck, access: "all" },
   { id: "observation_hdr", group: "global", label: "Observation HDR", description: "Consigner une observation HDR", icon: MessageSquareText, access: "all" },
@@ -155,8 +158,9 @@ const CHAT_ATTACHMENT_TYPES = new Set([
 ]);
 const DEFAULT_QUOTAS = { targets: { recommendation: 1, pcs_exp: 1, observations: 1, mission_internal: 0 }, counts: {}, exemptions: {}, resetAt: null };
 const DEFAULT_SO_MEETING = { occurredAt: new Date().toISOString(), attendance: [], improvementAxes: "", caporalVotes: [], suggestions: "", updatedAt: null, updatedBy: "" };
+const DEFAULT_INTERVIEWS = { requirements: [], slots: [], bookings: [] };
 const QUOTA_TYPES = ["recommendation", "pcs_exp", "observation_hdr", "observation_so"];
-const LOG_CATEGORY_LABELS = { auth: "Connexion", account: "Comptes", presence: "Présences", absence: "Absences", quota: "Quotas", form: "Formulaires", mission: "Missions", chat: "Chat", assignment: "Référents", profile: "Profils", summary: "Résumé", management: "Gérance", meeting: "Réunion SO", announcement: "Annonces", system: "Système" };
+const LOG_CATEGORY_LABELS = { auth: "Connexion", account: "Comptes", presence: "Présences", absence: "Absences", interview: "Entretiens", quota: "Quotas", form: "Formulaires", mission: "Missions", chat: "Chat", assignment: "Référents", profile: "Profils", summary: "Résumé", management: "Gérance", meeting: "Réunion SO", announcement: "Annonces", system: "Système" };
 const REPORT_CONCLUSIONS = [
   "Passage confirmé en sergent",
   "Prolongation de la semaine de test",
@@ -287,6 +291,18 @@ async function portalRequest(method = "GET", body) {
 }
 
 const TRANSMISSION_TYPES = {
+  interviews: {
+    title: "Entretiens",
+    description: "Consultez votre suivi et réservez un créneau avec l’équipe Référent SO.",
+    icon: CalendarDays,
+    tone: "gold",
+  },
+  interview_management: {
+    title: "Gestion des entretiens",
+    description: "Organisez les disponibilités et suivez les rendez-vous de l’équipe.",
+    icon: CalendarDays,
+    tone: "gold",
+  },
   recommendation: {
     title: "Recommandation",
     description: "Signaler un AIT qui mérite une recommandation.",
@@ -2379,6 +2395,7 @@ function App() {
   const [managementReports, setManagementReports] = useState([]);
   const [managementReportSettings, setManagementReportSettings] = useState({ rankingResetAt: null });
   const [soMeeting, setSoMeeting] = useState(DEFAULT_SO_MEETING);
+  const [interviews, setInterviews] = useState(DEFAULT_INTERVIEWS);
   const [portalRemote, setPortalRemote] = useState(false);
   const [loginTransition, setLoginTransition] = useState(null);
   const [avatarSyncing, setAvatarSyncing] = useState(false);
@@ -2686,6 +2703,7 @@ function App() {
     if (Array.isArray(state?.managementReports)) setManagementReports(state.managementReports);
     if (state?.managementReportSettings && typeof state.managementReportSettings === "object") setManagementReportSettings(state.managementReportSettings);
     if (state?.soMeeting && typeof state.soMeeting === "object") setSoMeeting({ ...DEFAULT_SO_MEETING, ...state.soMeeting });
+    if (state?.interviews && typeof state.interviews === "object") setInterviews({ ...DEFAULT_INTERVIEWS, ...state.interviews });
     setPortalRemote(true);
   }
 
@@ -2770,6 +2788,29 @@ function App() {
     setAbsences((current) => current.filter((absence) => absence.id !== absenceId));
     addLog("absence", "Absence supprimée");
     flash("L’absence a été supprimée du suivi de l’équipe.");
+  }
+  async function manageInterviewAction(values) {
+    if (!portalRemote) {
+      flash("La synchronisation des entretiens n’est pas encore disponible.");
+      return null;
+    }
+    try {
+      const state = await portalRequest("POST", values);
+      applySharedPortalState(state);
+      const messages = {
+        create_interview_slot: "Les créneaux sont ouverts à la réservation.",
+        delete_interview_slot: "Le créneau a été retiré.",
+        create_interview_requirement: "L’échéance d’entretien a été ajoutée.",
+        book_interview: "Votre rendez-vous est confirmé.",
+        cancel_interview_booking: "Le rendez-vous a été annulé.",
+        complete_interview: "L’entretien est clôturé et le suivi mensuel repartira dans un mois.",
+      };
+      flash(messages[values?.action] || "Le suivi des entretiens a été actualisé.");
+      return state;
+    } catch (error) {
+      flash(error instanceof Error ? error.message : "L’action sur l’entretien n’a pas pu être enregistrée.");
+      return null;
+    }
   }
   function navigateFromHome(section) {
     if (!canOpenPortalSection(session.role, section)) {
@@ -3411,7 +3452,7 @@ function App() {
           <div className="card-head"><div><h2>Comptes utilisateurs</h2><p className="muted">{visibleUsers.length} compte{visibleUsers.length > 1 ? "s" : ""} affiché{visibleUsers.length > 1 ? "s" : ""}</p></div><div className="filters"><button className="secondary avatar-sync" type="button" onClick={syncDiscordAvatars} disabled={avatarSyncing}><RotateCcw size={15} /> {avatarSyncing ? "Synchronisation…" : "Rafraîchir les photos"}</button><div className="search"><Search size={17} /><input placeholder="Rechercher un compte…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}><option value="all">Tous les niveaux</option>{Object.entries(ROLES).map(([key, role]) => <option value={key} key={key}>{role.label}</option>)}</select></div></div>
           <div className="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Grade</th><th>Niveau d’accès</th><th>État du compte</th><th>Création</th><th></th></tr></thead><tbody>{visibleUsers.map((user) => <tr key={user.id}><td><div className="user-cell"><Avatar user={user} size="small" /><div><strong>{user.firstName} {user.lastName}</strong><small>{user.discordUsername ? `Discord : ${user.discordUsername}` : "Compte Discord lié"}</small></div></div></td><td><span className="grade-badge">{user.grade || GRADES[0]}</span></td><td>{user.approvalStatus === "pending" ? <span className="locked">À attribuer</span> : <RoleBadge role={user.role} />}</td><td>{user.approvalStatus === "pending" ? <button className="account-state pending" type="button" onClick={() => hasManagerAccess(session.role) && setModal(user)}><UserRound size={15} /> En attente</button> : user.approvalStatus === "rejected" ? <span className="account-state blocked"><UserX size={15} /> Refusé</span> : user.role === "admin" ? <span className="account-state active"><UserCheck size={15} /> Compte actif</span> : <button className={`account-state ${user.blocked ? "blocked" : "active"}`} type="button" onClick={() => toggleAccountBlock(user)}>{user.blocked ? <UserX size={15} /> : <UserCheck size={15} />}{user.blocked ? "Compte bloqué" : "Compte actif"}</button>}</td><td>{user.createdAt}</td><td><div className="row-actions">{canManage && manageable(user) ? <><button className="icon-button" title={user.approvalStatus === "pending" ? "Examiner la demande" : "Modifier"} onClick={() => setModal(user)}>{user.approvalStatus === "pending" ? <BadgeCheck size={17} /> : <Pencil size={17} />}</button><button className="icon-button danger" title="Supprimer" onClick={() => removeUser(user)}><Trash2 size={17} /></button></> : <span className="locked">Protégé</span>}</div></td></tr>)}</tbody></table></div>
         </section>
-        </> : activeSection === "absence_table" ? <AbsenceTablePanel absences={absences} users={users} onDelete={deleteAbsence} /> : activeSection === "quotas" ? <QuotaPanel users={usersWithAbsenceStatus} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onUpdateGroup={updateChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} assignments={sergeantAssignments} onSuccess={sergeantReportSuccess} history={submissionHistory.filter((entry) => entry.type === "sergeant_report")} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} /> : <TransmissionPanel key={activeSection} session={session} absences={absences} onSuccess={transmissionSuccess} type={activeSection} history={submissionHistory.filter((entry) => entry.type === activeSection)} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} />}
+        </> : activeSection === "interviews" ? <InterviewBookingPanel session={session} users={users} interviews={interviews} onAction={manageInterviewAction} /> : activeSection === "interview_management" ? <InterviewManagementPanel users={users} interviews={interviews} onAction={manageInterviewAction} /> : activeSection === "absence_table" ? <AbsenceTablePanel absences={absences} users={users} onDelete={deleteAbsence} /> : activeSection === "quotas" ? <QuotaPanel users={usersWithAbsenceStatus} quotas={quotas} onTargetChange={changeQuotaTarget} onReset={resetQuotas} onToggleExemption={toggleQuotaExemption} /> : activeSection === "mission_internal" ? <MissionInternalPanel session={session} missions={missions} onSubmit={submitMission} onValidate={validateMission} onReject={rejectMission} onDelete={deleteMission} onReset={resetMissions} /> : activeSection === "chat" ? <ChatPanel session={session} users={users} chats={chats} onStart={startChat} onCreateGroup={createChatGroup} onUpdateGroup={updateChatGroup} onSend={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onDeleteChat={deleteChat} /> : activeSection === "sergeant_report" ? <SergeantReportPanel users={users} session={session} assignments={sergeantAssignments} onSuccess={sergeantReportSuccess} history={submissionHistory.filter((entry) => entry.type === "sergeant_report")} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} /> : <TransmissionPanel key={activeSection} session={session} absences={absences} onSuccess={transmissionSuccess} type={activeSection} history={submissionHistory.filter((entry) => entry.type === activeSection)} canManageHistory={canManage} onResetHistory={resetSubmissionHistory} onEditHistory={updateSubmissionHistory} onDeleteHistory={deleteSubmissionHistory} />}
       </main>
       <ThemedCursor />
       {notice && <div className="toast"><BadgeCheck size={19} />{notice}</div>}

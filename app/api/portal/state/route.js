@@ -30,6 +30,14 @@ const SO_MEETING_ID = "cb94e8d0-2fc4-40f3-8504-3e43b7c8a46b";
 const SO_MEETING_TARGET = "__portal_so_meeting";
 const SO_MEETING_HISTORY_ID = "4e59f012-30d6-4e63-8092-5d4eb2c60262";
 const SO_MEETING_HISTORY_TARGET = "__portal_so_meeting_history";
+const INTERVIEW_REASONS = new Set(["test_end", "senior_entry", "monthly"]);
+const INTERVIEW_REQUIREMENT_STATUSES = new Set(["to_book", "booked", "completed"]);
+const INTERVIEW_SLOT_STATUSES = new Set(["available", "cancelled"]);
+const INTERVIEW_REASON_LABELS = {
+  test_end: "Fin de période d’essai",
+  senior_entry: "Entrée chez les Sous-Officiers Supérieurs",
+  monthly: "Suivi mensuel",
+};
 const MEETING_ATTENDANCE_STATUSES = new Set(["present", "absent", "late"]);
 const CAPORAL_VOTE_VALUES = new Set(["favorable", "mitige", "defavorable", "sanction"]);
 const DISCORD_REJECTION_TYPES = new Set(["recommendation", "pcs_exp", "observation_hdr", "observation_so"]);
@@ -72,6 +80,44 @@ function todayInParis() {
 function numberInRange(value, minimum = 0, maximum = 100) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? Math.min(maximum, Math.max(minimum, parsed)) : minimum;
+}
+
+function timeOfDay(value) {
+  const match = /^(\d{2}):(\d{2})$/.exec(String(value || ""));
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59 || minute % 15 !== 0) return null;
+  return { hour, minute, total: hour * 60 + minute, value: `${match[1]}:${match[2]}` };
+}
+
+function dateAfterDays(date, days) {
+  const safeDate = calendarDate(date) || todayInParis();
+  const next = new Date(`${safeDate}T12:00:00.000Z`);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next.toISOString().slice(0, 10);
+}
+
+function parisOffsetMinutes(date) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Paris", timeZoneName: "longOffset" }).formatToParts(date);
+    const offset = parts.find((part) => part.type === "timeZoneName")?.value || "";
+    const match = /^GMT([+-])(\d{2}):(\d{2})$/.exec(offset);
+    if (!match) return 0;
+    const value = Number(match[2]) * 60 + Number(match[3]);
+    return match[1] === "+" ? value : -value;
+  } catch { return 0; }
+}
+
+// Les créneaux sont saisis en heure de Paris, même si la route s’exécute en UTC.
+function parisDateTime(value, time) {
+  const date = calendarDate(value);
+  const clock = timeOfDay(time);
+  if (!date || !clock) return null;
+  const tentative = new Date(`${date}T${clock.value}:00.000Z`);
+  let utc = tentative.getTime() - parisOffsetMinutes(tentative) * 60_000;
+  utc = tentative.getTime() - parisOffsetMinutes(new Date(utc)) * 60_000;
+  return new Date(utc);
 }
 
 function objectValue(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
@@ -465,6 +511,229 @@ async function quotaState(submissions) {
   };
 }
 
+function interviewMemberFromRow(row) {
+  return {
+    id: String(row?.id || ""),
+    firstName: clean(row?.first_name, 60),
+    lastName: clean(row?.last_name, 60),
+    role: clean(row?.role, 30),
+    grade: clean(row?.grade, 60),
+    blocked: row?.blocked === true,
+    approvalStatus: clean(row?.approval_status, 30) || "approved",
+    createdAt: row?.created_at || null,
+    updatedAt: row?.updated_at || null,
+  };
+}
+
+function canInterviewMember(member) {
+  return UUID.test(member?.id || "")
+    && ["officer", "senior"].includes(member.role)
+    && !member.blocked
+    && member.approvalStatus === "approved";
+}
+
+function interviewRequirementFromRow(row) {
+  const reason = INTERVIEW_REASONS.has(row?.reason) ? row.reason : "monthly";
+  const status = INTERVIEW_REQUIREMENT_STATUSES.has(row?.status) ? row.status : "to_book";
+  return {
+    id: row.id,
+    memberId: row.member_id,
+    reason,
+    dueDate: calendarDate(row.due_date),
+    status,
+    completionNote: cleanMultiline(row.completion_note, 1_600),
+    completedAt: row.completed_at || null,
+    completedBy: row.completed_by || null,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  };
+}
+
+function interviewSlotFromRow(row) {
+  return {
+    id: row.id,
+    interviewerId: row.interviewer_id,
+    createdBy: row.created_by,
+    startsAt: row.starts_at,
+    endsAt: row.ends_at,
+    status: INTERVIEW_SLOT_STATUSES.has(row?.status) ? row.status : "cancelled",
+    createdAt: row.created_at || null,
+  };
+}
+
+function interviewBookingFromRow(row) {
+  return {
+    id: row.id,
+    requirementId: row.requirement_id,
+    slotId: row.slot_id,
+    memberId: row.member_id,
+    interviewerId: row.interviewer_id,
+    bookedAt: row.booked_at || null,
+  };
+}
+
+async function interviewMembersForSync() {
+  const rows = parseArray(await database("portal_users?select=id,first_name,last_name,role,grade,blocked,approval_status,created_at,updated_at"));
+  return rows.map(interviewMemberFromRow).filter(canInterviewMember);
+}
+
+async function interviewProfilesFor() {
+  return parseArray(await database("portal_interview_profiles?select=*"));
+}
+
+async function interviewRequirementsFor() {
+  const rows = parseArray(await database("portal_interview_requirements?select=*&order=due_date.asc"));
+  return rows.map(interviewRequirementFromRow);
+}
+
+async function interviewSlotsFor() {
+  const rows = parseArray(await database("portal_interview_slots?select=*&order=starts_at.asc"));
+  return rows.map(interviewSlotFromRow);
+}
+
+async function interviewBookingsFor() {
+  const rows = parseArray(await database("portal_interview_bookings?select=*&order=booked_at.desc"));
+  return rows.map(interviewBookingFromRow);
+}
+
+async function createInterviewRequirement(memberId, reason, dueDate) {
+  const requirement = {
+    id: crypto.randomUUID(),
+    member_id: memberId,
+    reason,
+    due_date: dueDate,
+    status: "to_book",
+    updated_at: new Date().toISOString(),
+  };
+  await database("portal_interview_requirements", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(requirement) });
+  await createNotification({
+    recipients: [memberId],
+    kind: "info",
+    title: "Entretien à planifier",
+    text: `${INTERVIEW_REASON_LABELS[reason]} · échéance ${dueDate.split("-").reverse().join("/")}`,
+    target: "interviews",
+  });
+  return requirement;
+}
+
+// Le suivi ne déduit jamais rétrospectivement un changement passé. À la première
+// mise en service, chaque membre repart avec une base propre, puis les passages
+// de grade ou de rôle et les entretiens réalisés alimentent son échéancier.
+async function syncInterviewRequirements() {
+  const [members, profiles, requirements] = await Promise.all([
+    interviewMembersForSync(), interviewProfilesFor(), interviewRequirementsFor(),
+  ]);
+  const profilesByMember = new Map(profiles.map((profile) => [String(profile.member_id), profile]));
+  const requirementsByMember = new Map();
+  requirements.forEach((requirement) => {
+    if (requirement.status === "completed") return;
+    requirementsByMember.set(String(requirement.memberId), requirement);
+  });
+  const today = todayInParis();
+
+  for (const member of members) {
+    const profile = profilesByMember.get(member.id);
+    if (!profile) {
+      const now = new Date().toISOString();
+      await database("portal_interview_profiles", {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({
+          member_id: member.id,
+          last_role: member.role,
+          last_grade: member.grade,
+          baseline_at: now,
+          last_movement_at: now,
+          last_seen_user_update_at: member.updatedAt || now,
+          updated_at: now,
+        }),
+      });
+      await createInterviewRequirement(member.id, "monthly", dateAfterDays(today, 30));
+      continue;
+    }
+
+    const roleChanged = profile.last_role !== member.role;
+    const gradeChanged = profile.last_grade !== member.grade;
+    let openRequirement = requirementsByMember.get(member.id) || null;
+    if (roleChanged || gradeChanged) {
+      const movedAt = new Date().toISOString();
+      await database(`portal_interview_profiles?member_id=eq.${encodeURIComponent(member.id)}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({
+          last_role: member.role,
+          last_grade: member.grade,
+          last_movement_at: movedAt,
+          last_seen_user_update_at: member.updatedAt || movedAt,
+          baseline_at: movedAt,
+          updated_at: movedAt,
+        }),
+      });
+      const movementReason = member.role === "senior" && profile.last_role !== "senior"
+        ? "senior_entry"
+        : member.role === "officer" && member.grade === "Sergent" && (profile.last_role !== "officer" || profile.last_grade !== "Sergent")
+          ? "test_end"
+          : "";
+      if (movementReason && openRequirement?.reason === "monthly" && openRequirement.status === "to_book") {
+        const dueDate = dateAfterDays(today, 14);
+        await database(`portal_interview_requirements?id=eq.${encodeURIComponent(openRequirement.id)}`, {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({ reason: movementReason, due_date: dueDate, updated_at: movedAt }),
+        });
+        await createNotification({ recipients: [member.id], kind: "info", title: "Entretien à planifier", text: `${INTERVIEW_REASON_LABELS[movementReason]} · échéance ${dueDate.split("-").reverse().join("/")}`, target: "interviews" });
+        openRequirement = { ...openRequirement, reason: movementReason, dueDate };
+      } else if (movementReason && !openRequirement) {
+        openRequirement = await createInterviewRequirement(member.id, movementReason, dateAfterDays(today, 14));
+      }
+    }
+
+    const anchor = profile.last_completed_at || profile.baseline_at || new Date().toISOString();
+    const anchorDay = calendarDate(new Date(anchor).toISOString().slice(0, 10)) || today;
+    const monthlyDueDate = dateAfterDays(anchorDay, 30);
+    if (!openRequirement) {
+      await createInterviewRequirement(member.id, "monthly", monthlyDueDate);
+    }
+  }
+}
+
+async function interviewStateFor(user) {
+  await syncInterviewRequirements();
+  const [requirements, slots, bookings] = await Promise.all([interviewRequirementsFor(), interviewSlotsFor(), interviewBookingsFor()]);
+  const now = Date.now();
+  const bookingBySlot = new Map(bookings.map((booking) => [String(booking.slotId), booking]));
+  const isResponsible = isManager(user);
+  const visibleRequirements = isResponsible ? requirements : requirements.filter((requirement) => requirement.memberId === user.id);
+  const visibleBookings = isResponsible ? bookings : bookings.filter((booking) => booking.memberId === user.id);
+  const bookedSlotIds = new Set(bookings.map((booking) => String(booking.slotId)));
+  const ownBookedSlotIds = new Set(visibleBookings.map((booking) => String(booking.slotId)));
+  const visibleSlots = slots.filter((slot) => {
+    if (slot.status !== "available") return false;
+    const active = new Date(slot.startsAt).getTime() >= now - 60_000;
+    if (!active) return isResponsible && bookingBySlot.has(String(slot.id));
+    return isResponsible || !bookedSlotIds.has(String(slot.id)) || ownBookedSlotIds.has(String(slot.id));
+  });
+  return { requirements: visibleRequirements, slots: visibleSlots, bookings: visibleBookings };
+}
+
+async function interviewRequirementById(id) {
+  if (!UUID.test(id)) return null;
+  const rows = parseArray(await database(`portal_interview_requirements?id=eq.${encodeURIComponent(id)}&select=*`));
+  return rows[0] ? interviewRequirementFromRow(rows[0]) : null;
+}
+
+async function interviewSlotById(id) {
+  if (!UUID.test(id)) return null;
+  const rows = parseArray(await database(`portal_interview_slots?id=eq.${encodeURIComponent(id)}&select=*`));
+  return rows[0] ? interviewSlotFromRow(rows[0]) : null;
+}
+
+async function interviewBookingById(id) {
+  if (!UUID.test(id)) return null;
+  const rows = parseArray(await database(`portal_interview_bookings?id=eq.${encodeURIComponent(id)}&select=*`));
+  return rows[0] ? interviewBookingFromRow(rows[0]) : null;
+}
+
 async function stateFor(user) {
   let [chats, notifications, announcements, auditLogs, allSubmissions, summarySettings, sergeantAssignments, allMissions, allManagementReports, managementReportSettings, loadedMeeting, soMeetingHistory, allAbsences] = await Promise.all([
     allChats(user), notificationsFor(user), announcementsFor(user), auditLogsFor(user), submissionsFor(), summarySettingsFor(), assignmentsFor(), missionsFor(), managementReportsFor(), managementReportSettingsFor(), meetingFor(), meetingHistoryFor(), absencesFor(),
@@ -476,7 +745,7 @@ async function stateFor(user) {
   const managementReports = isManager(user) ? allManagementReports : allManagementReports.filter((report) => report.authorId === user.id || (user.role === "senior" && assignedSergeants.has(report.authorId)));
   const missions = isManager(user) ? allMissions : allMissions.filter((mission) => mission.userId === user.id);
   const absences = isManager(user) ? allAbsences : allAbsences.filter((absence) => absence.authorId === user.id);
-  return { chats, notifications, announcements, auditLogs, submissions: allSubmissions, quotas: await quotaState(allSubmissions), summarySettings, sergeantAssignments, missions, managementReports, managementReportSettings, soMeeting, soMeetingHistory, absences };
+  return { chats, notifications, announcements, auditLogs, submissions: allSubmissions, quotas: await quotaState(allSubmissions), summarySettings, sergeantAssignments, missions, managementReports, managementReportSettings, soMeeting, soMeetingHistory, absences, interviews: await interviewStateFor(user) };
 }
 
 function canReviewManagementReport(actor, report, assignments) {
@@ -1181,6 +1450,99 @@ export async function POST(request) {
       const next = assignments.map((item) => item.id === assignment.id ? { ...item, status: "completed", completedAt: new Date().toISOString() } : item);
       await saveAssignments(next);
       await recordAuditLog({ actor, category: "assignment", action: "Rapport de nouveau Sergent finalisé" });
+    } else if (action === "create_interview_slot") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent ouvrir des disponibilités." }, 403);
+      const date = calendarDate(body?.date);
+      const startTime = timeOfDay(body?.startTime);
+      const endTime = timeOfDay(body?.endTime);
+      if (!date || !startTime || !endTime || endTime.total <= startTime.total) return json({ error: "Indiquez une plage horaire valide, par tranches de 15 minutes." }, 400);
+      const count = (endTime.total - startTime.total) / 15;
+      if (count < 1 || count > 32) return json({ error: "Une disponibilité doit comporter entre 1 et 32 créneaux." }, 400);
+      const existing = await interviewSlotsFor();
+      const created = [];
+      for (let index = 0; index < count; index += 1) {
+        const total = startTime.total + index * 15;
+        const clock = `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+        const start = parisDateTime(date, clock);
+        if (!start || start.getTime() <= Date.now() - 60_000) continue;
+        if (existing.some((slot) => slot.interviewerId === actor.id && new Date(slot.startsAt).getTime() === start.getTime() && slot.status === "available")) continue;
+        const end = new Date(start.getTime() + 15 * 60_000);
+        const slot = { id: crypto.randomUUID(), interviewer_id: actor.id, created_by: actor.id, starts_at: start.toISOString(), ends_at: end.toISOString(), status: "available" };
+        await database("portal_interview_slots", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(slot) });
+        created.push(slot);
+      }
+      if (!created.length) return json({ error: "Aucun créneau nouveau n’a été créé : ils existent déjà ou sont passés." }, 400);
+      await recordAuditLog({ actor, category: "interview", action: "Disponibilités d’entretien ajoutées", details: `${created.length} créneau(x) le ${date.split("-").reverse().join("/")}` });
+    } else if (action === "delete_interview_slot") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent retirer une disponibilité." }, 403);
+      const slotId = String(body?.slotId || "");
+      const slot = await interviewSlotById(slotId);
+      if (!slot || slot.status !== "available") return json({ error: "Créneau introuvable." }, 404);
+      const bookings = await interviewBookingsFor();
+      if (bookings.some((booking) => booking.slotId === slot.id)) return json({ error: "Ce créneau est déjà réservé : annulez d’abord le rendez-vous." }, 400);
+      await database(`portal_interview_slots?id=eq.${encodeURIComponent(slot.id)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+      await recordAuditLog({ actor, category: "interview", action: "Disponibilité d’entretien retirée" });
+    } else if (action === "create_interview_requirement") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent créer une échéance d’entretien." }, 403);
+      const memberId = String(body?.memberId || "");
+      const reason = String(body?.reason || "");
+      const dueDate = calendarDate(body?.dueDate);
+      const member = await portalUser(memberId);
+      if (!member || !["officer", "senior"].includes(member.role) || !INTERVIEW_REASONS.has(reason) || !dueDate) return json({ error: "L’échéance d’entretien est invalide." }, 400);
+      const requirements = await interviewRequirementsFor();
+      const openRequirement = requirements.find((requirement) => requirement.memberId === memberId && requirement.status !== "completed");
+      if (openRequirement?.reason === "monthly" && openRequirement.status === "to_book") {
+        await database(`portal_interview_requirements?id=eq.${encodeURIComponent(openRequirement.id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ reason, due_date: dueDate, updated_at: new Date().toISOString() }) });
+        await createNotification({ recipients: [memberId], kind: "info", title: "Entretien à planifier", text: `${INTERVIEW_REASON_LABELS[reason]} · échéance ${dueDate.split("-").reverse().join("/")}`, target: "interviews" });
+      } else if (openRequirement) {
+        return json({ error: "Ce membre a déjà un entretien à planifier ou réservé." }, 400);
+      } else {
+        await createInterviewRequirement(memberId, reason, dueDate);
+      }
+      await recordAuditLog({ actor, category: "interview", action: "Échéance d’entretien ajoutée", details: `${INTERVIEW_REASON_LABELS[reason]} · ${member.first_name} ${member.last_name || ""}`.trim() });
+    } else if (action === "book_interview") {
+      const requirementId = String(body?.requirementId || "");
+      const slotId = String(body?.slotId || "");
+      const [requirement, slot] = await Promise.all([interviewRequirementById(requirementId), interviewSlotById(slotId)]);
+      if (!requirement || requirement.memberId !== actor.id || requirement.status !== "to_book") return json({ error: "Cet entretien n’est plus disponible à la réservation." }, 400);
+      if (!slot || slot.status !== "available" || new Date(slot.startsAt).getTime() <= Date.now()) return json({ error: "Ce créneau n’est plus disponible." }, 400);
+      const bookings = await interviewBookingsFor();
+      if (bookings.some((booking) => booking.slotId === slot.id || booking.requirementId === requirement.id)) return json({ error: "Ce créneau vient d’être réservé. Choisissez-en un autre." }, 409);
+      await database("portal_interview_bookings", {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ id: crypto.randomUUID(), requirement_id: requirement.id, slot_id: slot.id, member_id: actor.id, interviewer_id: slot.interviewerId }),
+      });
+      await database(`portal_interview_requirements?id=eq.${encodeURIComponent(requirement.id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ status: "booked", updated_at: new Date().toISOString() }) });
+      await recordAuditLog({ actor, category: "interview", action: "Rendez-vous d’entretien réservé", details: INTERVIEW_REASON_LABELS[requirement.reason] });
+    } else if (action === "cancel_interview_booking") {
+      const bookingId = String(body?.bookingId || "");
+      const booking = await interviewBookingById(bookingId);
+      if (!booking || (!isManager(actor) && booking.memberId !== actor.id)) return json({ error: "Rendez-vous introuvable." }, 404);
+      const requirement = await interviewRequirementById(booking.requirementId);
+      if (!requirement || requirement.status === "completed") return json({ error: "Cet entretien est déjà terminé." }, 400);
+      await database(`portal_interview_bookings?id=eq.${encodeURIComponent(booking.id)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+      await database(`portal_interview_requirements?id=eq.${encodeURIComponent(requirement.id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ status: "to_book", updated_at: new Date().toISOString() }) });
+      await recordAuditLog({ actor, category: "interview", action: "Rendez-vous d’entretien annulé", details: INTERVIEW_REASON_LABELS[requirement.reason] });
+    } else if (action === "complete_interview") {
+      if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent clôturer un entretien." }, 403);
+      const requirementId = String(body?.requirementId || "");
+      const requirement = await interviewRequirementById(requirementId);
+      if (!requirement || requirement.status === "completed") return json({ error: "Entretien introuvable ou déjà clôturé." }, 404);
+      const now = new Date().toISOString();
+      const note = cleanMultiline(body?.note, 1_600);
+      await database(`portal_interview_requirements?id=eq.${encodeURIComponent(requirement.id)}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ status: "completed", completion_note: note || null, completed_at: now, completed_by: actor.id, updated_at: now }),
+      });
+      await database(`portal_interview_profiles?member_id=eq.${encodeURIComponent(requirement.memberId)}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ last_completed_at: now, updated_at: now }),
+      });
+      await createNotification({ recipients: [requirement.memberId], kind: "info", title: "Entretien terminé", text: `${INTERVIEW_REASON_LABELS[requirement.reason]} enregistré. Le prochain suivi mensuel sera proposé dans un mois.`, target: "interviews" });
+      await recordAuditLog({ actor, category: "interview", action: "Entretien clôturé", details: INTERVIEW_REASON_LABELS[requirement.reason] });
     } else if (action === "notify") {
       await createNotification({ recipients: body?.recipients === "all" ? null : body?.recipients, kind: body?.kind, title: body?.title, text: body?.text, target: body?.target });
     } else if (action === "create_mission") {
