@@ -15,7 +15,7 @@ const nextConfig = {
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "img-src 'self' data: https://cdn.discordapp.com https://media.discordapp.net",
       "font-src 'self' https://fonts.gstatic.com",
-      "connect-src 'self' https://accounts.google.com https://oauth2.googleapis.com https://www.googleapis.com https://docs.googleapis.com",
+      "connect-src 'self' https://accounts.google.com https://oauth2.googleapis.com https://www.googleapis.com https://docs.googleapis.com https://sheets.googleapis.com",
       "media-src 'none'",
       "worker-src 'none'",
       "manifest-src 'self'",
