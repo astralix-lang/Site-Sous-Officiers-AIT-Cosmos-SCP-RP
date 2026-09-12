@@ -59,6 +59,12 @@ function displayDate(date) {
   catch { return date; }
 }
 
+function displayCompletedAt(value) {
+  if (!value) return "Date non renseignée";
+  try { return new Intl.DateTimeFormat("fr-FR", { dateStyle: "long", timeStyle: "short", timeZone: "Europe/Paris" }).format(new Date(value)); }
+  catch { return "Date non renseignée"; }
+}
+
 function displaySlot(slot) {
   try {
     return new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Paris" }).format(new Date(slot.startsAt));
@@ -94,7 +100,7 @@ function EmptyState({ title, text }) {
 
 async function runAction(setBusy, key, action, values) {
   setBusy(key);
-  try { await action(values); }
+  try { return await action(values); }
   finally { setBusy(""); }
 }
 
@@ -150,6 +156,9 @@ export function InterviewBookingPanel({ session, users, interviews, onAction }) 
 export function InterviewManagementPanel({ session, users, interviews, onAction }) {
   const [busy, setBusy] = useState("");
   const [slotForm, setSlotForm] = useState({ date: parisDay(), startTime: "15:00", endTime: "16:00" });
+  const [completionTarget, setCompletionTarget] = useState(null);
+  const [completionNote, setCompletionNote] = useState("");
+  const [historyMemberId, setHistoryMemberId] = useState("");
   const usersById = useMemo(() => new Map(users.map((user) => [String(user.id), user])), [users]);
   const members = useMemo(() => users.filter((user) => ["officer", "senior"].includes(user.role) && user.approvalStatus === "approved" && !user.blocked).sort(compareMembersByGrade), [users]);
   const [requirementForm, setRequirementForm] = useState({ memberId: "", reason: "monthly", dueDate: parisDay() });
@@ -164,6 +173,10 @@ export function InterviewManagementPanel({ session, users, interviews, onAction 
   });
   const completedRequirements = requirements.filter((item) => item.status === "completed");
   const upcomingSlots = slots.filter((slot) => new Date(slot.startsAt).getTime() > Date.now() - 60_000).slice(0, 20);
+  const historyMember = historyMemberId ? usersById.get(String(historyMemberId)) : null;
+  const historyEntries = historyMember ? completedRequirements
+    .filter((item) => String(item.memberId) === String(historyMember.id))
+    .sort((left, right) => new Date(right.completedAt || right.updatedAt || 0).getTime() - new Date(left.completedAt || left.updatedAt || 0).getTime()) : [];
 
   async function addSlots(event) {
     event.preventDefault();
@@ -174,10 +187,14 @@ export function InterviewManagementPanel({ session, users, interviews, onAction 
     if (!requirementForm.memberId) return;
     await runAction(setBusy, "requirement-form", onAction, { action: "create_interview_requirement", ...requirementForm });
   }
-  async function complete(requirement) {
-    const note = window.prompt("Compte rendu de l’entretien (facultatif) :", "");
-    if (note === null) return;
-    await runAction(setBusy, requirement.id, onAction, { action: "complete_interview", requirementId: requirement.id, note });
+  async function submitCompletion(event) {
+    event.preventDefault();
+    if (!completionTarget) return;
+    const saved = await runAction(setBusy, completionTarget.id, onAction, { action: "complete_interview", requirementId: completionTarget.id, note: completionNote });
+    if (saved) {
+      setCompletionTarget(null);
+      setCompletionNote("");
+    }
   }
 
   return <div className="interview-page interview-management-page">
@@ -192,8 +209,12 @@ export function InterviewManagementPanel({ session, users, interviews, onAction 
       <section className="interview-card"><div className="interview-card-head"><div><p className="eyebrow dark">SUIVI MANUEL</p><h2>Ajouter une échéance</h2><p>Pour un entretien exceptionnel ou pour démarrer le suivi d’un membre.</p></div><span className="interview-icon-box"><UserRound size={18} /></span></div><form className="interview-form" onSubmit={addRequirement}><label>Membre<select value={requirementForm.memberId} onChange={(event) => setRequirementForm((current) => ({ ...current, memberId: event.target.value }))} required><option value="">Choisir un Sous-Officier…</option>{members.map((member) => <option value={member.id} key={member.id}>{memberName(member)}</option>)}</select></label><div className="interview-time-grid"><label>Motif<select value={requirementForm.reason} onChange={(event) => setRequirementForm((current) => ({ ...current, reason: event.target.value }))}>{Object.entries(REASONS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>Échéance<input type="date" value={requirementForm.dueDate} onChange={(event) => setRequirementForm((current) => ({ ...current, dueDate: event.target.value }))} required /></label></div><button className="secondary" type="submit" disabled={!requirementForm.memberId || busy === "requirement-form"}><Plus size={17} />{busy === "requirement-form" ? "Ajout…" : "Ajouter l’échéance"}</button></form></section>
     </div>
 
-    <section className="interview-card interview-dashboard-card"><div className="interview-card-head"><div><p className="eyebrow dark">TABLEAU DE SUIVI</p><h2>État des entretiens</h2><p>Les échéances mensuelles sont recalculées automatiquement après chaque entretien clôturé.</p></div><span className="interview-count">{openRequirements.length}</span></div><div className="table-wrap"><table className="interview-table"><thead><tr><th>Membre</th><th>Motif</th><th>Échéance</th><th>Rendez-vous</th><th>Responsable</th><th>État</th><th aria-label="Actions" /></tr></thead><tbody>{openRequirements.map((requirement) => { const member = usersById.get(String(requirement.memberId)); const booking = bookingByRequirement.get(requirement.id); const slot = booking ? slotsById.get(booking.slotId) : null; const interviewer = slot ? usersById.get(String(slot.interviewerId)) : null; return <tr key={requirement.id}><td><div className="interview-member"><ProfileAvatar member={member} size="small" /><div><strong>{memberName(member)}</strong><small>{member ? (member.role === "senior" ? "Sous-Officier Supérieur" : "Sous-Officier") : "Compte supprimé"}</small></div></div></td><td><strong>{REASONS[requirement.reason]}</strong></td><td><span className={`interview-due ${requirement.dueDate < parisDay() ? "late" : ""}`}>{dueText(requirement)}</span></td><td>{slot ? <span className="interview-appointment"><Clock3 size={14} />{displaySlot(slot)}</span> : <span className="interview-no-appointment">En attente du membre</span>}</td><td>{interviewer ? <MemberIdentity member={interviewer} label="Entretien avec" compact /> : <span className="interview-no-appointment">À définir</span>}</td><td><RequirementPill requirement={requirement} /></td><td><div className="interview-row-actions">{booking && <button className="icon-button" type="button" title="Annuler le rendez-vous" disabled={busy === booking.id} onClick={() => { if (window.confirm("Annuler ce rendez-vous ?")) runAction(setBusy, booking.id, onAction, { action: "cancel_interview_booking", bookingId: booking.id }); }}><XCircle size={16} /></button>}<button className="secondary interview-complete" type="button" disabled={busy === requirement.id} onClick={() => complete(requirement)}><CheckCircle2 size={15} /> Clôturer</button></div></td></tr>; })}{!openRequirements.length && <tr><td colSpan="7"><EmptyState title="Aucune échéance en attente" text="Les prochains suivis apparaîtront ici automatiquement." /></td></tr>}</tbody></table></div></section>
+    <section className="interview-card interview-dashboard-card"><div className="interview-card-head"><div><p className="eyebrow dark">TABLEAU DE SUIVI</p><h2>État des entretiens</h2><p>Cliquez sur un membre pour consulter l’ensemble de ses comptes rendus.</p></div><span className="interview-count">{openRequirements.length}</span></div><div className="table-wrap"><table className="interview-table"><thead><tr><th>Membre</th><th>Motif</th><th>Échéance</th><th>Rendez-vous</th><th>Responsable</th><th>État</th><th aria-label="Actions" /></tr></thead><tbody>{openRequirements.map((requirement) => { const member = usersById.get(String(requirement.memberId)); const booking = bookingByRequirement.get(requirement.id); const slot = booking ? slotsById.get(booking.slotId) : null; const interviewer = slot ? usersById.get(String(slot.interviewerId)) : null; return <tr key={requirement.id}><td><button className="interview-member interview-member-open" type="button" disabled={!member} title={member ? `Ouvrir l’historique de ${memberName(member)}` : undefined} onClick={() => setHistoryMemberId(member.id)}><ProfileAvatar member={member} size="small" /><span><strong>{memberName(member)}</strong><small>{member ? (member.role === "senior" ? "Sous-Officier Supérieur" : "Sous-Officier") : "Compte supprimé"}</small></span></button></td><td><strong>{REASONS[requirement.reason]}</strong></td><td><span className={`interview-due ${requirement.dueDate < parisDay() ? "late" : ""}`}>{dueText(requirement)}</span></td><td>{slot ? <span className="interview-appointment"><Clock3 size={14} />{displaySlot(slot)}</span> : <span className="interview-no-appointment">En attente du membre</span>}</td><td>{interviewer ? <MemberIdentity member={interviewer} label="Entretien avec" compact /> : <span className="interview-no-appointment">À définir</span>}</td><td><RequirementPill requirement={requirement} /></td><td><div className="interview-row-actions">{booking && <button className="icon-button" type="button" title="Annuler le rendez-vous" disabled={busy === booking.id} onClick={() => { if (window.confirm("Annuler ce rendez-vous ?")) runAction(setBusy, booking.id, onAction, { action: "cancel_interview_booking", bookingId: booking.id }); }}><XCircle size={16} /></button>}<button className="secondary interview-complete" type="button" disabled={busy === requirement.id} onClick={() => { setCompletionTarget(requirement); setCompletionNote(""); }}><CheckCircle2 size={15} /> Clôturer</button></div></td></tr>; })}{!openRequirements.length && <tr><td colSpan="7"><EmptyState title="Aucune échéance en attente" text="Les prochains suivis apparaîtront ici automatiquement." /></td></tr>}</tbody></table></div></section>
 
     <section className="interview-card interview-availability-card"><div className="interview-card-head"><div><p className="eyebrow dark">CRÉNEAUX OUVERTS</p><h2>Disponibilités à venir</h2><p>Chaque créneau indique le responsable qui recevra le membre.</p></div><span className="interview-duration"><Clock3 size={15} /> 15 min</span></div><div className="interview-availability-list">{upcomingSlots.map((slot) => { const booking = bookings.find((item) => item.slotId === slot.id); const member = booking ? usersById.get(String(booking.memberId)) : null; const interviewer = usersById.get(String(slot.interviewerId)); const creator = usersById.get(String(slot.createdBy)); return <article key={slot.id}><div className="interview-slot-summary"><strong>{displaySlot(slot)}</strong>{interviewer && <MemberIdentity member={interviewer} label="Entretien assuré par" compact />}{creator && creator.id !== interviewer?.id && <small>Créneau ouvert par {memberName(creator)}</small>}</div>{booking ? <div className="interview-booking-owner">{member && <MemberIdentity member={member} label="Réservé par" compact />}<span className="interview-status booked"><i />Réservé</span></div> : <div className="interview-booking-owner"><span className="interview-status to_book"><i />Disponible</span><button className="icon-button danger" type="button" title="Retirer ce créneau" disabled={busy === slot.id} onClick={() => { if (window.confirm("Retirer ce créneau disponible ?")) runAction(setBusy, slot.id, onAction, { action: "delete_interview_slot", slotId: slot.id }); }}><Trash2 size={16} /></button></div>}</article>; })}{!upcomingSlots.length && <EmptyState title="Aucune disponibilité ouverte" text="Créez une première plage pour permettre les prises de rendez-vous." />}</div></section>
+
+    {completionTarget && <div className="interview-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) { setCompletionTarget(null); setCompletionNote(""); } }}><form className="interview-modal" onSubmit={submitCompletion}><button className="icon-button interview-modal-close" type="button" title="Fermer" onClick={() => { setCompletionTarget(null); setCompletionNote(""); }}><XCircle size={18} /></button><p className="eyebrow dark">CLÔTURE D’ENTRETIEN</p><h2>Ajouter le compte rendu</h2><p className="interview-modal-intro">Rédigez librement les points abordés, les décisions prises et le suivi à prévoir. Il restera accessible dans l’historique du membre.</p><div className="interview-modal-member"><MemberIdentity member={usersById.get(String(completionTarget.memberId))} label="Entretien de" /></div><label>Compte rendu libre<textarea value={completionNote} onChange={(event) => setCompletionNote(event.target.value)} maxLength={6000} rows={10} placeholder="Écrivez le compte rendu de l’entretien…" autoFocus /></label><small className="interview-character-count">{completionNote.length}/6000 caractères</small><div className="interview-modal-actions"><button className="secondary" type="button" onClick={() => { setCompletionTarget(null); setCompletionNote(""); }}>Annuler</button><button className="primary" type="submit" disabled={busy === completionTarget.id}><CheckCircle2 size={17} />{busy === completionTarget.id ? "Clôture…" : "Clôturer l’entretien"}</button></div></form></div>}
+
+    {historyMember && <div className="interview-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryMemberId(""); }}><section className="interview-modal interview-history-modal" aria-modal="true" role="dialog" aria-label={`Historique de ${memberName(historyMember)}`}><button className="icon-button interview-modal-close" type="button" title="Fermer" onClick={() => setHistoryMemberId("")}><XCircle size={18} /></button><p className="eyebrow dark">HISTORIQUE INDIVIDUEL</p><h2>Comptes rendus d’entretien</h2><div className="interview-modal-member"><MemberIdentity member={historyMember} label="Membre suivi" /></div><div className="interview-person-history-list">{historyEntries.map((item) => { const author = usersById.get(String(item.completedBy)); return <article key={item.id}><div className="interview-history-entry-head"><div><strong>{REASONS[item.reason]}</strong><small>Clôturé le {displayCompletedAt(item.completedAt)}</small></div><RequirementPill requirement={item} /></div><small className="interview-report-author">Compte rendu par {author ? memberName(author) : "Responsable non renseigné"}</small><p>{item.completionNote || "Aucun compte rendu n’a été ajouté pour cet entretien."}</p></article>; })}{!historyEntries.length && <EmptyState title="Aucun entretien terminé" text="Les futurs comptes rendus de ce membre apparaîtront ici." />}</div></section></div>}
   </div>;
 }

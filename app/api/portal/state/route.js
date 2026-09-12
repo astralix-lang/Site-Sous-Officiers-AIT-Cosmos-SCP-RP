@@ -541,7 +541,7 @@ function interviewRequirementFromRow(row) {
     reason,
     dueDate: calendarDate(row.due_date),
     status,
-    completionNote: cleanMultiline(row.completion_note, 1_600),
+    completionNote: cleanMultiline(row.completion_note, 6_000),
     completedAt: row.completed_at || null,
     completedBy: row.completed_by || null,
     createdAt: row.created_at || null,
@@ -1530,7 +1530,7 @@ export async function POST(request) {
       const requirement = await interviewRequirementById(requirementId);
       if (!requirement || requirement.status === "completed") return json({ error: "Entretien introuvable ou déjà clôturé." }, 404);
       const now = new Date().toISOString();
-      const note = cleanMultiline(body?.note, 1_600);
+      const note = cleanMultiline(body?.note, 6_000);
       await database(`portal_interview_requirements?id=eq.${encodeURIComponent(requirement.id)}`, {
         method: "PATCH",
         headers: { Prefer: "return=minimal" },
