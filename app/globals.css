@@ -927,3 +927,91 @@ body { font-size:15px; line-height:1.5; }
 [data-theme="dark"] .interview-table th { color:#a9b9aa; background:#172119; }.interview-due { color:#c0ccbe; }.interview-due.late { color:#f0989e; }.interview-appointment { color:#b5d0ec; }.interview-member-avatar { color:#f1d66e; background:#392f14; }.interview-count { color:#f1d66e; background:#392f14; }.interview-duration { color:#f1d77c; background:#392f14; }.interview-booked { color:#92d9b8; background:#14362b; border-color:#32755d; }.interview-booked span { color:#abd0ba; }.text-danger:hover { color:#f39da6; }
 @media(max-width:900px){.interview-hero{grid-template-columns:auto minmax(0,1fr)}.interview-hero-state,.interview-hero-counters{grid-column:1/-1;justify-self:stretch;text-align:left}.interview-hero-counters span{flex:1}.interview-booking-grid,.interview-management-forms{grid-template-columns:1fr}.interview-management-forms{gap:16px}}
 @media(max-width:620px){.interview-hero{padding:18px;gap:11px}.interview-hero h2{font-size:20px}.interview-hero-counters{flex-wrap:wrap}.interview-hero-counters span{min-width:calc(50% - 4px)}.interview-card-head{padding:16px}.interview-time-grid{grid-template-columns:1fr}.interview-form{padding:15px}.interview-form .primary,.interview-form .secondary{width:100%;justify-content:center}.interview-slot-days{grid-template-columns:1fr;padding:14px}.interview-booked{grid-template-columns:auto minmax(0,1fr)}.interview-booked button{grid-column:1/-1;justify-self:start;padding-left:0}.interview-table{min-width:820px}}
+
+/* Les en-têtes existants reprennent le format clair et compact des entretiens. */
+.content > header:not(:has(+ .interview-page)) {
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr) auto;
+  align-items:center;
+  gap:15px;
+  min-height:86px;
+  margin-bottom:18px;
+  padding:19px 23px;
+  color:#fff;
+  background:linear-gradient(120deg,color-mix(in srgb,var(--theme-accent) 30%,#172118),#101913 68%);
+  border:1px solid color-mix(in srgb,var(--theme-accent) 36%,#29372b);
+  border-radius:15px;
+  box-shadow:0 8px 25px #0000001e;
+}
+.content > header:not(:has(+ .interview-page))::before {
+  content:"✦";
+  width:46px;
+  height:46px;
+  display:grid;
+  place-items:center;
+  color:var(--theme-accent);
+  background:color-mix(in srgb,var(--theme-accent) 13%,#0b120d);
+  border:1px solid color-mix(in srgb,var(--theme-accent) 35%,transparent);
+  border-radius:12px;
+  font-size:21px;
+  line-height:1;
+}
+.content > header:not(:has(+ .interview-page))::after { display:none; }
+.content > header:not(:has(+ .interview-page)) > div { min-width:0; }
+.content > header:not(:has(+ .interview-page)) h1 { margin:2px 0 4px; color:#f5f6ef; font-size:25px; line-height:1; }
+.content > header:not(:has(+ .interview-page)) p { margin:0; color:#b9c2b6; font-size:13px; line-height:1.45; }
+.content > header:not(:has(+ .interview-page)) .eyebrow { margin:0 0 5px; color:var(--theme-accent); }
+.content > header:not(:has(+ .interview-page)) :is(.all-access,.referent-access,.senior-access) {
+  min-height:38px;
+  align-self:center;
+  color:#d8e0d5 !important;
+  background:#ffffff0b !important;
+  border:1px solid #ffffff18 !important;
+  border-radius:9px !important;
+  font-family:"DM Sans",sans-serif;
+  font-size:11px !important;
+}
+
+/* Les photos Discord ne sont plus remplacées par une icône dans les entretiens. */
+.interview-avatar { width:38px; height:38px; position:relative; display:grid; place-items:center; flex:0 0 auto; overflow:hidden; color:#f1d66e; background:#392f14; border:1px solid color-mix(in srgb,var(--theme-accent) 48%,#3a472f); border-radius:11px; font-size:12px; font-weight:800; }
+.interview-avatar.small { width:29px; height:29px; border-radius:9px; font-size:10px; }
+.interview-avatar img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; color:transparent; background:inherit; }
+.interview-person { display:inline-flex; align-items:center; gap:8px; min-width:0; color:inherit; text-align:left; }
+.interview-person > span:last-child { display:grid; min-width:0; gap:1px; }
+.interview-person small,.interview-person strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.interview-person small { color:#8b98a5; font-size:10px; line-height:1.2; }
+.interview-person strong { color:#435364; font-size:12px; line-height:1.25; }
+.interview-person.compact { gap:6px; }
+.interview-person.compact strong { font-size:11px; }
+.interview-person.compact small { font-size:9px; }
+.interview-booked-details { min-width:0; display:grid; gap:2px; }
+.interview-booked .interview-person { margin-top:5px; }
+.interview-booked .interview-person strong { color:#c8ead7; }
+.interview-booked .interview-person small { color:#9ac4ac; }
+.interview-slot-button { min-width:144px; justify-content:flex-start; }
+.interview-slot-button > span { display:grid; min-width:0; gap:1px; text-align:left; }
+.interview-slot-button b { font-size:12px; }
+.interview-slot-button small { overflow:hidden; color:#718093; font-size:9px; font-weight:600; text-overflow:ellipsis; white-space:nowrap; }
+.interview-slot-button .interview-avatar { width:24px; height:24px; margin-left:auto; border-radius:8px; font-size:8px; }
+.interview-host-note { padding:9px 10px; background:#f7f9f8; border:1px solid #e2e9e4; border-radius:10px; }
+.interview-member .interview-avatar { width:31px; height:31px; border-radius:9px; font-size:10px; }
+.interview-slot-summary { display:grid; min-width:0; gap:5px; }
+.interview-slot-summary > strong { margin-bottom:1px; }
+.interview-slot-summary > small { margin-left:36px; }
+.interview-booking-owner { display:flex; align-items:center; justify-content:flex-end; gap:9px; min-width:185px; }
+.interview-booking-owner .interview-person { max-width:164px; }
+.interview-booking-owner .interview-person strong { max-width:132px; }
+
+[data-theme="dark"] .interview-person strong { color:#e7eee4; }
+[data-theme="dark"] .interview-person small,.interview-slot-button small { color:#aebbad; }
+[data-theme="dark"] .interview-host-note { background:#172219; border-color:#2b3a2e; }
+[data-theme="dark"] .interview-slot-button .interview-avatar { border-color:#5d5123; }
+
+@media(max-width:800px) {
+  .content > header:not(:has(+ .interview-page)) { grid-template-columns:auto minmax(0,1fr); padding:18px; }
+  .content > header:not(:has(+ .interview-page)) :is(.all-access,.referent-access,.senior-access) { grid-column:1/-1; justify-self:start; }
+}
+@media(max-width:620px) {
+  .content > header:not(:has(+ .interview-page)) h1 { font-size:22px; }
+  .interview-booking-owner { align-items:flex-end; flex-direction:column; }
+}
