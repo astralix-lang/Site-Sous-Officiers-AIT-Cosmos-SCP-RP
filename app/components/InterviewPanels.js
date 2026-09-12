@@ -122,7 +122,7 @@ export function InterviewBookingPanel({ session, users, interviews, onAction }) 
     <section className="interview-hero">
       <div className="interview-hero-icon"><CalendarClock size={27} /></div>
       <div><p className="eyebrow dark">SUIVI INDIVIDUEL</p><h2>Mes entretiens</h2><p>Réservez votre créneau dès qu’une échéance vous est attribuée par l’équipe Référent SO.</p></div>
-      <div className="interview-hero-state"><strong>{current ? STATUS[current.status] : "À jour"}</strong><span>{current ? dueText(current) : "Aucun rendez-vous à prévoir"}</span></div>
+      <div className="interview-hero-side"><span className="interview-access"><UsersRound size={15} /> Accessible à tous les rôles</span><div className="interview-hero-state"><strong>{current ? STATUS[current.status] : "À jour"}</strong><span>{current ? dueText(current) : "Aucun rendez-vous à prévoir"}</span></div></div>
     </section>
 
     <div className="interview-booking-grid">
@@ -184,7 +184,7 @@ export function InterviewManagementPanel({ session, users, interviews, onAction 
     <section className="interview-hero">
       <div className="interview-hero-icon"><UsersRound size={27} /></div>
       <div><p className="eyebrow dark">RÉFÉRENT SO</p><h2>Gestion des entretiens</h2><p>Ouvrez des créneaux, suivez les rendez-vous et gardez une vue claire sur les prochaines échéances.</p></div>
-      <div className="interview-hero-counters"><span><strong>{openRequirements.filter((item) => item.status === "to_book").length}</strong> à réserver</span><span><strong>{openRequirements.filter((item) => item.status === "booked").length}</strong> fixés</span><span><strong>{completedRequirements.length}</strong> terminés</span></div>
+      <div className="interview-hero-side"><span className="interview-access"><UsersRound size={15} /> Gestion Référent SO</span><div className="interview-hero-counters"><span><strong>{openRequirements.filter((item) => item.status === "to_book").length}</strong> à réserver</span><span><strong>{openRequirements.filter((item) => item.status === "booked").length}</strong> fixés</span><span><strong>{completedRequirements.length}</strong> terminés</span></div></div>
     </section>
 
     <div className="interview-management-forms">
