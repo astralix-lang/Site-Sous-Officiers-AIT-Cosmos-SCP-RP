@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CalendarCheck2, CalendarClock, CheckCircle2, Clock3, Plus, Trash2, UserRound, UsersRound, XCircle } from "lucide-react";
+import { CalendarCheck2, CalendarClock, CheckCircle2, Clock3, FileSpreadsheet, Plus, Trash2, UserRound, UsersRound, XCircle } from "lucide-react";
 
 const INTERVIEW_SHEET_ID = "1a2FsKNqjO80xvDMRNuSSurjIcfwTs4nwdPGwu6zHibs";
 const INTERVIEW_SHEET_URL = `https://docs.google.com/spreadsheets/d/${INTERVIEW_SHEET_ID}/edit`;
@@ -19,6 +19,8 @@ const INTERVIEW_REPORT_FIELDS = [
 ];
 
 const EMPTY_INTERVIEW_REPORT = Object.fromEntries(INTERVIEW_REPORT_FIELDS.map((field) => [field.id, ""]));
+const INTERVIEW_DASHBOARD_TITLE = "Accueil · Entretiens";
+const INTERVIEW_REPORT_HEADERS = ["Date de clôture", "Responsable", "Motif", "Ressenti dans la branche", "Ressenti SO / SO-S", "Auto-évaluation", "Parcours et évolution", "Objectifs de carrière", "Remarques / axes d’amélioration", "Avenir personnel", "Identifiant entretien"];
 
 const REASONS = {
   test_end: "Fin de période d’essai",
@@ -127,53 +129,131 @@ function googleHeaders(token) {
   return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 }
 
+function sheetRow(values, width = 11) {
+  return [...values, ...Array(Math.max(0, width - values.length)).fill("")].slice(0, width);
+}
+
+async function sheetsBatchUpdate(token, requests, fallback) {
+  return googleSheetsRequest(`https://sheets.googleapis.com/v4/spreadsheets/${INTERVIEW_SHEET_ID}:batchUpdate`, {
+    method: "POST",
+    headers: googleHeaders(token),
+    body: JSON.stringify({ requests }),
+  }, fallback);
+}
+
+async function sheetValuesUpdate(token, range, values, fallback) {
+  return googleSheetsRequest(`https://sheets.googleapis.com/v4/spreadsheets/${INTERVIEW_SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`, {
+    method: "PUT",
+    headers: googleHeaders(token),
+    body: JSON.stringify({ values }),
+  }, fallback);
+}
+
+async function createSheet(token, title, properties = {}) {
+  const created = await sheetsBatchUpdate(token, [{ addSheet: { properties: { title, ...properties } } }], "L’onglet n’a pas pu être créé.");
+  const sheet = created?.replies?.[0]?.addSheet?.properties || null;
+  if (!sheet) throw new Error("Google Sheets n’a pas renvoyé le nouvel onglet.");
+  return sheet;
+}
+
+async function formatMemberInterviewSheet(token, sheet, member) {
+  const title = sheet.title;
+  await sheetsBatchUpdate(token, [
+    { unmergeCells: { range: { sheetId: sheet.sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 11 } } },
+    { unmergeCells: { range: { sheetId: sheet.sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: 11 } } },
+    { unmergeCells: { range: { sheetId: sheet.sheetId, startRowIndex: 7, endRowIndex: 8, startColumnIndex: 0, endColumnIndex: 11 } } },
+    { mergeCells: { range: { sheetId: sheet.sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 11 }, mergeType: "MERGE_ALL" } },
+    { mergeCells: { range: { sheetId: sheet.sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: 11 }, mergeType: "MERGE_ALL" } },
+    { mergeCells: { range: { sheetId: sheet.sheetId, startRowIndex: 7, endRowIndex: 8, startColumnIndex: 0, endColumnIndex: 11 }, mergeType: "MERGE_ALL" } },
+    { updateSheetProperties: { properties: { sheetId: sheet.sheetId, tabColor: { red: 0.73, green: 0.57, blue: 0.12 }, gridProperties: { frozenRowCount: 9 } }, fields: "tabColor,gridProperties.frozenRowCount" } },
+    { repeatCell: { range: { sheetId: sheet.sheetId, startRowIndex: 0, endRowIndex: 1 }, cell: { userEnteredFormat: { backgroundColor: { red: 0.05, green: 0.10, blue: 0.07 }, horizontalAlignment: "LEFT", verticalAlignment: "MIDDLE", textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 16, fontFamily: "Arial" } } }, fields: "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)" } },
+    { repeatCell: { range: { sheetId: sheet.sheetId, startRowIndex: 1, endRowIndex: 2 }, cell: { userEnteredFormat: { backgroundColor: { red: 0.13, green: 0.22, blue: 0.15 }, horizontalAlignment: "LEFT", verticalAlignment: "MIDDLE", textFormat: { foregroundColor: { red: 0.80, green: 0.91, blue: 0.82 }, italic: true, fontSize: 10, fontFamily: "Arial" } } }, fields: "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)" } },
+    { repeatCell: { range: { sheetId: sheet.sheetId, startRowIndex: 3, endRowIndex: 4, startColumnIndex: 0, endColumnIndex: 5 }, cell: { userEnteredFormat: { backgroundColor: { red: 0.91, green: 0.88, blue: 0.76 }, horizontalAlignment: "LEFT", verticalAlignment: "MIDDLE", textFormat: { foregroundColor: { red: 0.25, green: 0.20, blue: 0.08 }, bold: true, fontSize: 10, fontFamily: "Arial" } } }, fields: "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)" } },
+    { repeatCell: { range: { sheetId: sheet.sheetId, startRowIndex: 4, endRowIndex: 5, startColumnIndex: 0, endColumnIndex: 5 }, cell: { userEnteredFormat: { backgroundColor: { red: 0.97, green: 0.98, blue: 0.96 }, verticalAlignment: "MIDDLE", textFormat: { foregroundColor: { red: 0.12, green: 0.19, blue: 0.14 }, fontSize: 11, fontFamily: "Arial" } } }, fields: "userEnteredFormat(backgroundColor,verticalAlignment,textFormat)" } },
+    { repeatCell: { range: { sheetId: sheet.sheetId, startRowIndex: 7, endRowIndex: 8 }, cell: { userEnteredFormat: { backgroundColor: { red: 0.14, green: 0.31, blue: 0.20 }, horizontalAlignment: "LEFT", verticalAlignment: "MIDDLE", textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 11, fontFamily: "Arial" } } }, fields: "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)" } },
+    { repeatCell: { range: { sheetId: sheet.sheetId, startRowIndex: 8, endRowIndex: 9 }, cell: { userEnteredFormat: { backgroundColor: { red: 0.19, green: 0.38, blue: 0.25 }, verticalAlignment: "MIDDLE", wrapStrategy: "WRAP", textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 10, fontFamily: "Arial" } } }, fields: "userEnteredFormat(backgroundColor,verticalAlignment,wrapStrategy,textFormat)" } },
+    { repeatCell: { range: { sheetId: sheet.sheetId, startRowIndex: 9 }, cell: { userEnteredFormat: { verticalAlignment: "TOP", wrapStrategy: "WRAP", textFormat: { fontSize: 10, fontFamily: "Arial" } } }, fields: "userEnteredFormat(verticalAlignment,wrapStrategy,textFormat)" } },
+    { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: "COLUMNS", startIndex: 0, endIndex: 1 }, properties: { pixelSize: 150 }, fields: "pixelSize" } },
+    { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: "COLUMNS", startIndex: 1, endIndex: 3 }, properties: { pixelSize: 190 }, fields: "pixelSize" } },
+    { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: "COLUMNS", startIndex: 3, endIndex: 10 }, properties: { pixelSize: 250 }, fields: "pixelSize" } },
+    { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: "COLUMNS", startIndex: 10, endIndex: 11 }, properties: { hiddenByUser: true }, fields: "hiddenByUser" } },
+    { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: "ROWS", startIndex: 0, endIndex: 1 }, properties: { pixelSize: 34 }, fields: "pixelSize" } },
+    { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: "ROWS", startIndex: 1, endIndex: 2 }, properties: { pixelSize: 24 }, fields: "pixelSize" } },
+    { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: "ROWS", startIndex: 7, endIndex: 8 }, properties: { pixelSize: 27 }, fields: "pixelSize" } },
+  ], "La mise en forme du dossier n’a pas pu être appliquée.");
+  await sheetValuesUpdate(token, `${title}!A1:K9`, [
+    sheetRow([`Dossier d’entretiens individuels · ${memberName(member)}`]),
+    sheetRow(["Portail SO AIT · Suivi individuel et comptes rendus" ]),
+    sheetRow([]),
+    sheetRow(["Membre", "Grade", "Niveau", "Identifiant portail", "Dernière mise à jour"]),
+    sheetRow([memberName(member), member.grade || "Non renseigné", memberRoleLabel(member), member.id, new Date().toISOString()]),
+    sheetRow([]),
+    sheetRow([]),
+    sheetRow(["Historique des entretiens"]),
+    sheetRow(INTERVIEW_REPORT_HEADERS),
+  ], "Les informations du membre n’ont pas pu être actualisées.");
+}
+
 async function ensureMemberInterviewSheet(token, member) {
   const metadata = await googleSheetsRequest(`https://sheets.googleapis.com/v4/spreadsheets/${INTERVIEW_SHEET_ID}?fields=sheets.properties`, { headers: googleHeaders(token) }, "Le Google Sheet ne peut pas être ouvert.");
   const title = interviewSheetTitle(member);
   let sheet = metadata?.sheets?.find((entry) => entry?.properties?.title === title)?.properties || null;
   if (!sheet) {
-    const created = await googleSheetsRequest(`https://sheets.googleapis.com/v4/spreadsheets/${INTERVIEW_SHEET_ID}:batchUpdate`, {
-      method: "POST",
-      headers: googleHeaders(token),
-      body: JSON.stringify({ requests: [{ addSheet: { properties: { title } } }] }),
-    }, "L’onglet de ce membre n’a pas pu être créé.");
-    sheet = created?.replies?.[0]?.addSheet?.properties || null;
-    if (!sheet) throw new Error("Google Sheets n’a pas renvoyé le nouvel onglet.");
-    await googleSheetsRequest(`https://sheets.googleapis.com/v4/spreadsheets/${INTERVIEW_SHEET_ID}:batchUpdate`, {
-      method: "POST",
-      headers: googleHeaders(token),
-      body: JSON.stringify({ requests: [
-        { updateSheetProperties: { properties: { sheetId: sheet.sheetId, gridProperties: { frozenRowCount: 9 } }, fields: "gridProperties.frozenRowCount" } },
-        { repeatCell: { range: { sheetId: sheet.sheetId, startRowIndex: 0, endRowIndex: 1 }, cell: { userEnteredFormat: { backgroundColor: { red: 0.08, green: 0.16, blue: 0.11 }, textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 14 } } }, fields: "userEnteredFormat(backgroundColor,textFormat)" } },
-        { repeatCell: { range: { sheetId: sheet.sheetId, startRowIndex: 8, endRowIndex: 9 }, cell: { userEnteredFormat: { backgroundColor: { red: 0.16, green: 0.30, blue: 0.20 }, textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true }, wrapStrategy: "WRAP" } }, fields: "userEnteredFormat(backgroundColor,textFormat,wrapStrategy)" } },
-        { autoResizeDimensions: { dimensions: { sheetId: sheet.sheetId, dimension: "COLUMNS", startIndex: 0, endIndex: 11 } } },
-        { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: "COLUMNS", startIndex: 3, endIndex: 10 }, properties: { pixelSize: 260 }, fields: "pixelSize" } },
-        { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: "COLUMNS", startIndex: 10, endIndex: 11 }, properties: { hiddenByUser: true }, fields: "hiddenByUser" } },
-      ] }),
-    }, "La mise en forme de l’onglet n’a pas pu être appliquée.");
+    sheet = await createSheet(token, title);
   }
-
-  const profileRange = encodeURIComponent(`${title}!A1:B7`);
-  await googleSheetsRequest(`https://sheets.googleapis.com/v4/spreadsheets/${INTERVIEW_SHEET_ID}/values/${profileRange}?valueInputOption=USER_ENTERED`, {
-    method: "PUT",
-    headers: googleHeaders(token),
-    body: JSON.stringify({ values: [
-      ["Dossier d’entretiens individuels"],
-      ["Membre", memberName(member)],
-      ["Grade", member.grade || "Non renseigné"],
-      ["Niveau", memberRoleLabel(member)],
-      ["Identifiant portail", member.id],
-      ["Dernière mise à jour", new Date().toISOString()],
-      ["Source", "Portail SO AIT"],
-    ] }),
-  }, "Les informations du membre n’ont pas pu être actualisées.");
-  const headerRange = encodeURIComponent(`${title}!A9:K9`);
-  await googleSheetsRequest(`https://sheets.googleapis.com/v4/spreadsheets/${INTERVIEW_SHEET_ID}/values/${headerRange}?valueInputOption=USER_ENTERED`, {
-    method: "PUT",
-    headers: googleHeaders(token),
-    body: JSON.stringify({ values: [["Date de clôture", "Responsable", "Motif", "Ressenti dans la branche", "Ressenti SO / SO-S", "Auto-évaluation", "Parcours et évolution", "Objectifs de carrière", "Remarques / axes d’amélioration", "Avenir personnel", "Identifiant entretien"]] }),
-  }, "Les colonnes du dossier n’ont pas pu être préparées.");
+  await formatMemberInterviewSheet(token, sheet, member);
   return title;
+}
+
+async function ensureInterviewDashboard(token, members) {
+  const metadata = await googleSheetsRequest(`https://sheets.googleapis.com/v4/spreadsheets/${INTERVIEW_SHEET_ID}?fields=sheets.properties`, { headers: googleHeaders(token) }, "Le Google Sheet ne peut pas être ouvert.");
+  let sheet = metadata?.sheets?.find((entry) => entry?.properties?.title === INTERVIEW_DASHBOARD_TITLE)?.properties || null;
+  if (!sheet) sheet = await createSheet(token, INTERVIEW_DASHBOARD_TITLE, { index: 0 });
+  await sheetsBatchUpdate(token, [
+    { unmergeCells: { range: { sheetId: sheet.sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 8 } } },
+    { unmergeCells: { range: { sheetId: sheet.sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: 8 } } },
+    { mergeCells: { range: { sheetId: sheet.sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 8 }, mergeType: "MERGE_ALL" } },
+    { mergeCells: { range: { sheetId: sheet.sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: 8 }, mergeType: "MERGE_ALL" } },
+    { updateSheetProperties: { properties: { sheetId: sheet.sheetId, index: 0, tabColor: { red: 0.12, green: 0.42, blue: 0.28 }, gridProperties: { frozenRowCount: 9 } }, fields: "index,tabColor,gridProperties.frozenRowCount" } },
+    { repeatCell: { range: { sheetId: sheet.sheetId, startRowIndex: 0, endRowIndex: 1 }, cell: { userEnteredFormat: { backgroundColor: { red: 0.05, green: 0.10, blue: 0.07 }, verticalAlignment: "MIDDLE", textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 18, fontFamily: "Arial" } } }, fields: "userEnteredFormat(backgroundColor,verticalAlignment,textFormat)" } },
+    { repeatCell: { range: { sheetId: sheet.sheetId, startRowIndex: 1, endRowIndex: 2 }, cell: { userEnteredFormat: { backgroundColor: { red: 0.13, green: 0.22, blue: 0.15 }, verticalAlignment: "MIDDLE", textFormat: { foregroundColor: { red: 0.80, green: 0.91, blue: 0.82 }, italic: true, fontSize: 10, fontFamily: "Arial" } } }, fields: "userEnteredFormat(backgroundColor,verticalAlignment,textFormat)" } },
+    { repeatCell: { range: { sheetId: sheet.sheetId, startRowIndex: 3, endRowIndex: 4, startColumnIndex: 0, endColumnIndex: 8 }, cell: { userEnteredFormat: { backgroundColor: { red: 0.91, green: 0.88, blue: 0.76 }, textFormat: { foregroundColor: { red: 0.25, green: 0.20, blue: 0.08 }, bold: true, fontSize: 10, fontFamily: "Arial" } } }, fields: "userEnteredFormat(backgroundColor,textFormat)" } },
+    { repeatCell: { range: { sheetId: sheet.sheetId, startRowIndex: 4, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 8 }, cell: { userEnteredFormat: { backgroundColor: { red: 0.97, green: 0.98, blue: 0.96 }, verticalAlignment: "TOP", wrapStrategy: "WRAP", textFormat: { foregroundColor: { red: 0.12, green: 0.19, blue: 0.14 }, fontSize: 11, fontFamily: "Arial" } } }, fields: "userEnteredFormat(backgroundColor,verticalAlignment,wrapStrategy,textFormat)" } },
+    { repeatCell: { range: { sheetId: sheet.sheetId, startRowIndex: 7, endRowIndex: 8 }, cell: { userEnteredFormat: { backgroundColor: { red: 0.14, green: 0.31, blue: 0.20 }, textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 11, fontFamily: "Arial" } } }, fields: "userEnteredFormat(backgroundColor,textFormat)" } },
+    { repeatCell: { range: { sheetId: sheet.sheetId, startRowIndex: 8, endRowIndex: 9 }, cell: { userEnteredFormat: { backgroundColor: { red: 0.19, green: 0.38, blue: 0.25 }, verticalAlignment: "MIDDLE", textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 10, fontFamily: "Arial" } } }, fields: "userEnteredFormat(backgroundColor,verticalAlignment,textFormat)" } },
+    { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: "COLUMNS", startIndex: 0, endIndex: 1 }, properties: { pixelSize: 150 }, fields: "pixelSize" } },
+    { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: "COLUMNS", startIndex: 1, endIndex: 2 }, properties: { pixelSize: 250 }, fields: "pixelSize" } },
+    { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: "COLUMNS", startIndex: 2, endIndex: 5 }, properties: { pixelSize: 180 }, fields: "pixelSize" } },
+    { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: "ROWS", startIndex: 0, endIndex: 1 }, properties: { pixelSize: 38 }, fields: "pixelSize" } },
+  ], "La mise en forme de l’accueil n’a pas pu être appliquée.");
+  return sheet;
+}
+
+async function prepareInterviewWorkbook({ members, onProgress }) {
+  const token = await requestGoogleSheetsToken();
+  const dashboard = await ensureInterviewDashboard(token, members);
+  const dossiers = [];
+  for (let index = 0; index < members.length; index += 1) {
+    const member = members[index];
+    onProgress?.(index + 1, members.length, member);
+    const title = await ensureMemberInterviewSheet(token, member);
+    dossiers.push([member.grade || "Non renseigné", memberName(member), memberRoleLabel(member), title, "Prêt"]);
+  }
+  await sheetValuesUpdate(token, `${INTERVIEW_DASHBOARD_TITLE}!A1:H8`, [
+    sheetRow(["Portail SO AIT · Entretiens individuels"], 8),
+    sheetRow(["Dossiers centralisés des Sous-Officiers et Sous-Officiers Supérieurs"], 8),
+    sheetRow([], 8),
+    sheetRow(["Fonctionnement", "Dossiers préparés", "Dernière préparation"], 8),
+    sheetRow(["Chaque onglet regroupe le profil du membre et ses comptes rendus d’entretien.", `${members.length} dossier${members.length > 1 ? "s" : ""}`, new Date().toISOString()], 8),
+    sheetRow([], 8),
+    sheetRow([], 8),
+    sheetRow(["Liste des dossiers"], 8),
+  ], "L’accueil du Google Sheet n’a pas pu être actualisé.");
+  await sheetValuesUpdate(token, `${INTERVIEW_DASHBOARD_TITLE}!A9:E${Math.max(9, dossiers.length + 9)}`, [
+    ["Grade", "Membre", "Niveau", "Onglet", "État"],
+    ...dossiers,
+  ], "La liste des dossiers n’a pas pu être ajoutée.");
+  await sheetsBatchUpdate(token, [{ repeatCell: { range: { sheetId: dashboard.sheetId, startRowIndex: 9 }, cell: { userEnteredFormat: { verticalAlignment: "MIDDLE", textFormat: { fontSize: 10, fontFamily: "Arial" } } }, fields: "userEnteredFormat(verticalAlignment,textFormat)" } }], "La liste des dossiers n’a pas pu être mise en forme.");
 }
 
 async function sendInterviewReportToSheet({ member, interviewer, requirement, report }) {
@@ -321,6 +401,9 @@ export function InterviewManagementPanel({ session, users, interviews, onAction 
   const [completionReport, setCompletionReport] = useState(EMPTY_INTERVIEW_REPORT);
   const [completionError, setCompletionError] = useState("");
   const [sendingToSheet, setSendingToSheet] = useState(false);
+  const [preparingWorkbook, setPreparingWorkbook] = useState(false);
+  const [workbookProgress, setWorkbookProgress] = useState("");
+  const [workbookError, setWorkbookError] = useState("");
   const [historyMemberId, setHistoryMemberId] = useState("");
   const usersById = useMemo(() => new Map(users.map((user) => [String(user.id), user])), [users]);
   const members = useMemo(() => users.filter((user) => ["officer", "senior"].includes(user.role) && user.approvalStatus === "approved" && !user.blocked).sort(compareMembersByGrade), [users]);
@@ -350,6 +433,23 @@ export function InterviewManagementPanel({ session, users, interviews, onAction 
     event.preventDefault();
     if (!requirementForm.memberId) return;
     await runAction(setBusy, "requirement-form", onAction, { action: "create_interview_requirement", ...requirementForm });
+  }
+  async function prepareWorkbook() {
+    setPreparingWorkbook(true);
+    setWorkbookError("");
+    setWorkbookProgress("");
+    try {
+      await prepareInterviewWorkbook({
+        members,
+        onProgress: (current, total, member) => setWorkbookProgress(`Préparation ${current}/${total} · ${memberName(member)}`),
+      });
+      setWorkbookProgress(`${members.length} dossier${members.length > 1 ? "s" : ""} préparé${members.length > 1 ? "s" : ""} dans Google Sheet.`);
+    } catch (error) {
+      setWorkbookProgress("");
+      setWorkbookError(error instanceof Error ? error.message : "Les dossiers Google Sheet n’ont pas pu être préparés.");
+    } finally {
+      setPreparingWorkbook(false);
+    }
   }
   async function submitCompletion(event) {
     event.preventDefault();
@@ -384,6 +484,13 @@ export function InterviewManagementPanel({ session, users, interviews, onAction 
       <section className="interview-card"><div className="interview-card-head"><div><p className="eyebrow dark">DISPONIBILITÉS</p><h2>Ouvrir mes créneaux</h2><p>Une plage est automatiquement découpée en rendez-vous de 15 minutes.</p></div><span className="interview-icon-box"><Plus size={18} /></span></div><form className="interview-form" onSubmit={addSlots}><div className="interview-host-note"><MemberIdentity member={session} label="Les rendez-vous seront proposés avec" compact /></div><label>Date<input type="date" value={slotForm.date} min={parisDay()} onChange={(event) => setSlotForm((current) => ({ ...current, date: event.target.value }))} required /></label><div className="interview-time-grid"><label>Début<input type="time" step="900" value={slotForm.startTime} onChange={(event) => setSlotForm((current) => ({ ...current, startTime: event.target.value }))} required /></label><label>Fin<input type="time" step="900" value={slotForm.endTime} onChange={(event) => setSlotForm((current) => ({ ...current, endTime: event.target.value }))} required /></label></div><button className="primary" type="submit" disabled={busy === "slot-form"}><CalendarClock size={17} />{busy === "slot-form" ? "Création…" : "Créer mes créneaux"}</button></form></section>
       <section className="interview-card"><div className="interview-card-head"><div><p className="eyebrow dark">SUIVI MANUEL</p><h2>Ajouter une échéance</h2><p>Pour un entretien exceptionnel ou pour démarrer le suivi d’un membre.</p></div><span className="interview-icon-box"><UserRound size={18} /></span></div><form className="interview-form" onSubmit={addRequirement}><label>Membre<select value={requirementForm.memberId} onChange={(event) => setRequirementForm((current) => ({ ...current, memberId: event.target.value }))} required><option value="">Choisir un Sous-Officier…</option>{members.map((member) => <option value={member.id} key={member.id}>{memberName(member)}</option>)}</select></label><div className="interview-time-grid"><label>Motif<select value={requirementForm.reason} onChange={(event) => setRequirementForm((current) => ({ ...current, reason: event.target.value }))}>{Object.entries(REASONS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>Échéance<input type="date" value={requirementForm.dueDate} onChange={(event) => setRequirementForm((current) => ({ ...current, dueDate: event.target.value }))} required /></label></div><button className="secondary" type="submit" disabled={!requirementForm.memberId || busy === "requirement-form"}><Plus size={17} />{busy === "requirement-form" ? "Ajout…" : "Ajouter l’échéance"}</button></form></section>
     </div>
+
+    <section className="interview-card interview-sheet-setup-card">
+      <div className="interview-card-head"><div><p className="eyebrow dark">GOOGLE SHEET</p><h2>Préparer les dossiers individuels</h2><p>Crée un onglet complet par Sous-Officier et Sous-Officier Supérieur, puis actualise l’accueil du fichier.</p></div><span className="interview-icon-box"><FileSpreadsheet size={18} /></span></div>
+      <div className="interview-sheet-setup-body"><div><strong>{members.length} dossier{members.length > 1 ? "s" : ""} à préparer</strong><p>Chaque onglet contient l’identité du membre et l’historique de ses comptes rendus d’entretien.</p></div><div className="interview-sheet-setup-actions"><a className="secondary" href={INTERVIEW_SHEET_URL} target="_blank" rel="noreferrer">Ouvrir le Sheet</a><button className="primary" type="button" disabled={preparingWorkbook || !members.length} onClick={prepareWorkbook}><FileSpreadsheet size={17} />{preparingWorkbook ? (workbookProgress || "Préparation…") : "Créer les dossiers"}</button></div></div>
+      {workbookProgress && <p className="interview-sheet-progress">{workbookProgress}</p>}
+      {workbookError && <p className="form-error interview-sheet-error">{workbookError}</p>}
+    </section>
 
     <section className="interview-card interview-dashboard-card"><div className="interview-card-head"><div><p className="eyebrow dark">TABLEAU DE SUIVI</p><h2>État des entretiens</h2><p>Les suivis périodiques reviennent toutes les deux semaines. Cliquez sur un membre pour consulter son historique.</p></div><span className="interview-count">{openRequirements.length}</span></div><div className="table-wrap"><table className="interview-table"><thead><tr><th>Membre</th><th>Motif</th><th>Échéance</th><th>Rendez-vous</th><th>Responsable</th><th>État</th><th aria-label="Actions" /></tr></thead><tbody>{openRequirements.map((requirement) => { const member = usersById.get(String(requirement.memberId)); const booking = bookingByRequirement.get(requirement.id); const slot = booking ? slotsById.get(booking.slotId) : null; const interviewer = slot ? usersById.get(String(slot.interviewerId)) : null; return <tr key={requirement.id}><td><button className="interview-member interview-member-open" type="button" disabled={!member} title={member ? `Ouvrir l’historique de ${memberName(member)}` : undefined} onClick={() => setHistoryMemberId(member.id)}><ProfileAvatar member={member} size="small" /><span><strong>{memberName(member)}</strong><small>{member ? (member.role === "senior" ? "Sous-Officier Supérieur" : "Sous-Officier") : "Compte supprimé"}</small></span></button></td><td><strong>{REASONS[requirement.reason]}</strong></td><td><span className={`interview-due ${requirement.dueDate < parisDay() ? "late" : ""}`}>{dueText(requirement)}</span></td><td>{slot ? <span className="interview-appointment"><Clock3 size={14} />{displaySlot(slot)}</span> : <span className="interview-no-appointment">En attente du membre</span>}</td><td>{interviewer ? <MemberIdentity member={interviewer} label="Entretien avec" compact /> : <span className="interview-no-appointment">À définir</span>}</td><td><RequirementPill requirement={requirement} /></td><td><div className="interview-row-actions">{booking && <button className="icon-button" type="button" title="Annuler le rendez-vous" disabled={busy === booking.id} onClick={() => { if (window.confirm("Annuler ce rendez-vous ?")) runAction(setBusy, booking.id, onAction, { action: "cancel_interview_booking", bookingId: booking.id }); }}><XCircle size={16} /></button>}<button className="secondary interview-complete" type="button" disabled={busy === requirement.id} onClick={() => { setCompletionTarget(requirement); setCompletionReport(EMPTY_INTERVIEW_REPORT); setCompletionError(""); }}><CheckCircle2 size={15} /> Clôturer</button></div></td></tr>; })}{!openRequirements.length && <tr><td colSpan="7"><EmptyState title="Aucune échéance en attente" text="Les prochains suivis apparaîtront ici automatiquement." /></td></tr>}</tbody></table></div></section>
 
