@@ -15,6 +15,12 @@ const STATUS = {
   completed: "Terminé",
 };
 
+const GRADE_ORDER = [
+  "Sergent", "Sergent-Chef", "Adjudant", "Adjudant-Chef", "Major", "Élève Officier", "Aspirant",
+  "Sous-Lieutenant", "Lieutenant", "Capitaine", "Vice-Commandant", "Commandant", "Lieutenant-Colonel",
+  "Colonel", "Général", "Maréchal",
+];
+
 function parisDay() {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
@@ -24,6 +30,14 @@ function parisDay() {
 function memberName(member) {
   if (!member) return "Membre introuvable";
   return `${member.grade ? `${member.grade} ` : ""}${member.firstName || ""} ${member.lastName || ""}`.trim();
+}
+
+function compareMembersByGrade(left, right) {
+  const leftGrade = Math.max(0, GRADE_ORDER.indexOf(left?.grade || GRADE_ORDER[0]));
+  const rightGrade = Math.max(0, GRADE_ORDER.indexOf(right?.grade || GRADE_ORDER[0]));
+  const gradeDifference = rightGrade - leftGrade;
+  if (gradeDifference) return gradeDifference;
+  return memberName(left).localeCompare(memberName(right), "fr", { sensitivity: "base" });
 }
 
 function memberInitials(member) {
@@ -136,15 +150,18 @@ export function InterviewBookingPanel({ session, users, interviews, onAction }) 
 export function InterviewManagementPanel({ session, users, interviews, onAction }) {
   const [busy, setBusy] = useState("");
   const [slotForm, setSlotForm] = useState({ date: parisDay(), startTime: "15:00", endTime: "16:00" });
-  const members = useMemo(() => users.filter((user) => ["officer", "senior"].includes(user.role) && user.approvalStatus === "approved" && !user.blocked), [users]);
+  const usersById = useMemo(() => new Map(users.map((user) => [String(user.id), user])), [users]);
+  const members = useMemo(() => users.filter((user) => ["officer", "senior"].includes(user.role) && user.approvalStatus === "approved" && !user.blocked).sort(compareMembersByGrade), [users]);
   const [requirementForm, setRequirementForm] = useState({ memberId: "", reason: "monthly", dueDate: parisDay() });
   const requirements = Array.isArray(interviews?.requirements) ? [...interviews.requirements] : [];
   const slots = Array.isArray(interviews?.slots) ? interviews.slots : [];
   const bookings = Array.isArray(interviews?.bookings) ? interviews.bookings : [];
-  const usersById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
   const slotsById = useMemo(() => new Map(slots.map((slot) => [slot.id, slot])), [slots]);
   const bookingByRequirement = useMemo(() => new Map(bookings.map((booking) => [booking.requirementId, booking])), [bookings]);
-  const openRequirements = requirements.filter((item) => item.status !== "completed").sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
+  const openRequirements = requirements.filter((item) => item.status !== "completed").sort((left, right) => {
+    const gradeDifference = compareMembersByGrade(usersById.get(String(left.memberId)), usersById.get(String(right.memberId)));
+    return gradeDifference || String(left.dueDate).localeCompare(String(right.dueDate));
+  });
   const completedRequirements = requirements.filter((item) => item.status === "completed");
   const upcomingSlots = slots.filter((slot) => new Date(slot.startsAt).getTime() > Date.now() - 60_000).slice(0, 20);
 
