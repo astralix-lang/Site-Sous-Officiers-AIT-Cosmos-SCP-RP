@@ -110,19 +110,29 @@ async function requestGoogleSheetsToken() {
 }
 
 async function googleSheetsRequest(url, options, fallback) {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), GOOGLE_REQUEST_TIMEOUT);
-  try {
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(payload?.error?.message || fallback);
-    return payload;
-  } catch (error) {
-    if (error?.name === "AbortError") throw new Error("Google Sheets met trop de temps à répondre. Réessayez dans un instant.");
-    throw error;
-  } finally {
-    window.clearTimeout(timeout);
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), GOOGLE_REQUEST_TIMEOUT);
+    let response = null;
+    try {
+      response = await fetch(url, { ...options, signal: controller.signal });
+      const payload = await response.json().catch(() => null);
+      if (response.ok) return payload;
+      throw new Error(payload?.error?.message || fallback);
+    } catch (error) {
+      lastError = error;
+      const retryable = error?.name === "AbortError" || error instanceof TypeError || response?.status === 429 || response?.status >= 500;
+      if (!retryable || attempt === 2) {
+        if (error?.name === "AbortError") throw new Error("Google Sheets met trop de temps à répondre. Réessayez dans un instant.");
+        throw error;
+      }
+    } finally {
+      window.clearTimeout(timeout);
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 900 * (attempt + 1)));
   }
+  throw lastError || new Error(fallback);
 }
 
 function googleHeaders(token) {
@@ -131,6 +141,10 @@ function googleHeaders(token) {
 
 function sheetRow(values, width = 11) {
   return [...values, ...Array(Math.max(0, width - values.length)).fill("")].slice(0, width);
+}
+
+function sheetDataRow(values, width = 11) {
+  return { values: sheetRow(values, width).map((value) => ({ userEnteredValue: { stringValue: String(value ?? "") } })) };
 }
 
 async function sheetsBatchUpdate(token, requests, fallback) {
@@ -157,7 +171,6 @@ async function createSheet(token, title, properties = {}) {
 }
 
 async function formatMemberInterviewSheet(token, sheet, member) {
-  const title = sheet.title;
   await sheetsBatchUpdate(token, [
     { unmergeCells: { range: { sheetId: sheet.sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 11 } } },
     { unmergeCells: { range: { sheetId: sheet.sheetId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: 11 } } },
@@ -180,18 +193,18 @@ async function formatMemberInterviewSheet(token, sheet, member) {
     { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: "ROWS", startIndex: 0, endIndex: 1 }, properties: { pixelSize: 34 }, fields: "pixelSize" } },
     { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: "ROWS", startIndex: 1, endIndex: 2 }, properties: { pixelSize: 24 }, fields: "pixelSize" } },
     { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: "ROWS", startIndex: 7, endIndex: 8 }, properties: { pixelSize: 27 }, fields: "pixelSize" } },
+    { updateCells: { range: { sheetId: sheet.sheetId, startRowIndex: 0, endRowIndex: 9, startColumnIndex: 0, endColumnIndex: 11 }, rows: [
+      sheetDataRow([`Dossier d’entretiens individuels · ${memberName(member)}`]),
+      sheetDataRow(["Portail SO AIT · Suivi individuel et comptes rendus"]),
+      sheetDataRow([]),
+      sheetDataRow(["Membre", "Grade", "Niveau", "Identifiant portail", "Dernière mise à jour"]),
+      sheetDataRow([memberName(member), member.grade || "Non renseigné", memberRoleLabel(member), member.id, new Date().toISOString()]),
+      sheetDataRow([]),
+      sheetDataRow([]),
+      sheetDataRow(["Historique des entretiens"]),
+      sheetDataRow(INTERVIEW_REPORT_HEADERS),
+    ], fields: "userEnteredValue" } },
   ], "La mise en forme du dossier n’a pas pu être appliquée.");
-  await sheetValuesUpdate(token, `${title}!A1:K9`, [
-    sheetRow([`Dossier d’entretiens individuels · ${memberName(member)}`]),
-    sheetRow(["Portail SO AIT · Suivi individuel et comptes rendus" ]),
-    sheetRow([]),
-    sheetRow(["Membre", "Grade", "Niveau", "Identifiant portail", "Dernière mise à jour"]),
-    sheetRow([memberName(member), member.grade || "Non renseigné", memberRoleLabel(member), member.id, new Date().toISOString()]),
-    sheetRow([]),
-    sheetRow([]),
-    sheetRow(["Historique des entretiens"]),
-    sheetRow(INTERVIEW_REPORT_HEADERS),
-  ], "Les informations du membre n’ont pas pu être actualisées.");
 }
 
 async function ensureMemberInterviewSheet(token, member) {
