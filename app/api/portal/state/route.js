@@ -541,7 +541,9 @@ function interviewRequirementFromRow(row) {
     reason,
     dueDate: calendarDate(row.due_date),
     status,
-    completionNote: cleanMultiline(row.completion_note, 6_000),
+    // Les réponses détaillées sont archivées dans le Google Sheet dédié.
+    // Le portail ne conserve que l’état et les métadonnées de l’entretien.
+    completionNote: "",
     completedAt: row.completed_at || null,
     completedBy: row.completed_by || null,
     createdAt: row.created_at || null,
@@ -1555,11 +1557,10 @@ export async function POST(request) {
       const requirement = await interviewRequirementById(requirementId);
       if (!requirement || requirement.status === "completed") return json({ error: "Entretien introuvable ou déjà clôturé." }, 404);
       const now = new Date().toISOString();
-      const note = cleanMultiline(body?.note, 6_000);
       await database(`portal_interview_requirements?id=eq.${encodeURIComponent(requirement.id)}`, {
         method: "PATCH",
         headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({ status: "completed", completion_note: note || null, completed_at: now, completed_by: actor.id, updated_at: now }),
+        body: JSON.stringify({ status: "completed", completion_note: null, completed_at: now, completed_by: actor.id, updated_at: now }),
       });
       await database(`portal_interview_profiles?member_id=eq.${encodeURIComponent(requirement.memberId)}`, {
         method: "PATCH",

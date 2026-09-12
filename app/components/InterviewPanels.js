@@ -3,6 +3,23 @@
 import { useMemo, useState } from "react";
 import { CalendarCheck2, CalendarClock, CheckCircle2, Clock3, Plus, Trash2, UserRound, UsersRound, XCircle } from "lucide-react";
 
+const INTERVIEW_SHEET_ID = "1a2FsKNqjO80xvDMRNuSSurjIcfwTs4nwdPGwu6zHibs";
+const INTERVIEW_SHEET_URL = `https://docs.google.com/spreadsheets/d/${INTERVIEW_SHEET_ID}/edit`;
+const GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+const GOOGLE_REQUEST_TIMEOUT = 45_000;
+const INTERVIEW_REPORT_FIELDS = [
+  { id: "branchFeeling", label: "Comment la personne se sent-elle au sein de la branche ?", placeholder: "Ressenti général au sein des AIT…" },
+  { id: "teamFeeling", label: "Comment se sent-elle parmi les SO / SO-S ?", placeholder: "Intégration, échanges et cohésion…" },
+  { id: "selfAssessment", label: "Auto-évaluation du SO / SO-S", hint: "Points positifs et points à améliorer.", placeholder: "Forces, difficultés et bilan personnel…" },
+  { id: "careerReview", label: "Parcours et évolution", hint: "Sanctions éventuelles, évolutions, retours des Officiers.", placeholder: "Éléments importants de sa carrière…" },
+  { id: "careerGoals", label: "Objectifs de carrière", placeholder: "Objectifs à court et moyen terme…" },
+  { id: "improvementFeedback", label: "Remarques et axes d’amélioration", hint: "Concernant les AIT ou les SO / SO-S.", placeholder: "Suggestions, remarques ou points à travailler…" },
+  { id: "personalOutlook", label: "Avenir personnel et disponibilité", hint: "Départ prochain, baisse d’activité ou indisponibilités à anticiper.", placeholder: "Disponibilités et changements personnels à prévoir…" },
+];
+
+const EMPTY_INTERVIEW_REPORT = Object.fromEntries(INTERVIEW_REPORT_FIELDS.map((field) => [field.id, ""]));
+
 const REASONS = {
   test_end: "Fin de période d’essai",
   senior_entry: "Entrée chez les Sous-Officiers Supérieurs",
@@ -30,6 +47,150 @@ function parisDay() {
 function memberName(member) {
   if (!member) return "Membre introuvable";
   return `${member.grade ? `${member.grade} ` : ""}${member.firstName || ""} ${member.lastName || ""}`.trim();
+}
+
+function memberRoleLabel(member) {
+  return member?.role === "senior" ? "Sous-Officier Supérieur" : "Sous-Officier";
+}
+
+function interviewSheetTitle(member) {
+  const base = `${member?.firstName || "Membre"} ${member?.lastName || ""}`.trim().replace(/[\\/:?*\[\]]/g, " ").replace(/\s+/g, " ");
+  return `${base.slice(0, 82)} · ${String(member?.id || "dossier").slice(-6)}`.slice(0, 99);
+}
+
+function loadGoogleIdentityServices() {
+  return new Promise((resolve, reject) => {
+    if (typeof window === "undefined") return reject(new Error("Google Sheets est disponible uniquement depuis le portail."));
+    if (window.google?.accounts?.oauth2) return resolve();
+    const selector = 'script[data-google-identity-services="true"]';
+    const existingScript = document.querySelector(selector);
+    const onLoad = () => window.google?.accounts?.oauth2 ? resolve() : reject(new Error("Le service Google n’est pas disponible."));
+    if (existingScript) {
+      existingScript.addEventListener("load", onLoad, { once: true });
+      existingScript.addEventListener("error", () => reject(new Error("Le service Google n’a pas pu être chargé.")), { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+    script.dataset.googleIdentityServices = "true";
+    script.addEventListener("load", onLoad, { once: true });
+    script.addEventListener("error", () => reject(new Error("Le service Google n’a pas pu être chargé.")), { once: true });
+    document.head.appendChild(script);
+  });
+}
+
+async function requestGoogleSheetsToken() {
+  if (!GOOGLE_CLIENT_ID) throw new Error("La liaison Google Sheets n’est pas encore configurée.");
+  await loadGoogleIdentityServices();
+  return new Promise((resolve, reject) => {
+    let completed = false;
+    const finish = (handler) => (value) => {
+      if (completed) return;
+      completed = true;
+      window.clearTimeout(timeout);
+      handler(value);
+    };
+    const timeout = window.setTimeout(() => finish(reject)(new Error("Google met trop de temps à répondre. Vérifiez la fenêtre d’autorisation puis réessayez.")), GOOGLE_REQUEST_TIMEOUT);
+    const tokenClient = window.google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: GOOGLE_SHEETS_SCOPE,
+      callback: finish((response) => {
+        if (response?.error || !response?.access_token) return reject(new Error(response?.error_description || "L’autorisation Google a été refusée."));
+        resolve(response.access_token);
+      }),
+      error_callback: finish(() => reject(new Error("L’autorisation Google n’a pas pu être ouverte. Autorisez les fenêtres contextuelles puis réessayez."))),
+    });
+    try { tokenClient.requestAccessToken({ prompt: "select_account consent" }); }
+    catch (error) { finish(reject)(error instanceof Error ? error : new Error("L’autorisation Google n’a pas pu démarrer.")); }
+  });
+}
+
+async function googleSheetsRequest(url, options, fallback) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), GOOGLE_REQUEST_TIMEOUT);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(payload?.error?.message || fallback);
+    return payload;
+  } catch (error) {
+    if (error?.name === "AbortError") throw new Error("Google Sheets met trop de temps à répondre. Réessayez dans un instant.");
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function googleHeaders(token) {
+  return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+}
+
+async function ensureMemberInterviewSheet(token, member) {
+  const metadata = await googleSheetsRequest(`https://sheets.googleapis.com/v4/spreadsheets/${INTERVIEW_SHEET_ID}?fields=sheets.properties`, { headers: googleHeaders(token) }, "Le Google Sheet ne peut pas être ouvert.");
+  const title = interviewSheetTitle(member);
+  let sheet = metadata?.sheets?.find((entry) => entry?.properties?.title === title)?.properties || null;
+  if (!sheet) {
+    const created = await googleSheetsRequest(`https://sheets.googleapis.com/v4/spreadsheets/${INTERVIEW_SHEET_ID}:batchUpdate`, {
+      method: "POST",
+      headers: googleHeaders(token),
+      body: JSON.stringify({ requests: [{ addSheet: { properties: { title } } }] }),
+    }, "L’onglet de ce membre n’a pas pu être créé.");
+    sheet = created?.replies?.[0]?.addSheet?.properties || null;
+    if (!sheet) throw new Error("Google Sheets n’a pas renvoyé le nouvel onglet.");
+    await googleSheetsRequest(`https://sheets.googleapis.com/v4/spreadsheets/${INTERVIEW_SHEET_ID}:batchUpdate`, {
+      method: "POST",
+      headers: googleHeaders(token),
+      body: JSON.stringify({ requests: [
+        { updateSheetProperties: { properties: { sheetId: sheet.sheetId, gridProperties: { frozenRowCount: 9 } }, fields: "gridProperties.frozenRowCount" } },
+        { repeatCell: { range: { sheetId: sheet.sheetId, startRowIndex: 0, endRowIndex: 1 }, cell: { userEnteredFormat: { backgroundColor: { red: 0.08, green: 0.16, blue: 0.11 }, textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 14 } } }, fields: "userEnteredFormat(backgroundColor,textFormat)" } },
+        { repeatCell: { range: { sheetId: sheet.sheetId, startRowIndex: 8, endRowIndex: 9 }, cell: { userEnteredFormat: { backgroundColor: { red: 0.16, green: 0.30, blue: 0.20 }, textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true }, wrapStrategy: "WRAP" } }, fields: "userEnteredFormat(backgroundColor,textFormat,wrapStrategy)" } },
+        { autoResizeDimensions: { dimensions: { sheetId: sheet.sheetId, dimension: "COLUMNS", startIndex: 0, endIndex: 11 } } },
+        { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: "COLUMNS", startIndex: 3, endIndex: 10 }, properties: { pixelSize: 260 }, fields: "pixelSize" } },
+        { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: "COLUMNS", startIndex: 10, endIndex: 11 }, properties: { hiddenByUser: true }, fields: "hiddenByUser" } },
+      ] }),
+    }, "La mise en forme de l’onglet n’a pas pu être appliquée.");
+  }
+
+  const profileRange = encodeURIComponent(`${title}!A1:B7`);
+  await googleSheetsRequest(`https://sheets.googleapis.com/v4/spreadsheets/${INTERVIEW_SHEET_ID}/values/${profileRange}?valueInputOption=USER_ENTERED`, {
+    method: "PUT",
+    headers: googleHeaders(token),
+    body: JSON.stringify({ values: [
+      ["Dossier d’entretiens individuels"],
+      ["Membre", memberName(member)],
+      ["Grade", member.grade || "Non renseigné"],
+      ["Niveau", memberRoleLabel(member)],
+      ["Identifiant portail", member.id],
+      ["Dernière mise à jour", new Date().toISOString()],
+      ["Source", "Portail SO AIT"],
+    ] }),
+  }, "Les informations du membre n’ont pas pu être actualisées.");
+  const headerRange = encodeURIComponent(`${title}!A9:K9`);
+  await googleSheetsRequest(`https://sheets.googleapis.com/v4/spreadsheets/${INTERVIEW_SHEET_ID}/values/${headerRange}?valueInputOption=USER_ENTERED`, {
+    method: "PUT",
+    headers: googleHeaders(token),
+    body: JSON.stringify({ values: [["Date de clôture", "Responsable", "Motif", "Ressenti dans la branche", "Ressenti SO / SO-S", "Auto-évaluation", "Parcours et évolution", "Objectifs de carrière", "Remarques / axes d’amélioration", "Avenir personnel", "Identifiant entretien"]] }),
+  }, "Les colonnes du dossier n’ont pas pu être préparées.");
+  return title;
+}
+
+async function sendInterviewReportToSheet({ member, interviewer, requirement, report }) {
+  const token = await requestGoogleSheetsToken();
+  const title = await ensureMemberInterviewSheet(token, member);
+  const idRange = encodeURIComponent(`${title}!K10:K`);
+  const existing = await googleSheetsRequest(`https://sheets.googleapis.com/v4/spreadsheets/${INTERVIEW_SHEET_ID}/values/${idRange}`, { headers: googleHeaders(token) }, "Le dossier du membre n’a pas pu être vérifié.");
+  if (existing?.values?.some((row) => row?.[0] === requirement.id)) return;
+  const appendRange = encodeURIComponent(`${title}!A10`);
+  await googleSheetsRequest(`https://sheets.googleapis.com/v4/spreadsheets/${INTERVIEW_SHEET_ID}/values/${appendRange}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+    method: "POST",
+    headers: googleHeaders(token),
+    body: JSON.stringify({ values: [[
+      new Date().toISOString(), memberName(interviewer), REASONS[requirement.reason] || "Entretien individuel",
+      ...INTERVIEW_REPORT_FIELDS.map((field) => report[field.id] || ""), requirement.id,
+    ]] }),
+  }, "Le compte rendu n’a pas pu être ajouté au Google Sheet.");
 }
 
 function compareMembersByGrade(left, right) {
@@ -157,7 +318,9 @@ export function InterviewManagementPanel({ session, users, interviews, onAction 
   const [busy, setBusy] = useState("");
   const [slotForm, setSlotForm] = useState({ date: parisDay(), startTime: "15:00", endTime: "16:00" });
   const [completionTarget, setCompletionTarget] = useState(null);
-  const [completionNote, setCompletionNote] = useState("");
+  const [completionReport, setCompletionReport] = useState(EMPTY_INTERVIEW_REPORT);
+  const [completionError, setCompletionError] = useState("");
+  const [sendingToSheet, setSendingToSheet] = useState(false);
   const [historyMemberId, setHistoryMemberId] = useState("");
   const usersById = useMemo(() => new Map(users.map((user) => [String(user.id), user])), [users]);
   const members = useMemo(() => users.filter((user) => ["officer", "senior"].includes(user.role) && user.approvalStatus === "approved" && !user.blocked).sort(compareMembersByGrade), [users]);
@@ -191,10 +354,22 @@ export function InterviewManagementPanel({ session, users, interviews, onAction 
   async function submitCompletion(event) {
     event.preventDefault();
     if (!completionTarget) return;
-    const saved = await runAction(setBusy, completionTarget.id, onAction, { action: "complete_interview", requirementId: completionTarget.id, note: completionNote });
+    const member = usersById.get(String(completionTarget.memberId));
+    if (!member) return setCompletionError("Le membre de cet entretien est introuvable.");
+    setCompletionError("");
+    setSendingToSheet(true);
+    try {
+      await sendInterviewReportToSheet({ member, interviewer: session, requirement: completionTarget, report: completionReport });
+    } catch (error) {
+      setCompletionError(error instanceof Error ? error.message : "Le compte rendu n’a pas pu être envoyé au Google Sheet.");
+      return;
+    } finally {
+      setSendingToSheet(false);
+    }
+    const saved = await runAction(setBusy, completionTarget.id, onAction, { action: "complete_interview", requirementId: completionTarget.id });
     if (saved) {
       setCompletionTarget(null);
-      setCompletionNote("");
+      setCompletionReport(EMPTY_INTERVIEW_REPORT);
     }
   }
 
@@ -210,14 +385,14 @@ export function InterviewManagementPanel({ session, users, interviews, onAction 
       <section className="interview-card"><div className="interview-card-head"><div><p className="eyebrow dark">SUIVI MANUEL</p><h2>Ajouter une échéance</h2><p>Pour un entretien exceptionnel ou pour démarrer le suivi d’un membre.</p></div><span className="interview-icon-box"><UserRound size={18} /></span></div><form className="interview-form" onSubmit={addRequirement}><label>Membre<select value={requirementForm.memberId} onChange={(event) => setRequirementForm((current) => ({ ...current, memberId: event.target.value }))} required><option value="">Choisir un Sous-Officier…</option>{members.map((member) => <option value={member.id} key={member.id}>{memberName(member)}</option>)}</select></label><div className="interview-time-grid"><label>Motif<select value={requirementForm.reason} onChange={(event) => setRequirementForm((current) => ({ ...current, reason: event.target.value }))}>{Object.entries(REASONS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>Échéance<input type="date" value={requirementForm.dueDate} onChange={(event) => setRequirementForm((current) => ({ ...current, dueDate: event.target.value }))} required /></label></div><button className="secondary" type="submit" disabled={!requirementForm.memberId || busy === "requirement-form"}><Plus size={17} />{busy === "requirement-form" ? "Ajout…" : "Ajouter l’échéance"}</button></form></section>
     </div>
 
-    <section className="interview-card interview-dashboard-card"><div className="interview-card-head"><div><p className="eyebrow dark">TABLEAU DE SUIVI</p><h2>État des entretiens</h2><p>Les suivis périodiques reviennent toutes les deux semaines. Cliquez sur un membre pour consulter son historique.</p></div><span className="interview-count">{openRequirements.length}</span></div><div className="table-wrap"><table className="interview-table"><thead><tr><th>Membre</th><th>Motif</th><th>Échéance</th><th>Rendez-vous</th><th>Responsable</th><th>État</th><th aria-label="Actions" /></tr></thead><tbody>{openRequirements.map((requirement) => { const member = usersById.get(String(requirement.memberId)); const booking = bookingByRequirement.get(requirement.id); const slot = booking ? slotsById.get(booking.slotId) : null; const interviewer = slot ? usersById.get(String(slot.interviewerId)) : null; return <tr key={requirement.id}><td><button className="interview-member interview-member-open" type="button" disabled={!member} title={member ? `Ouvrir l’historique de ${memberName(member)}` : undefined} onClick={() => setHistoryMemberId(member.id)}><ProfileAvatar member={member} size="small" /><span><strong>{memberName(member)}</strong><small>{member ? (member.role === "senior" ? "Sous-Officier Supérieur" : "Sous-Officier") : "Compte supprimé"}</small></span></button></td><td><strong>{REASONS[requirement.reason]}</strong></td><td><span className={`interview-due ${requirement.dueDate < parisDay() ? "late" : ""}`}>{dueText(requirement)}</span></td><td>{slot ? <span className="interview-appointment"><Clock3 size={14} />{displaySlot(slot)}</span> : <span className="interview-no-appointment">En attente du membre</span>}</td><td>{interviewer ? <MemberIdentity member={interviewer} label="Entretien avec" compact /> : <span className="interview-no-appointment">À définir</span>}</td><td><RequirementPill requirement={requirement} /></td><td><div className="interview-row-actions">{booking && <button className="icon-button" type="button" title="Annuler le rendez-vous" disabled={busy === booking.id} onClick={() => { if (window.confirm("Annuler ce rendez-vous ?")) runAction(setBusy, booking.id, onAction, { action: "cancel_interview_booking", bookingId: booking.id }); }}><XCircle size={16} /></button>}<button className="secondary interview-complete" type="button" disabled={busy === requirement.id} onClick={() => { setCompletionTarget(requirement); setCompletionNote(""); }}><CheckCircle2 size={15} /> Clôturer</button></div></td></tr>; })}{!openRequirements.length && <tr><td colSpan="7"><EmptyState title="Aucune échéance en attente" text="Les prochains suivis apparaîtront ici automatiquement." /></td></tr>}</tbody></table></div></section>
+    <section className="interview-card interview-dashboard-card"><div className="interview-card-head"><div><p className="eyebrow dark">TABLEAU DE SUIVI</p><h2>État des entretiens</h2><p>Les suivis périodiques reviennent toutes les deux semaines. Cliquez sur un membre pour consulter son historique.</p></div><span className="interview-count">{openRequirements.length}</span></div><div className="table-wrap"><table className="interview-table"><thead><tr><th>Membre</th><th>Motif</th><th>Échéance</th><th>Rendez-vous</th><th>Responsable</th><th>État</th><th aria-label="Actions" /></tr></thead><tbody>{openRequirements.map((requirement) => { const member = usersById.get(String(requirement.memberId)); const booking = bookingByRequirement.get(requirement.id); const slot = booking ? slotsById.get(booking.slotId) : null; const interviewer = slot ? usersById.get(String(slot.interviewerId)) : null; return <tr key={requirement.id}><td><button className="interview-member interview-member-open" type="button" disabled={!member} title={member ? `Ouvrir l’historique de ${memberName(member)}` : undefined} onClick={() => setHistoryMemberId(member.id)}><ProfileAvatar member={member} size="small" /><span><strong>{memberName(member)}</strong><small>{member ? (member.role === "senior" ? "Sous-Officier Supérieur" : "Sous-Officier") : "Compte supprimé"}</small></span></button></td><td><strong>{REASONS[requirement.reason]}</strong></td><td><span className={`interview-due ${requirement.dueDate < parisDay() ? "late" : ""}`}>{dueText(requirement)}</span></td><td>{slot ? <span className="interview-appointment"><Clock3 size={14} />{displaySlot(slot)}</span> : <span className="interview-no-appointment">En attente du membre</span>}</td><td>{interviewer ? <MemberIdentity member={interviewer} label="Entretien avec" compact /> : <span className="interview-no-appointment">À définir</span>}</td><td><RequirementPill requirement={requirement} /></td><td><div className="interview-row-actions">{booking && <button className="icon-button" type="button" title="Annuler le rendez-vous" disabled={busy === booking.id} onClick={() => { if (window.confirm("Annuler ce rendez-vous ?")) runAction(setBusy, booking.id, onAction, { action: "cancel_interview_booking", bookingId: booking.id }); }}><XCircle size={16} /></button>}<button className="secondary interview-complete" type="button" disabled={busy === requirement.id} onClick={() => { setCompletionTarget(requirement); setCompletionReport(EMPTY_INTERVIEW_REPORT); setCompletionError(""); }}><CheckCircle2 size={15} /> Clôturer</button></div></td></tr>; })}{!openRequirements.length && <tr><td colSpan="7"><EmptyState title="Aucune échéance en attente" text="Les prochains suivis apparaîtront ici automatiquement." /></td></tr>}</tbody></table></div></section>
 
-    <section className="interview-card interview-completed-card"><div className="interview-card-head"><div><p className="eyebrow dark">ENTRETIENS TERMINÉS</p><h2>Réalisés récemment</h2><p>Zone verte : ces rendez-vous sont clôturés. Cliquez sur le membre pour ouvrir tous ses comptes rendus.</p></div><span className="interview-count"><CheckCircle2 size={17} /></span></div><div className="table-wrap"><table className="interview-table interview-completed-table"><thead><tr><th>Membre</th><th>Motif</th><th>Terminé le</th><th>Responsable</th><th>Compte rendu</th><th>État</th></tr></thead><tbody>{recentCompletedRequirements.map((requirement) => { const member = usersById.get(String(requirement.memberId)); const author = usersById.get(String(requirement.completedBy)); return <tr key={requirement.id}><td><button className="interview-member interview-member-open" type="button" disabled={!member} title={member ? `Ouvrir l’historique de ${memberName(member)}` : undefined} onClick={() => setHistoryMemberId(member.id)}><ProfileAvatar member={member} size="small" /><span><strong>{memberName(member)}</strong><small>{member ? (member.role === "senior" ? "Sous-Officier Supérieur" : "Sous-Officier") : "Compte supprimé"}</small></span></button></td><td><strong>{REASONS[requirement.reason]}</strong></td><td><span className="interview-completed-date"><CheckCircle2 size={14} />{displayCompletedAt(requirement.completedAt)}</span></td><td>{author ? <MemberIdentity member={author} label="Clôturé par" compact /> : <span className="interview-no-appointment">Non renseigné</span>}</td><td><span className={`interview-report-state ${requirement.completionNote ? "written" : "empty"}`}>{requirement.completionNote ? "Compte rendu ajouté" : "Sans compte rendu"}</span></td><td><RequirementPill requirement={requirement} /></td></tr>; })}{!recentCompletedRequirements.length && <tr><td colSpan="6"><EmptyState title="Aucun entretien terminé" text="Les rendez-vous clôturés apparaîtront ici en vert." /></td></tr>}</tbody></table></div></section>
+    <section className="interview-card interview-completed-card"><div className="interview-card-head"><div><p className="eyebrow dark">ENTRETIENS TERMINÉS</p><h2>Réalisés récemment</h2><p>Zone verte : ces rendez-vous sont clôturés. Les comptes rendus détaillés sont classés dans le Google Sheet.</p></div><span className="interview-count"><CheckCircle2 size={17} /></span></div><div className="table-wrap"><table className="interview-table interview-completed-table"><thead><tr><th>Membre</th><th>Motif</th><th>Terminé le</th><th>Responsable</th><th>Compte rendu</th><th>État</th></tr></thead><tbody>{recentCompletedRequirements.map((requirement) => { const member = usersById.get(String(requirement.memberId)); const author = usersById.get(String(requirement.completedBy)); return <tr key={requirement.id}><td><button className="interview-member interview-member-open" type="button" disabled={!member} title={member ? `Ouvrir l’historique de ${memberName(member)}` : undefined} onClick={() => setHistoryMemberId(member.id)}><ProfileAvatar member={member} size="small" /><span><strong>{memberName(member)}</strong><small>{member ? (member.role === "senior" ? "Sous-Officier Supérieur" : "Sous-Officier") : "Compte supprimé"}</small></span></button></td><td><strong>{REASONS[requirement.reason]}</strong></td><td><span className="interview-completed-date"><CheckCircle2 size={14} />{displayCompletedAt(requirement.completedAt)}</span></td><td>{author ? <MemberIdentity member={author} label="Clôturé par" compact /> : <span className="interview-no-appointment">Non renseigné</span>}</td><td><span className="interview-report-state written">Envoyé vers Google Sheet</span></td><td><RequirementPill requirement={requirement} /></td></tr>; })}{!recentCompletedRequirements.length && <tr><td colSpan="6"><EmptyState title="Aucun entretien terminé" text="Les rendez-vous clôturés apparaîtront ici en vert." /></td></tr>}</tbody></table></div></section>
 
     <section className="interview-card interview-availability-card"><div className="interview-card-head"><div><p className="eyebrow dark">CRÉNEAUX OUVERTS</p><h2>Disponibilités à venir</h2><p>Chaque créneau indique le responsable qui recevra le membre.</p></div><span className="interview-duration"><Clock3 size={15} /> 15 min</span></div><div className="interview-availability-list">{upcomingSlots.map((slot) => { const booking = bookings.find((item) => item.slotId === slot.id); const member = booking ? usersById.get(String(booking.memberId)) : null; const interviewer = usersById.get(String(slot.interviewerId)); const creator = usersById.get(String(slot.createdBy)); return <article key={slot.id}><div className="interview-slot-summary"><strong>{displaySlot(slot)}</strong>{interviewer && <MemberIdentity member={interviewer} label="Entretien assuré par" compact />}{creator && creator.id !== interviewer?.id && <small>Créneau ouvert par {memberName(creator)}</small>}</div>{booking ? <div className="interview-booking-owner">{member && <MemberIdentity member={member} label="Réservé par" compact />}<span className="interview-status booked"><i />Réservé</span></div> : <div className="interview-booking-owner"><span className="interview-status to_book"><i />Disponible</span><button className="icon-button danger" type="button" title="Retirer ce créneau" disabled={busy === slot.id} onClick={() => { if (window.confirm("Retirer ce créneau disponible ?")) runAction(setBusy, slot.id, onAction, { action: "delete_interview_slot", slotId: slot.id }); }}><Trash2 size={16} /></button></div>}</article>; })}{!upcomingSlots.length && <EmptyState title="Aucune disponibilité ouverte" text="Créez une première plage pour permettre les prises de rendez-vous." />}</div></section>
 
-    {completionTarget && <div className="interview-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) { setCompletionTarget(null); setCompletionNote(""); } }}><form className="interview-modal" onSubmit={submitCompletion}><button className="icon-button interview-modal-close" type="button" title="Fermer" onClick={() => { setCompletionTarget(null); setCompletionNote(""); }}><XCircle size={18} /></button><p className="eyebrow dark">CLÔTURE D’ENTRETIEN</p><h2>Ajouter le compte rendu</h2><p className="interview-modal-intro">Rédigez librement les points abordés, les décisions prises et le suivi à prévoir. Il restera accessible dans l’historique du membre.</p><div className="interview-modal-member"><MemberIdentity member={usersById.get(String(completionTarget.memberId))} label="Entretien de" /></div><label>Compte rendu libre<textarea value={completionNote} onChange={(event) => setCompletionNote(event.target.value)} maxLength={6000} rows={10} placeholder="Écrivez le compte rendu de l’entretien…" autoFocus /></label><small className="interview-character-count">{completionNote.length}/6000 caractères</small><div className="interview-modal-actions"><button className="secondary" type="button" onClick={() => { setCompletionTarget(null); setCompletionNote(""); }}>Annuler</button><button className="primary" type="submit" disabled={busy === completionTarget.id}><CheckCircle2 size={17} />{busy === completionTarget.id ? "Clôture…" : "Clôturer l’entretien"}</button></div></form></div>}
+    {completionTarget && <div className="interview-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !sendingToSheet) { setCompletionTarget(null); setCompletionReport(EMPTY_INTERVIEW_REPORT); setCompletionError(""); } }}><form className="interview-modal interview-report-modal" onSubmit={submitCompletion}><button className="icon-button interview-modal-close" type="button" title="Fermer" disabled={sendingToSheet} onClick={() => { setCompletionTarget(null); setCompletionReport(EMPTY_INTERVIEW_REPORT); setCompletionError(""); }}><XCircle size={18} /></button><p className="eyebrow dark">CLÔTURE D’ENTRETIEN</p><h2>Compte rendu d’entretien</h2><p className="interview-modal-intro">Répondez à chaque point. Le compte rendu sera envoyé dans le dossier Google Sheet du membre et ne sera pas conservé dans le portail.</p><div className="interview-modal-member"><MemberIdentity member={usersById.get(String(completionTarget.memberId))} label="Entretien de" /></div><div className="interview-report-form">{INTERVIEW_REPORT_FIELDS.map((field, index) => <label key={field.id}><span>{index + 1}. {field.label}</span>{field.hint && <small>{field.hint}</small>}<textarea value={completionReport[field.id]} onChange={(event) => setCompletionReport((current) => ({ ...current, [field.id]: event.target.value }))} maxLength={1600} rows={4} placeholder={field.placeholder} required autoFocus={index === 0} /></label>)}</div>{completionError && <p className="form-error">{completionError}</p>}<div className="interview-sheet-notice">Les réponses seront classées dans <a href={INTERVIEW_SHEET_URL} target="_blank" rel="noreferrer">le Google Sheet des entretiens</a>, avec un onglet dédié à ce membre.</div><div className="interview-modal-actions"><button className="secondary" type="button" disabled={sendingToSheet} onClick={() => { setCompletionTarget(null); setCompletionReport(EMPTY_INTERVIEW_REPORT); setCompletionError(""); }}>Annuler</button><button className="primary" type="submit" disabled={sendingToSheet || busy === completionTarget.id}><CheckCircle2 size={17} />{sendingToSheet ? "Envoi vers Google…" : busy === completionTarget.id ? "Clôture…" : "Envoyer et clôturer"}</button></div></form></div>}
 
-    {historyMember && <div className="interview-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryMemberId(""); }}><section className="interview-modal interview-history-modal" aria-modal="true" role="dialog" aria-label={`Historique de ${memberName(historyMember)}`}><button className="icon-button interview-modal-close" type="button" title="Fermer" onClick={() => setHistoryMemberId("")}><XCircle size={18} /></button><p className="eyebrow dark">HISTORIQUE INDIVIDUEL</p><h2>Comptes rendus d’entretien</h2><div className="interview-modal-member"><MemberIdentity member={historyMember} label="Membre suivi" /></div><div className="interview-person-history-list">{historyEntries.map((item) => { const author = usersById.get(String(item.completedBy)); return <article key={item.id}><div className="interview-history-entry-head"><div><strong>{REASONS[item.reason]}</strong><small>Clôturé le {displayCompletedAt(item.completedAt)}</small></div><RequirementPill requirement={item} /></div><small className="interview-report-author">Compte rendu par {author ? memberName(author) : "Responsable non renseigné"}</small><p>{item.completionNote || "Aucun compte rendu n’a été ajouté pour cet entretien."}</p></article>; })}{!historyEntries.length && <EmptyState title="Aucun entretien terminé" text="Les futurs comptes rendus de ce membre apparaîtront ici." />}</div></section></div>}
+    {historyMember && <div className="interview-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryMemberId(""); }}><section className="interview-modal interview-history-modal" aria-modal="true" role="dialog" aria-label={`Historique de ${memberName(historyMember)}`}><button className="icon-button interview-modal-close" type="button" title="Fermer" onClick={() => setHistoryMemberId("")}><XCircle size={18} /></button><p className="eyebrow dark">HISTORIQUE INDIVIDUEL</p><h2>Entretiens réalisés</h2><div className="interview-modal-member"><MemberIdentity member={historyMember} label="Membre suivi" /></div><p className="interview-modal-intro">Les réponses détaillées sont conservées uniquement dans le Google Sheet, pas dans le portail.</p><a className="secondary interview-sheet-link" href={INTERVIEW_SHEET_URL} target="_blank" rel="noreferrer">Ouvrir le dossier Google Sheet</a><div className="interview-person-history-list">{historyEntries.map((item) => { const author = usersById.get(String(item.completedBy)); return <article key={item.id}><div className="interview-history-entry-head"><div><strong>{REASONS[item.reason]}</strong><small>Clôturé le {displayCompletedAt(item.completedAt)}</small></div><RequirementPill requirement={item} /></div><small className="interview-report-author">Entretien clôturé par {author ? memberName(author) : "Responsable non renseigné"}</small><p>Compte rendu archivé dans le Google Sheet.</p></article>; })}{!historyEntries.length && <EmptyState title="Aucun entretien terminé" text="Les futurs comptes rendus de ce membre apparaîtront ici." />}</div></section></div>}
   </div>;
 }
