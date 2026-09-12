@@ -60,3 +60,5 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON portal_interview_profiles TO portal_api;
 GRANT SELECT, INSERT, UPDATE, DELETE ON portal_interview_requirements TO portal_api;
 GRANT SELECT, INSERT, UPDATE, DELETE ON portal_interview_slots TO portal_api;
 GRANT SELECT, INSERT, UPDATE, DELETE ON portal_interview_bookings TO portal_api;
+
+NOTIFY pgrst, 'reload schema';
