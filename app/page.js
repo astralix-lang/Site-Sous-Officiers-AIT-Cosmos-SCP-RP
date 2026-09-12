@@ -2809,7 +2809,7 @@ function App() {
         create_interview_requirement: "L’échéance d’entretien a été ajoutée.",
         book_interview: "Votre rendez-vous est confirmé.",
         cancel_interview_booking: "Le rendez-vous a été annulé.",
-        complete_interview: "L’entretien est clôturé et le suivi mensuel repartira dans un mois.",
+        complete_interview: "L’entretien est clôturé et le prochain suivi sera à prévoir dans deux semaines.",
       };
       flash(messages[values?.action] || "Le suivi des entretiens a été actualisé.");
       return state;

@@ -36,7 +36,7 @@ const INTERVIEW_SLOT_STATUSES = new Set(["available", "cancelled"]);
 const INTERVIEW_REASON_LABELS = {
   test_end: "Fin de période d’essai",
   senior_entry: "Entrée chez les Sous-Officiers Supérieurs",
-  monthly: "Suivi mensuel",
+  monthly: "Suivi toutes les deux semaines",
 };
 const MEETING_ATTENDANCE_STATUSES = new Set(["present", "absent", "late"]);
 const CAPORAL_VOTE_VALUES = new Set(["favorable", "mitige", "defavorable", "sanction"]);
@@ -648,7 +648,7 @@ async function syncInterviewRequirements() {
           updated_at: now,
         }),
       });
-      await createInterviewRequirement(member.id, "monthly", dateAfterDays(today, 30));
+      await createInterviewRequirement(member.id, "monthly", dateAfterDays(today, 14));
       continue;
     }
 
@@ -690,9 +690,15 @@ async function syncInterviewRequirements() {
 
     const anchor = profile.last_completed_at || profile.baseline_at || new Date().toISOString();
     const anchorDay = calendarDate(new Date(anchor).toISOString().slice(0, 10)) || today;
-    const monthlyDueDate = dateAfterDays(anchorDay, 30);
+    const periodicDueDate = dateAfterDays(anchorDay, 14);
     if (!openRequirement) {
-      await createInterviewRequirement(member.id, "monthly", monthlyDueDate);
+      await createInterviewRequirement(member.id, "monthly", periodicDueDate);
+    } else if (openRequirement.reason === "monthly" && openRequirement.status === "to_book" && openRequirement.dueDate !== periodicDueDate) {
+      await database(`portal_interview_requirements?id=eq.${encodeURIComponent(openRequirement.id)}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ due_date: periodicDueDate, updated_at: new Date().toISOString() }),
+      });
     }
   }
 }
@@ -1541,7 +1547,7 @@ export async function POST(request) {
         headers: { Prefer: "return=minimal" },
         body: JSON.stringify({ last_completed_at: now, updated_at: now }),
       });
-      await createNotification({ recipients: [requirement.memberId], kind: "info", title: "Entretien terminé", text: `${INTERVIEW_REASON_LABELS[requirement.reason]} enregistré. Le prochain suivi mensuel sera proposé dans un mois.`, target: "interviews" });
+      await createNotification({ recipients: [requirement.memberId], kind: "info", title: "Entretien terminé", text: `${INTERVIEW_REASON_LABELS[requirement.reason]} enregistré. Le prochain suivi sera proposé dans deux semaines.`, target: "interviews" });
       await recordAuditLog({ actor, category: "interview", action: "Entretien clôturé", details: INTERVIEW_REASON_LABELS[requirement.reason] });
     } else if (action === "notify") {
       await createNotification({ recipients: body?.recipients === "all" ? null : body?.recipients, kind: body?.kind, title: body?.title, text: body?.text, target: body?.target });
