@@ -1539,13 +1539,20 @@ export async function POST(request) {
       const validQuarterHour = Number.isFinite(startsAt.getTime()) && startsAt.getUTCSeconds() === 0 && startsAt.getUTCMilliseconds() === 0 && startsAt.getUTCMinutes() % 15 === 0;
       if (!availability || availability.status !== "proposed" || !requirement || requirement.status !== "to_book" || !validQuarterHour || startsAt.getTime() < new Date(availability.startsAt).getTime() || endsAt.getTime() > new Date(availability.endsAt).getTime() || startsAt.getTime() <= Date.now() - 60_000) return json({ error: "Ce créneau n’est plus compatible avec la disponibilité proposée." }, 400);
       const [bookings, slots, member] = await Promise.all([interviewBookingsFor(), interviewSlotsFor(), portalUser(requirement.memberId)]);
-      if (!member || bookings.some((booking) => booking.requirementId === requirement.id) || slots.some((slot) => slot.interviewerId === actor.id && new Date(slot.startsAt).getTime() === startsAt.getTime())) return json({ error: "Ce rendez-vous vient d’être modifié ou vous êtes déjà indisponible à cette heure." }, 409);
-      const slotId = crypto.randomUUID();
-      await database("portal_interview_slots", {
-        method: "POST",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({ id: slotId, interviewer_id: actor.id, created_by: availability.memberId, starts_at: startsAt.toISOString(), ends_at: endsAt.toISOString(), status: "available" }),
-      });
+      const existingSlot = slots.find((slot) => slot.interviewerId === actor.id && new Date(slot.startsAt).getTime() === startsAt.getTime());
+      const existingBooking = existingSlot ? bookings.find((booking) => booking.slotId === existingSlot.id) : null;
+      if (!member || bookings.some((booking) => booking.requirementId === requirement.id) || existingBooking || (existingSlot && existingSlot.status !== "available")) return json({ error: "Ce rendez-vous vient d’être modifié ou vous êtes déjà indisponible à cette heure." }, 409);
+      // Les anciens créneaux ouverts par les Référents SO restent utilisables.
+      // On les réemploie lorsqu’ils correspondent exactement à la disponibilité
+      // choisie, au lieu de les considérer à tort comme une indisponibilité.
+      const slotId = existingSlot?.id || crypto.randomUUID();
+      if (!existingSlot) {
+        await database("portal_interview_slots", {
+          method: "POST",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({ id: slotId, interviewer_id: actor.id, created_by: availability.memberId, starts_at: startsAt.toISOString(), ends_at: endsAt.toISOString(), status: "available" }),
+        });
+      }
       await database("portal_interview_bookings", {
         method: "POST",
         headers: { Prefer: "return=minimal" },
