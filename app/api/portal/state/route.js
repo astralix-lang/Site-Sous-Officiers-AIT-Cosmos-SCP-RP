@@ -33,6 +33,7 @@ const SO_MEETING_HISTORY_TARGET = "__portal_so_meeting_history";
 const INTERVIEW_REASONS = new Set(["test_end", "senior_entry", "monthly"]);
 const INTERVIEW_REQUIREMENT_STATUSES = new Set(["to_book", "booked", "completed"]);
 const INTERVIEW_SLOT_STATUSES = new Set(["available", "cancelled"]);
+const INTERVIEW_AVAILABILITY_STATUSES = new Set(["proposed", "scheduled", "withdrawn"]);
 const INTERVIEW_REASON_LABELS = {
   test_end: "Fin de période d’essai",
   senior_entry: "Entrée chez les Sous-Officiers Supérieurs",
@@ -574,6 +575,20 @@ function interviewBookingFromRow(row) {
   };
 }
 
+function interviewAvailabilityFromRow(row) {
+  return {
+    id: row.id,
+    requirementId: row.requirement_id,
+    memberId: row.member_id,
+    startsAt: row.starts_at,
+    endsAt: row.ends_at,
+    status: INTERVIEW_AVAILABILITY_STATUSES.has(row?.status) ? row.status : "withdrawn",
+    scheduledSlotId: row.scheduled_slot_id || null,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  };
+}
+
 async function interviewMembersForSync() {
   const rows = parseArray(await database("portal_users?select=id,first_name,last_name,role,grade,blocked,approval_status,created_at,updated_at"));
   return rows.map(interviewMemberFromRow).filter(canInterviewMember);
@@ -596,6 +611,11 @@ async function interviewSlotsFor() {
 async function interviewBookingsFor() {
   const rows = parseArray(await database("portal_interview_bookings?select=*&order=booked_at.desc"));
   return rows.map(interviewBookingFromRow);
+}
+
+async function interviewAvailabilitiesFor() {
+  const rows = parseArray(await database("portal_interview_availabilities?select=*&order=starts_at.asc"));
+  return rows.map(interviewAvailabilityFromRow);
 }
 
 async function createInterviewRequirement(memberId, reason, dueDate) {
@@ -726,7 +746,7 @@ async function syncInterviewRequirements() {
 
 async function interviewStateFor(user) {
   await syncInterviewRequirements();
-  const [requirements, slots, bookings] = await Promise.all([interviewRequirementsFor(), interviewSlotsFor(), interviewBookingsFor()]);
+  const [requirements, slots, bookings, availabilities] = await Promise.all([interviewRequirementsFor(), interviewSlotsFor(), interviewBookingsFor(), interviewAvailabilitiesFor()]);
   const now = Date.now();
   const bookingBySlot = new Map(bookings.map((booking) => [String(booking.slotId), booking]));
   const isResponsible = isManager(user);
@@ -740,7 +760,8 @@ async function interviewStateFor(user) {
     if (!active) return isResponsible && bookingBySlot.has(String(slot.id));
     return isResponsible || !bookedSlotIds.has(String(slot.id)) || ownBookedSlotIds.has(String(slot.id));
   });
-  return { requirements: visibleRequirements, slots: visibleSlots, bookings: visibleBookings };
+  const visibleAvailabilities = isResponsible ? availabilities : availabilities.filter((availability) => availability.memberId === user.id);
+  return { requirements: visibleRequirements, slots: visibleSlots, bookings: visibleBookings, availabilities: visibleAvailabilities };
 }
 
 async function interviewRequirementById(id) {
@@ -759,6 +780,12 @@ async function interviewBookingById(id) {
   if (!UUID.test(id)) return null;
   const rows = parseArray(await database(`portal_interview_bookings?id=eq.${encodeURIComponent(id)}&select=*`));
   return rows[0] ? interviewBookingFromRow(rows[0]) : null;
+}
+
+async function interviewAvailabilityById(id) {
+  if (!UUID.test(id)) return null;
+  const rows = parseArray(await database(`portal_interview_availabilities?id=eq.${encodeURIComponent(id)}&select=*`));
+  return rows[0] ? interviewAvailabilityFromRow(rows[0]) : null;
 }
 
 async function stateFor(user) {
@@ -1477,6 +1504,61 @@ export async function POST(request) {
       const next = assignments.map((item) => item.id === assignment.id ? { ...item, status: "completed", completedAt: new Date().toISOString() } : item);
       await saveAssignments(next);
       await recordAuditLog({ actor, category: "assignment", action: "Rapport de nouveau Sergent finalisé" });
+    } else if (action === "create_interview_availability") {
+      const requirementId = String(body?.requirementId || "");
+      const [requirement, member] = await Promise.all([interviewRequirementById(requirementId), portalUser(actor.id)]);
+      const date = calendarDate(body?.date);
+      const startTime = timeOfDay(body?.startTime);
+      const endTime = timeOfDay(body?.endTime);
+      if (!member || !["officer", "senior"].includes(member.role) || !requirement || requirement.memberId !== actor.id || requirement.status !== "to_book") return json({ error: "Cet entretien n’est plus disponible pour proposer une disponibilité." }, 400);
+      if (!date || !startTime || !endTime || endTime.total <= startTime.total || (endTime.total - startTime.total) / 15 > 64) return json({ error: "Indiquez une plage valide, comprise entre 15 minutes et 16 heures." }, 400);
+      const startsAt = parisDateTime(date, startTime.value);
+      const endsAt = parisDateTime(date, endTime.value);
+      if (!startsAt || !endsAt || startsAt.getTime() <= Date.now() - 60_000) return json({ error: "Cette disponibilité est déjà passée." }, 400);
+      const existing = await interviewAvailabilitiesFor();
+      if (existing.some((availability) => availability.requirementId === requirement.id && availability.status === "proposed" && new Date(availability.startsAt).getTime() === startsAt.getTime() && new Date(availability.endsAt).getTime() === endsAt.getTime())) return json({ error: "Cette disponibilité est déjà proposée." }, 400);
+      await database("portal_interview_availabilities", {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ id: crypto.randomUUID(), requirement_id: requirement.id, member_id: actor.id, starts_at: startsAt.toISOString(), ends_at: endsAt.toISOString(), status: "proposed" }),
+      });
+      await recordAuditLog({ actor, category: "interview", action: "Disponibilité d’entretien proposée", details: `${date.split("-").reverse().join("/")} · ${startTime.value}-${endTime.value}` });
+    } else if (action === "delete_interview_availability") {
+      const availabilityId = String(body?.availabilityId || "");
+      const availability = await interviewAvailabilityById(availabilityId);
+      if (!availability || availability.status !== "proposed" || (!isManager(actor) && availability.memberId !== actor.id)) return json({ error: "Disponibilité introuvable ou non modifiable." }, 404);
+      await database(`portal_interview_availabilities?id=eq.${encodeURIComponent(availability.id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ status: "withdrawn", updated_at: new Date().toISOString() }) });
+      await recordAuditLog({ actor, category: "interview", action: "Disponibilité d’entretien retirée" });
+    } else if (action === "schedule_interview_from_availability") {
+      if (!isManager(actor)) return json({ error: "Seuls les Référents SO et les accès supérieurs peuvent confirmer un rendez-vous." }, 403);
+      const availabilityId = String(body?.availabilityId || "");
+      const availability = await interviewAvailabilityById(availabilityId);
+      const requirement = availability ? await interviewRequirementById(availability.requirementId) : null;
+      const startsAt = new Date(String(body?.startsAt || ""));
+      const endsAt = new Date(startsAt.getTime() + 15 * 60_000);
+      const validQuarterHour = Number.isFinite(startsAt.getTime()) && startsAt.getUTCSeconds() === 0 && startsAt.getUTCMilliseconds() === 0 && startsAt.getUTCMinutes() % 15 === 0;
+      if (!availability || availability.status !== "proposed" || !requirement || requirement.status !== "to_book" || !validQuarterHour || startsAt.getTime() < new Date(availability.startsAt).getTime() || endsAt.getTime() > new Date(availability.endsAt).getTime() || startsAt.getTime() <= Date.now() - 60_000) return json({ error: "Ce créneau n’est plus compatible avec la disponibilité proposée." }, 400);
+      const [bookings, slots, member] = await Promise.all([interviewBookingsFor(), interviewSlotsFor(), portalUser(requirement.memberId)]);
+      if (!member || bookings.some((booking) => booking.requirementId === requirement.id) || slots.some((slot) => slot.interviewerId === actor.id && new Date(slot.startsAt).getTime() === startsAt.getTime())) return json({ error: "Ce rendez-vous vient d’être modifié ou vous êtes déjà indisponible à cette heure." }, 409);
+      const slotId = crypto.randomUUID();
+      await database("portal_interview_slots", {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ id: slotId, interviewer_id: actor.id, created_by: availability.memberId, starts_at: startsAt.toISOString(), ends_at: endsAt.toISOString(), status: "available" }),
+      });
+      await database("portal_interview_bookings", {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ id: crypto.randomUUID(), requirement_id: requirement.id, slot_id: slotId, member_id: requirement.memberId, interviewer_id: actor.id }),
+      });
+      const now = new Date().toISOString();
+      await Promise.all([
+        database(`portal_interview_requirements?id=eq.${encodeURIComponent(requirement.id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ status: "booked", updated_at: now }) }),
+        database(`portal_interview_availabilities?id=eq.${encodeURIComponent(availability.id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ status: "scheduled", scheduled_slot_id: slotId, updated_at: now }) }),
+        database(`portal_interview_availabilities?requirement_id=eq.${encodeURIComponent(requirement.id)}&status=eq.proposed&id=neq.${encodeURIComponent(availability.id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ status: "withdrawn", updated_at: now }) }),
+      ]);
+      await createNotification({ recipients: [requirement.memberId], kind: "info", title: "Rendez-vous d’entretien confirmé", text: `${label(startsAt.toISOString())} avec ${actor.grade ? `${actor.grade} ` : ""}${actor.first_name} ${actor.last_name || ""}`.trim(), target: "interviews" });
+      await recordAuditLog({ actor, category: "interview", action: "Rendez-vous calé sur une disponibilité SO", details: `${member.first_name} ${member.last_name || ""}`.trim() });
     } else if (action === "create_interview_slot") {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent ouvrir des disponibilités." }, 403);
       const date = calendarDate(body?.date);
@@ -1549,7 +1631,11 @@ export async function POST(request) {
       const requirement = await interviewRequirementById(booking.requirementId);
       if (!requirement || requirement.status === "completed") return json({ error: "Cet entretien est déjà terminé." }, 400);
       await database(`portal_interview_bookings?id=eq.${encodeURIComponent(booking.id)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
-      await database(`portal_interview_requirements?id=eq.${encodeURIComponent(requirement.id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ status: "to_book", updated_at: new Date().toISOString() }) });
+      const now = new Date().toISOString();
+      await Promise.all([
+        database(`portal_interview_requirements?id=eq.${encodeURIComponent(requirement.id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ status: "to_book", updated_at: now }) }),
+        database(`portal_interview_availabilities?scheduled_slot_id=eq.${encodeURIComponent(booking.slotId)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ status: "proposed", scheduled_slot_id: null, updated_at: now }) }),
+      ]);
       await recordAuditLog({ actor, category: "interview", action: "Rendez-vous d’entretien annulé", details: INTERVIEW_REASON_LABELS[requirement.reason] });
     } else if (action === "complete_interview") {
       if (!isManager(actor)) return json({ error: "Seuls les responsables peuvent clôturer un entretien." }, 403);

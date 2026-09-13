@@ -325,16 +325,6 @@ function displaySlot(slot) {
   } catch { return "Créneau à préciser"; }
 }
 
-function dayKey(slot) {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(slot.startsAt));
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
-}
-
-function shortTime(slot) {
-  return new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Paris" }).format(new Date(slot.startsAt));
-}
-
 function dueText(requirement) {
   const current = parisDay();
   if (!requirement?.dueDate) return "Échéance à définir";
@@ -344,8 +334,46 @@ function dueText(requirement) {
   return days === 1 ? "À réserver demain" : `À réserver dans ${days} jours`;
 }
 
+function dueTone(requirement) {
+  if (!requirement?.dueDate) return "neutral";
+  const current = parisDay();
+  const days = Math.round((new Date(`${requirement.dueDate}T12:00:00Z`).getTime() - new Date(`${current}T12:00:00Z`).getTime()) / 86_400_000);
+  // Une journée ou moins, y compris une échéance dépassée, doit ressortir en priorité.
+  if (days <= 1) return "critical";
+  if (days <= 7) return "warning";
+  if (days <= 14) return "safe";
+  return "neutral";
+}
+
+function availabilityTimes(availability) {
+  const startsAt = new Date(availability?.startsAt || "");
+  const endsAt = new Date(availability?.endsAt || "");
+  if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(endsAt.getTime())) return [];
+  const times = [];
+  for (let value = startsAt.getTime(); value + 15 * 60_000 <= endsAt.getTime(); value += 15 * 60_000) times.push(new Date(value).toISOString());
+  return times;
+}
+
+function displayAvailability(availability) {
+  try {
+    const start = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Paris" }).format(new Date(availability.startsAt));
+    const end = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Paris" }).format(new Date(availability.endsAt));
+    return `${start} → ${end}`;
+  } catch { return "Disponibilité à préciser"; }
+}
+
+function displayAvailabilityTime(value) {
+  try { return new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Paris" }).format(new Date(value)); }
+  catch { return "Heure à définir"; }
+}
+
 function RequirementPill({ requirement }) {
   return <span className={`interview-status ${requirement.status}`}><i />{STATUS[requirement.status] || "À suivre"}</span>;
+}
+
+function DuePill({ requirement }) {
+  const tone = dueTone(requirement);
+  return <span className={`interview-due ${tone}`}><i />{dueText(requirement)}</span>;
 }
 
 function EmptyState({ title, text }) {
@@ -358,30 +386,32 @@ async function runAction(setBusy, key, action, values) {
   finally { setBusy(""); }
 }
 
-export function InterviewBookingPanel({ session, users, interviews, onAction }) {
+export function InterviewBookingPanel({ users, interviews, onAction }) {
   const [busy, setBusy] = useState("");
+  const [availabilityForm, setAvailabilityForm] = useState({ date: parisDay(), startTime: "15:00", endTime: "16:00" });
   const requirements = Array.isArray(interviews?.requirements) ? interviews.requirements : [];
   const bookings = Array.isArray(interviews?.bookings) ? interviews.bookings : [];
   const slots = Array.isArray(interviews?.slots) ? interviews.slots : [];
+  const availabilities = Array.isArray(interviews?.availabilities) ? interviews.availabilities : [];
   const current = requirements.find((item) => item.status !== "completed") || null;
   const booking = current ? bookings.find((item) => item.requirementId === current.id) : null;
   const slotById = useMemo(() => new Map(slots.map((slot) => [slot.id, slot])), [slots]);
   const usersById = useMemo(() => new Map(users.map((user) => [String(user.id), user])), [users]);
-  const availableSlots = slots.filter((slot) => !bookings.some((item) => item.slotId === slot.id) && new Date(slot.startsAt).getTime() > Date.now());
-  const groupedSlots = useMemo(() => availableSlots.reduce((groups, slot) => {
-    const key = dayKey(slot);
-    if (!groups[key]) groups[key] = [];
-    groups[key].push(slot);
-    return groups;
-  }, {}), [availableSlots]);
   const completed = requirements.filter((item) => item.status === "completed").slice(-4).reverse();
   const bookedSlot = booking ? slotById.get(booking.slotId) : null;
   const bookedInterviewer = bookedSlot ? usersById.get(String(bookedSlot.interviewerId)) : null;
+  const currentAvailabilities = current ? availabilities.filter((item) => item.requirementId === current.id && item.status === "proposed").sort((left, right) => new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime()) : [];
+
+  async function addAvailability(event) {
+    event.preventDefault();
+    if (!current) return;
+    await runAction(setBusy, "availability-form", onAction, { action: "create_interview_availability", requirementId: current.id, ...availabilityForm });
+  }
 
   return <div className="interview-page">
     <section className="interview-hero">
       <div className="interview-hero-icon"><CalendarClock size={27} /></div>
-      <div><p className="eyebrow dark">SUIVI INDIVIDUEL</p><h2>Mes entretiens</h2><p>Réservez votre créneau dès qu’une échéance vous est attribuée par l’équipe Référent SO.</p></div>
+      <div><p className="eyebrow dark">SUIVI INDIVIDUEL</p><h2>Mes entretiens</h2><p>Indiquez vos disponibilités : l’équipe Référent SO calera ensuite le rendez-vous avec vous.</p></div>
       <div className="interview-hero-side"><span className="interview-access"><UsersRound size={15} /> Accessible à tous les rôles</span><div className="interview-hero-state"><strong>{current ? STATUS[current.status] : "À jour"}</strong><span>{current ? dueText(current) : "Aucun rendez-vous à prévoir"}</span></div></div>
     </section>
 
@@ -390,7 +420,7 @@ export function InterviewBookingPanel({ session, users, interviews, onAction }) 
         <div className="interview-card-head"><div><p className="eyebrow dark">PROCHAIN ÉCHANGE</p><h2>{current ? REASONS[current.reason] : "Aucun entretien à planifier"}</h2></div>{current && <RequirementPill requirement={current} />}</div>
         {current ? <>
           <div className="interview-deadline"><CalendarClock size={19} /><div><strong>{dueText(current)}</strong><span>Échéance : {displayDate(current.dueDate)}</span></div></div>
-          {booking ? <div className="interview-booked"><CheckCircle2 size={21} /><div className="interview-booked-details"><strong>Votre rendez-vous est confirmé</strong><span>{displaySlot(bookedSlot || {})}</span>{bookedInterviewer && <MemberIdentity member={bookedInterviewer} label="Votre responsable" compact />}</div><button type="button" className="text-danger" disabled={busy === booking.id} onClick={() => { if (window.confirm("Annuler ce rendez-vous ?")) runAction(setBusy, booking.id, onAction, { action: "cancel_interview_booking", bookingId: booking.id }); }}><XCircle size={15} /> Annuler</button></div> : <p className="interview-guidance">Choisissez un créneau et son responsable. Chaque rendez-vous dure 15 minutes.</p>}
+          {booking ? <div className="interview-booked"><CheckCircle2 size={21} /><div className="interview-booked-details"><strong>Votre rendez-vous est confirmé</strong><span>{displaySlot(bookedSlot || {})}</span>{bookedInterviewer && <MemberIdentity member={bookedInterviewer} label="Votre responsable" compact />}</div><button type="button" className="text-danger" disabled={busy === booking.id} onClick={() => { if (window.confirm("Annuler ce rendez-vous ?")) runAction(setBusy, booking.id, onAction, { action: "cancel_interview_booking", bookingId: booking.id }); }}><XCircle size={15} /> Annuler</button></div> : <p className="interview-guidance">Proposez une ou plusieurs plages qui vous conviennent. Un Référent SO confirmera ensuite le créneau de 15 minutes et la personne qui assurera l’entretien.</p>}
         </> : <EmptyState title="Votre suivi est à jour" text="Une nouvelle échéance apparaîtra ici lorsqu’un entretien devra être planifié." />}
       </section>
 
@@ -401,15 +431,16 @@ export function InterviewBookingPanel({ session, users, interviews, onAction }) 
     </div>
 
     {current?.status === "to_book" && <section className="interview-card interview-slots-card">
-      <div className="interview-card-head"><div><p className="eyebrow dark">DISPONIBILITÉS</p><h2>Choisir un créneau</h2><p>Les créneaux affichés sont disponibles à la réservation.</p></div><span className="interview-duration"><Clock3 size={15} /> 15 min</span></div>
-      {Object.keys(groupedSlots).length ? <div className="interview-slot-days">{Object.entries(groupedSlots).map(([day, daySlots]) => <article key={day}><strong>{displayDate(day)}</strong><div>{daySlots.map((slot) => { const interviewer = usersById.get(String(slot.interviewerId)); return <button key={slot.id} className="interview-slot-button" type="button" disabled={Boolean(busy)} onClick={() => runAction(setBusy, slot.id, onAction, { action: "book_interview", requirementId: current.id, slotId: slot.id })}><Clock3 size={15} /><span><b>{shortTime(slot)}</b><small>{interviewer ? `Avec ${memberName(interviewer)}` : "Responsable à confirmer"}</small></span>{interviewer && <ProfileAvatar member={interviewer} size="small" />}</button>; })}</div></article>)}</div> : <EmptyState title="Aucun créneau disponible" text="Les responsables n’ont pas encore ouvert de disponibilité. Revenez un peu plus tard." />}
+      <div className="interview-card-head"><div><p className="eyebrow dark">MES DISPONIBILITÉS</p><h2>Proposer mes créneaux</h2><p>Ajoutez uniquement les plages qui vous conviennent. Les Référents SO se caleront sur celles-ci.</p></div><span className="interview-duration"><Clock3 size={15} /> 15 min</span></div>
+      <form className="interview-form interview-availability-form" onSubmit={addAvailability}><label>Date<input type="date" value={availabilityForm.date} min={parisDay()} onChange={(event) => setAvailabilityForm((currentForm) => ({ ...currentForm, date: event.target.value }))} required /></label><div className="interview-time-grid"><label>Disponible à partir de<input type="time" step="900" value={availabilityForm.startTime} onChange={(event) => setAvailabilityForm((currentForm) => ({ ...currentForm, startTime: event.target.value }))} required /></label><label>Jusqu’à<input type="time" step="900" value={availabilityForm.endTime} onChange={(event) => setAvailabilityForm((currentForm) => ({ ...currentForm, endTime: event.target.value }))} required /></label></div><button className="primary" type="submit" disabled={busy === "availability-form"}><CalendarClock size={17} />{busy === "availability-form" ? "Ajout…" : "Ajouter cette disponibilité"}</button></form>
+      <div className="interview-availability-list interview-member-availabilities">{currentAvailabilities.map((availability) => <article key={availability.id}><div><strong>{displayAvailability(availability)}</strong><small>En attente de confirmation par un Référent SO</small></div><button className="icon-button danger" type="button" title="Retirer cette disponibilité" disabled={busy === availability.id} onClick={() => { if (window.confirm("Retirer cette disponibilité ?")) runAction(setBusy, availability.id, onAction, { action: "delete_interview_availability", availabilityId: availability.id }); }}><Trash2 size={16} /></button></article>)}{!currentAvailabilities.length && <p className="interview-availability-empty">Aucune plage proposée pour le moment.</p>}</div>
     </section>}
   </div>;
 }
 
 export function InterviewManagementPanel({ session, users, interviews, onAction }) {
   const [busy, setBusy] = useState("");
-  const [slotForm, setSlotForm] = useState({ date: parisDay(), startTime: "15:00", endTime: "16:00" });
+  const [scheduleTimes, setScheduleTimes] = useState({});
   const [completionTarget, setCompletionTarget] = useState(null);
   const [completionReport, setCompletionReport] = useState(EMPTY_INTERVIEW_REPORT);
   const [completionError, setCompletionError] = useState("");
@@ -424,6 +455,7 @@ export function InterviewManagementPanel({ session, users, interviews, onAction 
   const requirements = Array.isArray(interviews?.requirements) ? [...interviews.requirements] : [];
   const slots = Array.isArray(interviews?.slots) ? interviews.slots : [];
   const bookings = Array.isArray(interviews?.bookings) ? interviews.bookings : [];
+  const availabilities = Array.isArray(interviews?.availabilities) ? interviews.availabilities : [];
   const slotsById = useMemo(() => new Map(slots.map((slot) => [slot.id, slot])), [slots]);
   const bookingByRequirement = useMemo(() => new Map(bookings.map((booking) => [booking.requirementId, booking])), [bookings]);
   const openRequirements = requirements.filter((item) => item.status !== "completed").sort((left, right) => {
@@ -432,16 +464,13 @@ export function InterviewManagementPanel({ session, users, interviews, onAction 
   });
   const completedRequirements = requirements.filter((item) => item.status === "completed");
   const recentCompletedRequirements = [...completedRequirements].sort((left, right) => new Date(right.completedAt || right.updatedAt || 0).getTime() - new Date(left.completedAt || left.updatedAt || 0).getTime()).slice(0, 24);
-  const upcomingSlots = slots.filter((slot) => new Date(slot.startsAt).getTime() > Date.now() - 60_000).slice(0, 20);
+  const pendingAvailabilities = availabilities.filter((item) => item.status === "proposed" && new Date(item.endsAt).getTime() > Date.now()).sort((left, right) => new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime());
+  const upcomingAppointments = slots.filter((slot) => bookings.some((booking) => booking.slotId === slot.id) && new Date(slot.startsAt).getTime() > Date.now() - 60_000).sort((left, right) => new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime()).slice(0, 20);
   const historyMember = historyMemberId ? usersById.get(String(historyMemberId)) : null;
   const historyEntries = historyMember ? completedRequirements
     .filter((item) => String(item.memberId) === String(historyMember.id))
     .sort((left, right) => new Date(right.completedAt || right.updatedAt || 0).getTime() - new Date(left.completedAt || left.updatedAt || 0).getTime()) : [];
 
-  async function addSlots(event) {
-    event.preventDefault();
-    await runAction(setBusy, "slot-form", onAction, { action: "create_interview_slot", ...slotForm });
-  }
   async function addRequirement(event) {
     event.preventDefault();
     if (!requirementForm.memberId) return;
@@ -489,12 +518,12 @@ export function InterviewManagementPanel({ session, users, interviews, onAction 
   return <div className="interview-page interview-management-page">
     <section className="interview-hero">
       <div className="interview-hero-icon"><UsersRound size={27} /></div>
-      <div><p className="eyebrow dark">RÉFÉRENT SO</p><h2>Gestion des entretiens</h2><p>Ouvrez des créneaux, suivez les rendez-vous et gardez une vue claire sur les prochaines échéances.</p></div>
-      <div className="interview-hero-side"><span className="interview-access"><UsersRound size={15} /> Gestion Référent SO</span><div className="interview-hero-counters"><span><strong>{openRequirements.filter((item) => item.status === "to_book").length}</strong> à réserver</span><span><strong>{openRequirements.filter((item) => item.status === "booked").length}</strong> fixés</span><span><strong>{completedRequirements.length}</strong> terminés</span></div></div>
+      <div><p className="eyebrow dark">RÉFÉRENT SO</p><h2>Gestion des entretiens</h2><p>Consultez les disponibilités proposées par les SO, confirmez les rendez-vous et gardez une vue claire sur les échéances.</p></div>
+      <div className="interview-hero-side"><span className="interview-access"><UsersRound size={15} /> Gestion Référent SO</span><div className="interview-hero-counters"><span><strong>{pendingAvailabilities.length}</strong> dispos proposées</span><span><strong>{openRequirements.filter((item) => item.status === "booked").length}</strong> fixés</span><span><strong>{completedRequirements.length}</strong> terminés</span></div></div>
     </section>
 
     <div className="interview-management-forms">
-      <section className="interview-card"><div className="interview-card-head"><div><p className="eyebrow dark">DISPONIBILITÉS</p><h2>Ouvrir mes créneaux</h2><p>Une plage est automatiquement découpée en rendez-vous de 15 minutes.</p></div><span className="interview-icon-box"><Plus size={18} /></span></div><form className="interview-form" onSubmit={addSlots}><div className="interview-host-note"><MemberIdentity member={session} label="Les rendez-vous seront proposés avec" compact /></div><label>Date<input type="date" value={slotForm.date} min={parisDay()} onChange={(event) => setSlotForm((current) => ({ ...current, date: event.target.value }))} required /></label><div className="interview-time-grid"><label>Début<input type="time" step="900" value={slotForm.startTime} onChange={(event) => setSlotForm((current) => ({ ...current, startTime: event.target.value }))} required /></label><label>Fin<input type="time" step="900" value={slotForm.endTime} onChange={(event) => setSlotForm((current) => ({ ...current, endTime: event.target.value }))} required /></label></div><button className="primary" type="submit" disabled={busy === "slot-form"}><CalendarClock size={17} />{busy === "slot-form" ? "Création…" : "Créer mes créneaux"}</button></form></section>
+      <section className="interview-card interview-proposals-card"><div className="interview-card-head"><div><p className="eyebrow dark">DISPONIBILITÉS DES SO</p><h2>Caler les rendez-vous</h2><p>Les membres proposent leurs plages ; choisissez une heure de 15 minutes compatible avec la vôtre.</p></div><span className="interview-icon-box"><CalendarClock size={18} /></span></div><div className="interview-proposals-list">{pendingAvailabilities.map((availability) => { const requirement = requirements.find((item) => item.id === availability.requirementId); const member = usersById.get(String(availability.memberId)); const possibleTimes = availabilityTimes(availability); const scheduledAt = scheduleTimes[availability.id] || possibleTimes[0] || ""; return <article key={availability.id}><div className="interview-proposal-member">{member && <MemberIdentity member={member} label={requirement ? REASONS[requirement.reason] : "Entretien individuel"} />}</div><div className="interview-proposal-window"><strong>{displayAvailability(availability)}</strong>{requirement && <DuePill requirement={requirement} />}</div><div className="interview-proposal-actions"><label>Heure retenue<select value={scheduledAt} onChange={(event) => setScheduleTimes((current) => ({ ...current, [availability.id]: event.target.value }))}>{possibleTimes.map((value) => <option key={value} value={value}>{displayAvailabilityTime(value)}</option>)}</select></label><button className="primary interview-schedule" type="button" disabled={!scheduledAt || busy === availability.id} onClick={() => runAction(setBusy, availability.id, onAction, { action: "schedule_interview_from_availability", availabilityId: availability.id, startsAt: scheduledAt })}><CalendarCheck2 size={16} />{busy === availability.id ? "Confirmation…" : "Me caler sur ce créneau"}</button></div></article>; })}{!pendingAvailabilities.length && <EmptyState title="Aucune disponibilité proposée" text="Les SO ayant un entretien à réserver proposeront leurs plages ici." />}</div></section>
       <section className="interview-card"><div className="interview-card-head"><div><p className="eyebrow dark">SUIVI MANUEL</p><h2>Ajouter une échéance</h2><p>Pour un entretien exceptionnel ou pour démarrer le suivi d’un membre.</p></div><span className="interview-icon-box"><UserRound size={18} /></span></div><form className="interview-form" onSubmit={addRequirement}><label>Membre<select value={requirementForm.memberId} onChange={(event) => setRequirementForm((current) => ({ ...current, memberId: event.target.value }))} required><option value="">Choisir un Sous-Officier…</option>{members.map((member) => <option value={member.id} key={member.id}>{memberName(member)}</option>)}</select></label><div className="interview-time-grid"><label>Motif<select value={requirementForm.reason} onChange={(event) => setRequirementForm((current) => ({ ...current, reason: event.target.value }))}>{Object.entries(REASONS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>Échéance<input type="date" value={requirementForm.dueDate} onChange={(event) => setRequirementForm((current) => ({ ...current, dueDate: event.target.value }))} required /></label></div><button className="secondary" type="submit" disabled={!requirementForm.memberId || busy === "requirement-form"}><Plus size={17} />{busy === "requirement-form" ? "Ajout…" : "Ajouter l’échéance"}</button></form></section>
     </div>
 
@@ -505,11 +534,11 @@ export function InterviewManagementPanel({ session, users, interviews, onAction 
       {workbookError && <p className="form-error interview-sheet-error">{workbookError}</p>}
     </section>
 
-    <section className="interview-card interview-dashboard-card"><div className="interview-card-head"><div><p className="eyebrow dark">TABLEAU DE SUIVI</p><h2>État des entretiens</h2><p>Les suivis périodiques reviennent toutes les deux semaines. Cliquez sur un membre pour consulter son historique.</p></div><span className="interview-count">{openRequirements.length}</span></div><div className="table-wrap"><table className="interview-table"><thead><tr><th>Membre</th><th>Motif</th><th>Échéance</th><th>Rendez-vous</th><th>Responsable</th><th>État</th><th aria-label="Actions" /></tr></thead><tbody>{openRequirements.map((requirement) => { const member = usersById.get(String(requirement.memberId)); const booking = bookingByRequirement.get(requirement.id); const slot = booking ? slotsById.get(booking.slotId) : null; const interviewer = slot ? usersById.get(String(slot.interviewerId)) : null; return <tr key={requirement.id}><td><button className="interview-member interview-member-open" type="button" disabled={!member} title={member ? `Ouvrir l’historique de ${memberName(member)}` : undefined} onClick={() => setHistoryMemberId(member.id)}><ProfileAvatar member={member} size="small" /><span><strong>{memberName(member)}</strong><small>{member ? (member.role === "senior" ? "Sous-Officier Supérieur" : "Sous-Officier") : "Compte supprimé"}</small></span></button></td><td><strong>{REASONS[requirement.reason]}</strong></td><td><span className={`interview-due ${requirement.dueDate < parisDay() ? "late" : ""}`}>{dueText(requirement)}</span></td><td>{slot ? <span className="interview-appointment"><Clock3 size={14} />{displaySlot(slot)}</span> : <span className="interview-no-appointment">En attente du membre</span>}</td><td>{interviewer ? <MemberIdentity member={interviewer} label="Entretien avec" compact /> : <span className="interview-no-appointment">À définir</span>}</td><td><RequirementPill requirement={requirement} /></td><td><div className="interview-row-actions">{booking && <button className="icon-button" type="button" title="Annuler le rendez-vous" disabled={busy === booking.id} onClick={() => { if (window.confirm("Annuler ce rendez-vous ?")) runAction(setBusy, booking.id, onAction, { action: "cancel_interview_booking", bookingId: booking.id }); }}><XCircle size={16} /></button>}<button className="secondary interview-complete" type="button" disabled={busy === requirement.id} onClick={() => { setCompletionTarget(requirement); setCompletionReport(EMPTY_INTERVIEW_REPORT); setCompletionError(""); }}><CheckCircle2 size={15} /> Clôturer</button></div></td></tr>; })}{!openRequirements.length && <tr><td colSpan="7"><EmptyState title="Aucune échéance en attente" text="Les prochains suivis apparaîtront ici automatiquement." /></td></tr>}</tbody></table></div></section>
+    <section className="interview-card interview-dashboard-card"><div className="interview-card-head"><div><p className="eyebrow dark">TABLEAU DE SUIVI</p><h2>État des entretiens</h2><p>Les suivis périodiques reviennent toutes les deux semaines. Cliquez sur un membre pour consulter son historique.</p></div><span className="interview-count">{openRequirements.length}</span></div><div className="interview-deadline-legend"><span className="safe"><i />Vert · de 14 à 8 jours</span><span className="warning"><i />Orange · de 7 à 2 jours</span><span className="critical"><i />Rouge · 1 jour ou dépassé</span></div><div className="table-wrap"><table className="interview-table"><thead><tr><th>Membre</th><th>Motif</th><th>Échéance</th><th>Rendez-vous</th><th>Responsable</th><th>État</th><th aria-label="Actions" /></tr></thead><tbody>{openRequirements.map((requirement) => { const member = usersById.get(String(requirement.memberId)); const booking = bookingByRequirement.get(requirement.id); const slot = booking ? slotsById.get(booking.slotId) : null; const interviewer = slot ? usersById.get(String(slot.interviewerId)) : null; const hasAvailability = availabilities.some((availability) => availability.requirementId === requirement.id && availability.status === "proposed"); return <tr className={`interview-due-row ${dueTone(requirement)}`} key={requirement.id}><td><button className="interview-member interview-member-open" type="button" disabled={!member} title={member ? `Ouvrir l’historique de ${memberName(member)}` : undefined} onClick={() => setHistoryMemberId(member.id)}><ProfileAvatar member={member} size="small" /><span><strong>{memberName(member)}</strong><small>{member ? (member.role === "senior" ? "Sous-Officier Supérieur" : "Sous-Officier") : "Compte supprimé"}</small></span></button></td><td><strong>{REASONS[requirement.reason]}</strong></td><td><DuePill requirement={requirement} /></td><td>{slot ? <span className="interview-appointment"><Clock3 size={14} />{displaySlot(slot)}</span> : hasAvailability ? <span className="interview-no-appointment interview-proposed">Disponibilités proposées</span> : <span className="interview-no-appointment">En attente du membre</span>}</td><td>{interviewer ? <MemberIdentity member={interviewer} label="Entretien avec" compact /> : <span className="interview-no-appointment">À définir</span>}</td><td><RequirementPill requirement={requirement} /></td><td><div className="interview-row-actions">{booking && <button className="icon-button" type="button" title="Annuler le rendez-vous" disabled={busy === booking.id} onClick={() => { if (window.confirm("Annuler ce rendez-vous ?")) runAction(setBusy, booking.id, onAction, { action: "cancel_interview_booking", bookingId: booking.id }); }}><XCircle size={16} /></button>}<button className="secondary interview-complete" type="button" disabled={busy === requirement.id} onClick={() => { setCompletionTarget(requirement); setCompletionReport(EMPTY_INTERVIEW_REPORT); setCompletionError(""); }}><CheckCircle2 size={15} /> Clôturer</button></div></td></tr>; })}{!openRequirements.length && <tr><td colSpan="7"><EmptyState title="Aucune échéance en attente" text="Les prochains suivis apparaîtront ici automatiquement." /></td></tr>}</tbody></table></div></section>
 
     <section className="interview-card interview-completed-card"><div className="interview-card-head"><div><p className="eyebrow dark">ENTRETIENS TERMINÉS</p><h2>Réalisés récemment</h2><p>Zone verte : ces rendez-vous sont clôturés. Les comptes rendus détaillés sont classés dans le Google Sheet.</p></div><span className="interview-count"><CheckCircle2 size={17} /></span></div><div className="table-wrap"><table className="interview-table interview-completed-table"><thead><tr><th>Membre</th><th>Motif</th><th>Terminé le</th><th>Responsable</th><th>Compte rendu</th><th>État</th></tr></thead><tbody>{recentCompletedRequirements.map((requirement) => { const member = usersById.get(String(requirement.memberId)); const author = usersById.get(String(requirement.completedBy)); return <tr key={requirement.id}><td><button className="interview-member interview-member-open" type="button" disabled={!member} title={member ? `Ouvrir l’historique de ${memberName(member)}` : undefined} onClick={() => setHistoryMemberId(member.id)}><ProfileAvatar member={member} size="small" /><span><strong>{memberName(member)}</strong><small>{member ? (member.role === "senior" ? "Sous-Officier Supérieur" : "Sous-Officier") : "Compte supprimé"}</small></span></button></td><td><strong>{REASONS[requirement.reason]}</strong></td><td><span className="interview-completed-date"><CheckCircle2 size={14} />{displayCompletedAt(requirement.completedAt)}</span></td><td>{author ? <MemberIdentity member={author} label="Clôturé par" compact /> : <span className="interview-no-appointment">Non renseigné</span>}</td><td><span className="interview-report-state written">Envoyé vers Google Sheet</span></td><td><RequirementPill requirement={requirement} /></td></tr>; })}{!recentCompletedRequirements.length && <tr><td colSpan="6"><EmptyState title="Aucun entretien terminé" text="Les rendez-vous clôturés apparaîtront ici en vert." /></td></tr>}</tbody></table></div></section>
 
-    <section className="interview-card interview-availability-card"><div className="interview-card-head"><div><p className="eyebrow dark">CRÉNEAUX OUVERTS</p><h2>Disponibilités à venir</h2><p>Chaque créneau indique le responsable qui recevra le membre.</p></div><span className="interview-duration"><Clock3 size={15} /> 15 min</span></div><div className="interview-availability-list">{upcomingSlots.map((slot) => { const booking = bookings.find((item) => item.slotId === slot.id); const member = booking ? usersById.get(String(booking.memberId)) : null; const interviewer = usersById.get(String(slot.interviewerId)); const creator = usersById.get(String(slot.createdBy)); return <article key={slot.id}><div className="interview-slot-summary"><strong>{displaySlot(slot)}</strong>{interviewer && <MemberIdentity member={interviewer} label="Entretien assuré par" compact />}{creator && creator.id !== interviewer?.id && <small>Créneau ouvert par {memberName(creator)}</small>}</div>{booking ? <div className="interview-booking-owner">{member && <MemberIdentity member={member} label="Réservé par" compact />}<span className="interview-status booked"><i />Réservé</span></div> : <div className="interview-booking-owner"><span className="interview-status to_book"><i />Disponible</span><button className="icon-button danger" type="button" title="Retirer ce créneau" disabled={busy === slot.id} onClick={() => { if (window.confirm("Retirer ce créneau disponible ?")) runAction(setBusy, slot.id, onAction, { action: "delete_interview_slot", slotId: slot.id }); }}><Trash2 size={16} /></button></div>}</article>; })}{!upcomingSlots.length && <EmptyState title="Aucune disponibilité ouverte" text="Créez une première plage pour permettre les prises de rendez-vous." />}</div></section>
+    <section className="interview-card interview-availability-card"><div className="interview-card-head"><div><p className="eyebrow dark">RENDEZ-VOUS CONFIRMÉS</p><h2>Entretiens à venir</h2><p>Une fois le créneau calé sur la disponibilité d’un SO, il apparaît ici avec les deux personnes concernées.</p></div><span className="interview-duration"><Clock3 size={15} /> 15 min</span></div><div className="interview-availability-list">{upcomingAppointments.map((slot) => { const booking = bookings.find((item) => item.slotId === slot.id); const member = booking ? usersById.get(String(booking.memberId)) : null; const interviewer = usersById.get(String(slot.interviewerId)); return <article key={slot.id}><div className="interview-slot-summary"><strong>{displaySlot(slot)}</strong>{interviewer && <MemberIdentity member={interviewer} label="Entretien assuré par" compact />}</div><div className="interview-booking-owner">{member && <MemberIdentity member={member} label="Avec" compact />}<span className="interview-status booked"><i />Confirmé</span></div></article>; })}{!upcomingAppointments.length && <EmptyState title="Aucun rendez-vous confirmé" text="Les rendez-vous calés sur les disponibilités des SO apparaîtront ici." />}</div></section>
 
     {completionTarget && <div className="interview-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !sendingToSheet) { setCompletionTarget(null); setCompletionReport(EMPTY_INTERVIEW_REPORT); setCompletionError(""); } }}><form className="interview-modal interview-report-modal" onSubmit={submitCompletion}><button className="icon-button interview-modal-close" type="button" title="Fermer" disabled={sendingToSheet} onClick={() => { setCompletionTarget(null); setCompletionReport(EMPTY_INTERVIEW_REPORT); setCompletionError(""); }}><XCircle size={18} /></button><p className="eyebrow dark">CLÔTURE D’ENTRETIEN</p><h2>Compte rendu d’entretien</h2><p className="interview-modal-intro">Répondez à chaque point. Le compte rendu sera envoyé dans le dossier Google Sheet du membre et ne sera pas conservé dans le portail.</p><div className="interview-modal-member"><MemberIdentity member={usersById.get(String(completionTarget.memberId))} label="Entretien de" /></div><div className="interview-report-form">{INTERVIEW_REPORT_FIELDS.map((field, index) => <label key={field.id}><span>{index + 1}. {field.label}</span>{field.hint && <small>{field.hint}</small>}<textarea value={completionReport[field.id]} onChange={(event) => setCompletionReport((current) => ({ ...current, [field.id]: event.target.value }))} maxLength={1600} rows={4} placeholder={field.placeholder} required autoFocus={index === 0} /></label>)}</div>{completionError && <p className="form-error">{completionError}</p>}<div className="interview-sheet-notice">Les réponses seront classées dans <a href={INTERVIEW_SHEET_URL} target="_blank" rel="noreferrer">le Google Sheet des entretiens</a>, avec un onglet dédié à ce membre.</div><div className="interview-modal-actions"><button className="secondary" type="button" disabled={sendingToSheet} onClick={() => { setCompletionTarget(null); setCompletionReport(EMPTY_INTERVIEW_REPORT); setCompletionError(""); }}>Annuler</button><button className="primary" type="submit" disabled={sendingToSheet || busy === completionTarget.id}><CheckCircle2 size={17} />{sendingToSheet ? "Envoi vers Google…" : busy === completionTarget.id ? "Clôture…" : "Envoyer et clôturer"}</button></div></form></div>}
 

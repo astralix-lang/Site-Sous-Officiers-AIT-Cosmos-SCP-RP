@@ -1076,3 +1076,44 @@ body { font-size:15px; line-height:1.5; }
 @media(max-width:620px) {
   .section-heading > header h1 { font-size:22px; }
 }
+
+/* Entretiens : les SO proposent leurs plages, les référents confirment ensuite le rendez-vous. */
+.interview-availability-form { border-bottom:1px solid var(--line); }
+.interview-member-availabilities { padding-top:0; }
+.interview-availability-empty { margin:0; padding:13px 20px 20px; color:#8391a2; font-size:11px; }
+.interview-proposals-card { overflow:hidden; }
+.interview-proposals-list { display:grid; }
+.interview-proposals-list > article { display:grid; grid-template-columns:minmax(185px,.9fr) minmax(245px,1fr) minmax(255px,.9fr); gap:15px; align-items:center; padding:15px 20px; border-top:1px solid #e8eee9; }
+.interview-proposal-member,.interview-proposal-window { min-width:0; }
+.interview-proposal-window { display:grid; gap:7px; }
+.interview-proposal-window > strong { color:#3e5062; font-size:12px; text-transform:capitalize; }
+.interview-proposal-actions { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:8px; }
+.interview-proposal-actions label { display:grid; gap:5px; color:#526476; font-size:10px; font-weight:800; }
+.interview-proposal-actions select { min-width:0; min-height:36px; color:var(--ink); background:#fff; border:1px solid #dbe5dc; border-radius:8px; font:700 11px "DM Sans",sans-serif; }
+.interview-schedule { min-height:36px; display:inline-flex; align-items:center; gap:6px; padding:0 10px; font-size:10px; white-space:nowrap; }
+.interview-deadline-legend { display:flex; flex-wrap:wrap; gap:7px; padding:11px 14px; border-bottom:1px solid #e6ece7; }
+.interview-deadline-legend span,.interview-due { display:inline-flex; align-items:center; gap:6px; width:max-content; padding:5px 8px; border-radius:999px; font-size:10px; font-weight:800; white-space:nowrap; }
+.interview-deadline-legend i,.interview-due i { width:6px; height:6px; border-radius:50%; }
+.interview-deadline-legend .safe,.interview-due.safe { color:#26765c; background:#e8f7ef; }
+.interview-deadline-legend .safe i,.interview-due.safe i { background:#32936f; }
+.interview-deadline-legend .warning,.interview-due.warning { color:#9a5a13; background:#fff2d9; }
+.interview-deadline-legend .warning i,.interview-due.warning i { background:#d38724; }
+.interview-deadline-legend .critical,.interview-due.critical { color:#a73544; background:#fff0f2; }
+.interview-deadline-legend .critical i,.interview-due.critical i { background:#ce5060; }
+.interview-due.neutral { color:#627488; background:#edf1f4; }.interview-due.neutral i { background:#8494a5; }
+.interview-table .interview-due-row.safe td:first-child { box-shadow:inset 3px 0 #3a9b76; }.interview-table .interview-due-row.warning td:first-child { box-shadow:inset 3px 0 #d28b28; }.interview-table .interview-due-row.critical td:first-child { box-shadow:inset 3px 0 #ca4a5a; }
+.interview-proposed { color:#5a7fbd; font-weight:800; }
+
+[data-theme="dark"] .interview-availability-form,[data-theme="dark"] .interview-proposals-list > article,[data-theme="dark"] .interview-deadline-legend { border-color:#28362b; }
+[data-theme="dark"] .interview-availability-empty { color:#aebbad; }
+[data-theme="dark"] .interview-proposal-window > strong { color:#e6eee3; }
+[data-theme="dark"] .interview-proposal-actions label { color:#bdcabb; }
+[data-theme="dark"] .interview-proposal-actions select { color:#e8efe5; background:#0c130d; border-color:#334337; }
+[data-theme="dark"] .interview-deadline-legend .safe,[data-theme="dark"] .interview-due.safe { color:#9be0ba; background:#153a29; }
+[data-theme="dark"] .interview-deadline-legend .warning,[data-theme="dark"] .interview-due.warning { color:#f2c26d; background:#3e2d15; }
+[data-theme="dark"] .interview-deadline-legend .critical,[data-theme="dark"] .interview-due.critical { color:#f2a2aa; background:#421c24; }
+[data-theme="dark"] .interview-due.neutral { color:#c0ccbe; background:#223027; }
+[data-theme="dark"] .interview-proposed { color:#a8cdf5; }
+
+@media(max-width:1050px) { .interview-proposals-list > article { grid-template-columns:1fr 1fr; }.interview-proposal-actions { grid-column:1/-1; max-width:430px; } }
+@media(max-width:620px) { .interview-proposals-list > article { grid-template-columns:1fr; padding:15px; }.interview-proposal-actions { grid-column:auto; grid-template-columns:1fr; max-width:none; }.interview-schedule { justify-content:center; }.interview-deadline-legend { padding:10px 15px; } }
