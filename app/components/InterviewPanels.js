@@ -60,6 +60,11 @@ function interviewSheetTitle(member) {
   return `${base.slice(0, 82)} · ${String(member?.id || "dossier").slice(-6)}`.slice(0, 99);
 }
 
+function interviewSheetSuffix(member) {
+  const id = String(member?.id || "");
+  return id ? ` · ${id.slice(-6)}` : "";
+}
+
 function loadGoogleIdentityServices() {
   return new Promise((resolve, reject) => {
     if (typeof window === "undefined") return reject(new Error("Google Sheets est disponible uniquement depuis le portail."));
@@ -163,6 +168,14 @@ async function sheetValuesUpdate(token, range, values, fallback) {
   }, fallback);
 }
 
+async function sheetValuesClear(token, ranges, fallback) {
+  return googleSheetsRequest(`https://sheets.googleapis.com/v4/spreadsheets/${INTERVIEW_SHEET_ID}/values:batchClear`, {
+    method: "POST",
+    headers: googleHeaders(token),
+    body: JSON.stringify({ ranges }),
+  }, fallback);
+}
+
 async function createSheet(token, title, properties = {}) {
   const created = await sheetsBatchUpdate(token, [{ addSheet: { properties: { title, ...properties } } }], "L’onglet n’a pas pu être créé.");
   const sheet = created?.replies?.[0]?.addSheet?.properties || null;
@@ -210,9 +223,13 @@ async function formatMemberInterviewSheet(token, sheet, member) {
 async function ensureMemberInterviewSheet(token, member) {
   const metadata = await googleSheetsRequest(`https://sheets.googleapis.com/v4/spreadsheets/${INTERVIEW_SHEET_ID}?fields=sheets.properties`, { headers: googleHeaders(token) }, "Le Google Sheet ne peut pas être ouvert.");
   const title = interviewSheetTitle(member);
-  let sheet = metadata?.sheets?.find((entry) => entry?.properties?.title === title)?.properties || null;
+  const suffix = interviewSheetSuffix(member);
+  let sheet = metadata?.sheets?.find((entry) => entry?.properties?.title === title)?.properties || metadata?.sheets?.find((entry) => suffix && entry?.properties?.title?.endsWith(suffix))?.properties || null;
   if (!sheet) {
     sheet = await createSheet(token, title);
+  } else if (sheet.title !== title) {
+    await sheetsBatchUpdate(token, [{ updateSheetProperties: { properties: { sheetId: sheet.sheetId, title }, fields: "title" } }], "Le nom du dossier du membre n’a pas pu être actualisé.");
+    sheet = { ...sheet, title };
   }
   await formatMemberInterviewSheet(token, sheet, member);
   return title;
@@ -242,7 +259,18 @@ async function ensureInterviewDashboard(token, members) {
   return sheet;
 }
 
-async function prepareInterviewWorkbook({ members, onProgress }) {
+async function removeFormerMemberInterviewSheets(token, members, knownMembers) {
+  const activeMemberIds = new Set(members.map((member) => String(member.id)));
+  const formerSuffixes = new Set((knownMembers || []).filter((member) => member?.id && !activeMemberIds.has(String(member.id))).map(interviewSheetSuffix).filter(Boolean));
+  if (!formerSuffixes.size) return 0;
+  const metadata = await googleSheetsRequest(`https://sheets.googleapis.com/v4/spreadsheets/${INTERVIEW_SHEET_ID}?fields=sheets.properties`, { headers: googleHeaders(token) }, "Le Google Sheet ne peut pas être ouvert.");
+  const departedSheets = (metadata?.sheets || []).map((entry) => entry?.properties).filter((sheet) => sheet?.title !== INTERVIEW_DASHBOARD_TITLE && [...formerSuffixes].some((suffix) => sheet?.title?.endsWith(suffix)));
+  if (!departedSheets.length) return 0;
+  await sheetsBatchUpdate(token, departedSheets.map((sheet) => ({ deleteSheet: { sheetId: sheet.sheetId } })), "Les dossiers des anciens SO n’ont pas pu être supprimés.");
+  return departedSheets.length;
+}
+
+async function prepareInterviewWorkbook({ members, knownMembers, onProgress }) {
   const token = await requestGoogleSheetsToken();
   const dashboard = await ensureInterviewDashboard(token, members);
   const dossiers = [];
@@ -252,6 +280,7 @@ async function prepareInterviewWorkbook({ members, onProgress }) {
     const title = await ensureMemberInterviewSheet(token, member);
     dossiers.push([member.grade || "Non renseigné", memberName(member), memberRoleLabel(member), title, "Prêt"]);
   }
+  const removedCount = await removeFormerMemberInterviewSheets(token, members, knownMembers);
   await sheetValuesUpdate(token, `${INTERVIEW_DASHBOARD_TITLE}!A1:H8`, [
     sheetRow(["Portail SO AIT · Entretiens individuels"], 8),
     sheetRow(["Dossiers centralisés des Sous-Officiers et Sous-Officiers Supérieurs"], 8),
@@ -262,11 +291,13 @@ async function prepareInterviewWorkbook({ members, onProgress }) {
     sheetRow([], 8),
     sheetRow(["Liste des dossiers"], 8),
   ], "L’accueil du Google Sheet n’a pas pu être actualisé.");
+  await sheetValuesClear(token, [`${INTERVIEW_DASHBOARD_TITLE}!A9:E300`], "L’ancienne liste des dossiers n’a pas pu être effacée.");
   await sheetValuesUpdate(token, `${INTERVIEW_DASHBOARD_TITLE}!A9:E${Math.max(9, dossiers.length + 9)}`, [
     ["Grade", "Membre", "Niveau", "Onglet", "État"],
     ...dossiers,
   ], "La liste des dossiers n’a pas pu être ajoutée.");
   await sheetsBatchUpdate(token, [{ repeatCell: { range: { sheetId: dashboard.sheetId, startRowIndex: 9 }, cell: { userEnteredFormat: { verticalAlignment: "MIDDLE", textFormat: { fontSize: 10, fontFamily: "Arial" } } }, fields: "userEnteredFormat(verticalAlignment,textFormat)" } }], "La liste des dossiers n’a pas pu être mise en forme.");
+  return { preparedCount: members.length, removedCount };
 }
 
 async function sendInterviewReportToSheet({ member, interviewer, requirement, report }) {
@@ -481,11 +512,14 @@ export function InterviewManagementPanel({ session, users, interviews, onAction 
     setWorkbookError("");
     setWorkbookProgress("");
     try {
-      await prepareInterviewWorkbook({
+      const result = await prepareInterviewWorkbook({
         members,
+        knownMembers: users,
         onProgress: (current, total, member) => setWorkbookProgress(`Préparation ${current}/${total} · ${memberName(member)}`),
       });
-      setWorkbookProgress(`${members.length} dossier${members.length > 1 ? "s" : ""} préparé${members.length > 1 ? "s" : ""} dans Google Sheet.`);
+      const prepared = `${result.preparedCount} dossier${result.preparedCount > 1 ? "s" : ""} préparé${result.preparedCount > 1 ? "s" : ""}`;
+      const removed = result.removedCount ? ` · ${result.removedCount} dossier${result.removedCount > 1 ? "s" : ""} d’ancien${result.removedCount > 1 ? "s" : ""} SO supprimé${result.removedCount > 1 ? "s" : ""}` : "";
+      setWorkbookProgress(`${prepared}${removed} dans Google Sheet.`);
     } catch (error) {
       setWorkbookProgress("");
       setWorkbookError(error instanceof Error ? error.message : "Les dossiers Google Sheet n’ont pas pu être préparés.");
@@ -529,7 +563,7 @@ export function InterviewManagementPanel({ session, users, interviews, onAction 
 
     <section className="interview-card interview-sheet-setup-card">
       <div className="interview-card-head"><div><p className="eyebrow dark">GOOGLE SHEET</p><h2>Préparer les dossiers individuels</h2><p>Crée un onglet complet par Sous-Officier et Sous-Officier Supérieur, puis actualise l’accueil du fichier.</p></div><span className="interview-icon-box"><FileSpreadsheet size={18} /></span></div>
-      <div className="interview-sheet-setup-body"><div><strong>{members.length} dossier{members.length > 1 ? "s" : ""} à préparer</strong><p>Chaque onglet contient l’identité du membre et l’historique de ses comptes rendus d’entretien.</p></div><div className="interview-sheet-setup-actions"><a className="secondary" href={INTERVIEW_SHEET_URL} target="_blank" rel="noreferrer">Ouvrir le Sheet</a><button className="primary" type="button" disabled={preparingWorkbook || !members.length} onClick={prepareWorkbook}><FileSpreadsheet size={17} />{preparingWorkbook ? (workbookProgress || "Préparation…") : "Créer les dossiers"}</button></div></div>
+      <div className="interview-sheet-setup-body"><div><strong>{members.length} dossier{members.length > 1 ? "s" : ""} à synchroniser</strong><p>Le bouton actualise les fiches des SO actifs, crée celles des nouveaux arrivants et supprime les dossiers des anciens SO.</p></div><div className="interview-sheet-setup-actions"><a className="secondary" href={INTERVIEW_SHEET_URL} target="_blank" rel="noreferrer">Ouvrir le Sheet</a><button className="primary" type="button" disabled={preparingWorkbook || !members.length} onClick={prepareWorkbook}><FileSpreadsheet size={17} />{preparingWorkbook ? (workbookProgress || "Synchronisation…") : "Synchroniser les dossiers"}</button></div></div>
       {workbookProgress && <p className="interview-sheet-progress">{workbookProgress}</p>}
       {workbookError && <p className="form-error interview-sheet-error">{workbookError}</p>}
     </section>
