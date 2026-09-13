@@ -158,7 +158,7 @@ const CHAT_ATTACHMENT_TYPES = new Set([
 ]);
 const DEFAULT_QUOTAS = { targets: { recommendation: 1, pcs_exp: 1, observations: 1, mission_internal: 0 }, counts: {}, exemptions: {}, resetAt: null };
 const DEFAULT_SO_MEETING = { occurredAt: new Date().toISOString(), attendance: [], improvementAxes: "", caporalVotes: [], suggestions: "", updatedAt: null, updatedBy: "" };
-const DEFAULT_INTERVIEWS = { requirements: [], slots: [], bookings: [] };
+const DEFAULT_INTERVIEWS = { requirements: [], slots: [], bookings: [], availabilities: [] };
 const QUOTA_TYPES = ["recommendation", "pcs_exp", "observation_hdr", "observation_so"];
 const LOG_CATEGORY_LABELS = { auth: "Connexion", account: "Comptes", presence: "Présences", absence: "Absences", interview: "Entretiens", quota: "Quotas", form: "Formulaires", mission: "Missions", chat: "Chat", assignment: "Référents", profile: "Profils", summary: "Résumé", management: "Gérance", meeting: "Réunion SO", announcement: "Annonces", system: "Système" };
 const REPORT_CONCLUSIONS = [
@@ -2806,6 +2806,9 @@ function App() {
       const messages = {
         create_interview_slot: "Les créneaux sont ouverts à la réservation.",
         delete_interview_slot: "Le créneau a été retiré.",
+        create_interview_availability: "Votre disponibilité a été proposée aux Référents SO.",
+        delete_interview_availability: "La disponibilité a été retirée.",
+        schedule_interview_from_availability: "Le rendez-vous est confirmé sur la disponibilité du membre.",
         create_interview_requirement: "L’échéance d’entretien a été ajoutée.",
         book_interview: "Votre rendez-vous est confirmé.",
         cancel_interview_booking: "Le rendez-vous a été annulé.",
